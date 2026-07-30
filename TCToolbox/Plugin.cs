@@ -39,6 +39,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoPlayerCommend());
         Modules.Add(new OptimizedDutyFinderSetting());
         Modules.Add(new AutoHideBanners());
+        Modules.Add(new AutoMaterialize());
 
         foreach (var module in Modules)
         {
