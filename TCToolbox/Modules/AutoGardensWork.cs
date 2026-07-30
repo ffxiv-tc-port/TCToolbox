@@ -54,6 +54,9 @@ public sealed unsafe class AutoGardensWork : TcModule
     private sealed class PatchJob
     {
         public bool Skipped;
+
+        /// <summary>是否已對此地壟發出互動（決定收尾時要不要等互動狀態結束）。</summary>
+        public bool Interacted;
     }
 
     private readonly TaskQueue queue = new();
@@ -190,6 +193,7 @@ public sealed unsafe class AutoGardensWork : TcModule
 
             // 紅線替代：不用 EventStart 封包，走標準物件互動（AutoRetainer／Lifestream 台服生產同法）
             TargetSystem.Instance()->InteractWithObject((GameObject*)obj.Address, false);
+            job.Interacted = true;
             return true;
         });
 
@@ -236,14 +240,16 @@ public sealed unsafe class AutoGardensWork : TcModule
 
         queue.Enqueue("等待互動結束", () =>
         {
-            if (job.Skipped) return true;
+            // 因距離跳過（從未互動）的地壟直接放行；取消跳過的仍要等選單收起、互動狀態結束
+            if (job.Skipped && !job.Interacted) return true;
 
             UiHelper.ClickTalkIfOpen();
 
             if (UiHelper.IsAddonReady("SelectString")) return false;
             if (Svc.Condition[ConditionFlag.OccupiedInQuestEvent]) return false;
 
-            doneCount++;
+            if (!job.Skipped)
+                doneCount++;
             return true;
         }, 15_000);
     }
