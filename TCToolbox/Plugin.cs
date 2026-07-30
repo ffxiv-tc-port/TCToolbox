@@ -40,6 +40,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new OptimizedDutyFinderSetting());
         Modules.Add(new AutoHideBanners());
         Modules.Add(new AutoMaterialize());
+        Modules.Add(new AutoRetarget());
 
         foreach (var module in Modules)
         {
