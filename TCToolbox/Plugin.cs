@@ -42,6 +42,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoMaterialize());
         Modules.Add(new AutoRetarget());
         Modules.Add(new MarkerInPartyList());
+        Modules.Add(new AutoBlockTitleMovie());
 
         foreach (var module in Modules)
         {
