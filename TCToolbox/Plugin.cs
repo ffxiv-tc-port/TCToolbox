@@ -30,6 +30,7 @@ public sealed class Plugin : IDalamudPlugin
         Config = Svc.PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
 
         Modules.Add(new AutoFCWSDeliver());
+        Modules.Add(new AutoGysahlGreens());
 
         foreach (var module in Modules)
         {
