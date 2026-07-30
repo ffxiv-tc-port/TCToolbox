@@ -28,8 +28,18 @@ public static class GameIcons
 
     /// <summary>
     /// 取得「有語言子資料夾」的圖示（例如橫幅圖 120031）。
-    /// 台服客端實際存在的語言資料夾以 <see cref="Dalamud.Plugin.Services.IDataManager.FileExists"/> 實測，
-    /// 不預設任何語言代碼；找不到就回傳 null 讓呼叫端退回文字顯示。
+    /// <para>
+    /// ⚠️ 台服的語言子資料夾代碼是 <c>tc</c>——不是 cht／chs，也不在 Dalamud 的 ClientLanguage
+    /// 列舉裡，所以 <c>ITextureProvider.GetFromGameIcon(new GameIconLookup(id, language: …))</c>
+    /// 對這類圖示永遠取不到，必須直接指定原始路徑。
+    /// </para>
+    /// <para>
+    /// 實證方式（2026-07-31）：離線解析
+    /// <c>D:\FINAL FANTASY XIV TC\game\sqpack\ffxiv\060000.win32.index</c> 的資料夾雜湊表
+    /// （index1 存 檔名雜湊＋資料夾雜湊，可獨立驗證資料夾路徑），逐一比對候選字串——
+    /// 台服 ui/icon 底下唯一存在的語言子資料夾就是 <c>tc</c>
+    /// （120000/tc 1268 檔、121000/tc 601 檔、128000/tc 824 檔；ja／en／de／fr／chs／cht／ko 全部不存在）。
+    /// </para>
     /// </summary>
     public static IDalamudTextureWrap? TryGetLanguageIcon(uint iconId)
     {
@@ -42,7 +52,8 @@ public static class GameIcons
         return path == null ? null : TryGetFromPath(path);
     }
 
-    private static readonly string[] LanguageFolders = ["cht", "chs", "ja", "en", "de", "fr", "ko"];
+    /// <summary>台服實測結果 <c>tc</c> 排第一；其餘留作改版後的保險，最後才試無語言路徑。</summary>
+    private static readonly string[] LanguageFolders = ["tc", "cht", "chs", "ja", "en", "de", "fr", "ko"];
 
     private static string? ResolveLanguageIconPath(uint iconId)
     {

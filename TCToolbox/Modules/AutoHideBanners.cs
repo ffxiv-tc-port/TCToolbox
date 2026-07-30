@@ -2,20 +2,16 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
-using Dalamud.Game.Addon.Lifecycle;
-using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 using Dalamud.Hooking;
 using Dalamud.Interface.Utility.Raii;
-using FFXIVClientStructs.FFXIV.Component.GUI;
 using TCToolbox.Core;
 
 namespace TCToolbox.Modules;
 
 /// <summary>
-/// 自動隱藏橫幅：把選定的畫面中央大橫幅（升級、任務完成、開怪等）連同音效一起攔掉。
-/// 機制：hook 遊戲的「橫幅設圖」函式，選中的橫幅 ID 直接不呼叫原函式——橫幅不會被建立、
-/// 音效也不會播；另外針對宇宙探索的任務鏈橫幅 addon 額外做節點隱藏。
-/// 不寫入任何遊戲記憶體、不做 code patch。
+/// 自動隱藏橫幅：把選定的畫面中央大橫幅（理符任務、F.A.T.E.、部隊探索…）連同音效一起攔掉。
+/// 機制：hook 遊戲的「橫幅設圖」函式，選中的橫幅 ID 直接不呼叫原函式——橫幅節點不會被建立、
+/// 音效也不會播。不寫入任何遊戲記憶體、不做 code patch。
 /// 參考 DailyRoutines AutoHideBanners 設計重寫（API13、無 OmenTools／KamiToolKit 相依）。
 /// </summary>
 public sealed unsafe class AutoHideBanners : TcModule
@@ -24,8 +20,8 @@ public sealed unsafe class AutoHideBanners : TcModule
     public override string DisplayName => "自動隱藏橫幅";
 
     public override string Description =>
-        "勾選要屏蔽的畫面橫幅後，該橫幅與其音效都不再彈出（升級、任務完成、副本開始／結束、開怪等）。" +
-        "預設已勾好幾個最吵的，可自行增減。";
+        "勾選要屏蔽的畫面橫幅後，該橫幅與其音效都不再彈出（理符任務、F.A.T.E.、尋寶、部隊探索、" +
+        "友好部族、金碟 GATE、宇宙探索）。預設已勾好最常重複跳的幾張，可自行增減。";
 
     public override bool HasConfigUI => true;
 
@@ -36,53 +32,118 @@ public sealed unsafe class AutoHideBanners : TcModule
 
     private Hook<SetImageDelegate>? setImageHook;
 
-    /// <summary>可屏蔽的橫幅圖示 ID（取自 DR 的清單，涵蓋 7.x 目前全部中央橫幅）。</summary>
-    private static readonly uint[] BannerIds =
+    private sealed record BannerInfo(uint Id, string Name, string Category);
+
+    private const string CategoryLeve = "理符・籌備任務";
+    private const string CategoryFate = "F.A.T.E.";
+    private const string CategoryTreasure = "尋寶";
+    private const string CategoryExpedition = "部隊探索・探索之旅";
+    private const string CategoryTribe = "友好部族";
+    private const string CategoryGate = "金碟遊樂場 GATE";
+    private const string CategoryCosmic = "宇宙探索";
+
+    /// <summary>
+    /// 橫幅清單。
+    /// <para>
+    /// 名稱不是猜的，也不是任何 Excel 表提供的：ScreenImage 表只有 Image／Jingle／Type／Lang 四欄，
+    /// 全 1138 張台服表裡沒有任何一張替這些圖示命名。作法是**把台服 sqpack 內的材質實際解出來看**——
+    /// 以 Lumina 讀 <c>ui/icon/{folder}/tc/{id}_hr1.tex</c>（DXT5、2560x720）轉 PNG 後逐張辨識，
+    /// 下列文字即橫幅上實際顯示的台服字樣。
+    /// </para>
+    /// <para>
+    /// 分類沿用台服官方用語；Jingle 表（ScreenImage.Jingle → Jingle.Name，如 Que_Start／Fate_Clear／
+    /// Gate_Enc）只拿來交叉驗證分類，不當顯示名用。
+    /// </para>
+    /// <para>
+    /// ⚠️ DR 清單裡的 128525–128532（宇宙探索任務鏈橫幅）經 sqpack 索引比對，
+    /// **台服 7.20 客端根本沒有這些材質**（該內容尚未實裝），因此整組移除——列出來也勾不到東西。
+    /// </para>
+    /// </summary>
+    private static readonly BannerInfo[] Banners =
     [
-        120031, 120032, 120055, 120081, 120082, 120083, 120084, 120085, 120086,
-        120093, 120094, 120095, 120096, 120141, 120142, 121081, 121082, 121561,
-        121562, 121563, 128370, 128371, 128372, 128373, 128525, 128526,
-        128527, 128528, 128529, 128530, 128531, 128532,
+        new(120031, "接受理符任務！", CategoryLeve),
+        new(120032, "理符任務完成！", CategoryLeve),
+        new(120055, "籌備任務完成！", CategoryLeve),
+
+        new(120081, "F.A.T.E. 開始！", CategoryFate),
+        new(120082, "F.A.T.E. 完成！", CategoryFate),
+        new(120083, "F.A.T.E. 失敗……", CategoryFate),
+        new(120084, "F.A.T.E. 開始！（額外獎勵）", CategoryFate),
+        new(120085, "F.A.T.E. 完成！（額外獎勵）", CategoryFate),
+        new(120086, "F.A.T.E. 失敗……（額外獎勵）", CategoryFate),
+
+        new(120094, "發現寶箱！", CategoryTreasure),
+        new(120093, "獲得寶箱！", CategoryTreasure),
+
+        new(120095, "出發探險！", CategoryExpedition),
+        new(120096, "平安歸還！", CategoryExpedition),
+        new(120141, "探索之旅開始", CategoryExpedition),
+        new(120142, "探索之旅結束", CategoryExpedition),
+
+        new(121081, "友好部族　接受任務！", CategoryTribe),
+        new(121082, "友好部族　任務完成！", CategoryTribe),
+
+        new(121561, "GATE 開始！", CategoryGate),
+        new(121562, "GATE 完成！", CategoryGate),
+        new(121563, "GATE 失敗……", CategoryGate),
+
+        new(128370, "執行探索任務", CategoryCosmic),
+        new(128371, "放棄探索任務", CategoryCosmic),
+        new(128372, "探索任務失敗……", CategoryCosmic),
+        new(128373, "探索任務完成！", CategoryCosmic),
     ];
 
-    /// <summary>宇宙探索任務鏈橫幅：這幾個是獨立 addon，另外要隱藏節點。</summary>
-    private static readonly HashSet<uint> MissionChainBannerIds =
-        [128527, 128528, 128529, 128530, 128531, 128532];
+    private static readonly string[] CategoryOrder =
+    [
+        CategoryLeve, CategoryFate, CategoryTreasure, CategoryExpedition,
+        CategoryTribe, CategoryGate, CategoryCosmic,
+    ];
 
-    /// <summary>首次啟用時預設勾選（最吵的幾個）。</summary>
+    /// <summary>首次啟用時預設勾選（跑日常時最常重複跳的那幾張）。</summary>
     private static readonly uint[] DefaultHiddenBanners =
         [120031, 120032, 120055, 120095, 120096, 120141, 120142];
+
+    private static readonly HashSet<uint> KnownBannerIds = BuildKnownIds();
+
+    private static HashSet<uint> BuildKnownIds()
+    {
+        var set = new HashSet<uint>(Banners.Length);
+        foreach (var banner in Banners)
+            set.Add(banner.Id);
+        return set;
+    }
+
+    private string searchFilter = string.Empty;
 
     private AutoHideBannersConfig Config => Plugin.Instance.Config.HideBanners;
 
     protected override void OnEnable()
     {
+        var configChanged = false;
+
         if (!Config.Initialized)
         {
             Config.Initialized = true;
             foreach (var id in DefaultHiddenBanners)
                 Config.HiddenBanners.Add(id);
-            Plugin.Instance.Config.Save();
+            configChanged = true;
         }
+
+        // 清掉舊版留下、台服其實不存在的橫幅 ID（128525–128532）
+        configChanged |= Config.HiddenBanners.RemoveWhere(id => !KnownBannerIds.Contains(id)) > 0;
+
+        if (configChanged)
+            Plugin.Instance.Config.Save();
 
         var address = Svc.SigScanner.ScanText(SetImageSignature);
         setImageHook = Svc.Hooks.HookFromAddress<SetImageDelegate>(address, SetImageDetour);
         setImageHook.Enable();
-
-        Svc.AddonLifecycle.RegisterListener(AddonEvent.PreDraw, "_WKSMissionChain", OnMissionChainPreDraw);
     }
 
     protected override void OnDisable()
     {
-        Svc.AddonLifecycle.UnregisterListener(OnMissionChainPreDraw);
-
         setImageHook?.Dispose();
         setImageHook = null;
-
-        // 還原可能被我們隱藏的任務鏈橫幅節點
-        var addon = UiHelper.GetAddon("_WKSMissionChain");
-        if (addon != null && addon->RootNode != null)
-            addon->RootNode->ToggleVisibility(true);
     }
 
     private void SetImageDetour(nint addonImage, int bannerId, int iconSubFolder, int soundEffectId)
@@ -100,103 +161,119 @@ public sealed unsafe class AutoHideBanners : TcModule
         setImageHook!.Original(addonImage, bannerId, iconSubFolder, soundEffectId);
     }
 
-    private void OnMissionChainPreDraw(AddonEvent type, AddonArgs args)
-    {
-        var addon = (AtkUnitBase*)args.Addon.Address;
-        if (addon == null || addon->RootNode == null) return;
-
-        var iconId = FindFirstImageIconId(addon);
-
-        var shouldHide = iconId != 0 &&
-                         MissionChainBannerIds.Contains(iconId) &&
-                         Config.HiddenBanners.Contains(iconId);
-
-        if (addon->RootNode->IsVisible() == !shouldHide) return;
-        addon->RootNode->ToggleVisibility(!shouldHide);
-    }
-
-    /// <summary>取 addon 內第一個圖片節點目前載入的圖示 ID（走 PartsList → UldAsset → AtkTextureResource.IconId）。</summary>
-    private static uint FindFirstImageIconId(AtkUnitBase* addon)
-    {
-        for (var i = 0; i < addon->UldManager.NodeListCount; i++)
-        {
-            var node = addon->UldManager.NodeList[i];
-            if (node == null || node->Type != NodeType.Image) continue;
-
-            var imageNode = (AtkImageNode*)node;
-            if (imageNode->PartsList == null) continue;
-            if (imageNode->PartId >= imageNode->PartsList->PartCount) continue;
-
-            var asset = imageNode->PartsList->Parts[imageNode->PartId].UldAsset;
-            if (asset == null || asset->AtkTexture.TextureType != TextureType.Resource) continue;
-
-            var resource = asset->AtkTexture.Resource;
-            if (resource == null || resource->IconId == 0) continue;
-
-            return resource->IconId;
-        }
-
-        return 0;
-    }
-
     public override void DrawConfig()
     {
-        ImGui.TextDisabled("點圖片（或核取方塊）切換：勾起來＝該橫幅與其音效都不再出現。");
+        ImGui.TextDisabled("勾起來＝該橫幅與其音效都不再出現。");
 
+        ImGui.SetNextItemWidth(220f);
+        var filter = searchFilter;
+        if (ImGui.InputTextWithHint("##bannerSearch", "搜尋名稱或編號…", ref filter, 64))
+            searchFilter = filter;
+
+        ImGui.SameLine();
         var showPreview = Config.ShowPreview;
-        if (ImGui.Checkbox("顯示橫幅預覽圖", ref showPreview))
+        if (ImGui.Checkbox("顯示預覽圖", ref showPreview))
         {
             Config.ShowPreview = showPreview;
             Plugin.Instance.Config.Save();
         }
 
-        var tableSize = new Vector2(ImGui.GetContentRegionAvail().X, Config.ShowPreview ? 400f : 200f);
-        using var table = ImRaii.Table("TCToolboxBannerList", 2,
-                                       ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY,
-                                       tableSize);
-        if (!table) return;
-
-        ImGui.TableSetupColumn("左", ImGuiTableColumnFlags.WidthStretch, 50f);
-        ImGui.TableSetupColumn("右", ImGuiTableColumnFlags.WidthStretch, 50f);
-
-        var perColumn = (BannerIds.Length + 1) / 2;
-        for (var i = 0; i < perColumn; i++)
+        ImGui.SameLine();
+        if (ImGui.Button("還原預設"))
         {
-            ImGui.TableNextRow();
-
-            ImGui.TableNextColumn();
-            DrawBannerEntry(BannerIds[i]);
-
-            ImGui.TableNextColumn();
-            var right = i + perColumn;
-            if (right < BannerIds.Length)
-                DrawBannerEntry(BannerIds[right]);
+            Config.HiddenBanners.Clear();
+            foreach (var id in DefaultHiddenBanners)
+                Config.HiddenBanners.Add(id);
+            Plugin.Instance.Config.Save();
         }
+
+        ImGui.SameLine();
+        if (ImGui.Button("全部取消"))
+        {
+            Config.HiddenBanners.Clear();
+            Plugin.Instance.Config.Save();
+        }
+
+        using var child = ImRaii.Child("TCToolboxBannerList",
+                                       new Vector2(ImGui.GetContentRegionAvail().X, 420f), true);
+        if (!child) return;
+
+        var matched = 0;
+        foreach (var category in CategoryOrder)
+        {
+            var headerDrawn = false;
+
+            foreach (var banner in Banners)
+            {
+                if (banner.Category != category) continue;
+                if (!Matches(banner)) continue;
+
+                if (!headerDrawn)
+                {
+                    if (matched > 0) ImGui.Spacing();
+                    ImGui.Separator();
+                    ImGui.TextColored(new Vector4(1f, 0.85f, 0.35f, 1f), category);
+                    headerDrawn = true;
+                }
+
+                matched++;
+                DrawBannerEntry(banner);
+            }
+        }
+
+        if (matched == 0)
+            ImGui.TextDisabled("沒有符合的橫幅。");
     }
 
-    private void DrawBannerEntry(uint bannerId)
+    private bool Matches(BannerInfo banner)
     {
-        using var id = ImRaii.PushId((int)bannerId);
+        if (searchFilter.Length == 0) return true;
+        return banner.Name.Contains(searchFilter, StringComparison.OrdinalIgnoreCase) ||
+               banner.Category.Contains(searchFilter, StringComparison.OrdinalIgnoreCase) ||
+               banner.Id.ToString().Contains(searchFilter, StringComparison.Ordinal);
+    }
 
-        var hidden = Config.HiddenBanners.Contains(bannerId);
-        if (ImGui.Checkbox($"#{bannerId}", ref hidden))
+    private void DrawBannerEntry(BannerInfo banner)
+    {
+        using var id = ImRaii.PushId((int)banner.Id);
+
+        var hidden = Config.HiddenBanners.Contains(banner.Id);
+        if (ImGui.Checkbox(banner.Name, ref hidden))
         {
             if (hidden)
-                Config.HiddenBanners.Add(bannerId);
+                Config.HiddenBanners.Add(banner.Id);
             else
-                Config.HiddenBanners.Remove(bannerId);
+                Config.HiddenBanners.Remove(banner.Id);
             Plugin.Instance.Config.Save();
+        }
+
+        ImGui.SameLine();
+        ImGui.TextDisabled($"#{banner.Id}");
+
+        if (Array.IndexOf(DefaultHiddenBanners, banner.Id) >= 0)
+        {
+            ImGui.SameLine();
+            ImGui.TextColored(new Vector4(0.55f, 0.85f, 1f, 1f), "[預設]");
         }
 
         if (!Config.ShowPreview) return;
 
-        var wrap = GameIcons.TryGetLanguageIcon(bannerId);
-        if (wrap == null) return;
+        var wrap = GameIcons.TryGetLanguageIcon(banner.Id);
+        if (wrap == null)
+        {
+            using (ImRaii.PushIndent())
+                ImGui.TextDisabled("（找不到這張橫幅的材質，屏蔽功能不受影響）");
+            return;
+        }
 
-        var width = ImGui.GetContentRegionAvail().X;
-        var height = width * wrap.Height / Math.Max(1, wrap.Width);
-        var tint = hidden ? new Vector4(1f, 0.45f, 0.45f, 0.6f) : new Vector4(1f, 1f, 1f, 1f);
+        using (ImRaii.PushIndent())
+        {
+            // 橫幅原圖是 2560x720 的寬幅；縮到約 360px 寬就足以看清字樣
+            var width = Math.Min(360f, ImGui.GetContentRegionAvail().X);
+            var height = width * wrap.Height / Math.Max(1, wrap.Width);
+            var tint = hidden ? new Vector4(1f, 0.5f, 0.5f, 0.75f) : new Vector4(1f, 1f, 1f, 1f);
 
-        ImGui.Image(wrap.Handle, new Vector2(width, height), Vector2.Zero, Vector2.One, tint);
+            ImGui.Image(wrap.Handle, new Vector2(width, height), Vector2.Zero, Vector2.One, tint);
+        }
     }
 }
