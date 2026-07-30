@@ -43,6 +43,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoRetarget());
         Modules.Add(new MarkerInPartyList());
         Modules.Add(new AutoBlockTitleMovie());
+        Modules.Add(new OptimizedEnemyList());
 
         foreach (var module in Modules)
         {

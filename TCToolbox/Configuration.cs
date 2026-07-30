@@ -20,8 +20,21 @@ public sealed class Configuration : IPluginConfiguration
     public AutoHideBannersConfig HideBanners { get; set; } = new();
     public AutoRetargetConfig Retarget { get; set; } = new();
     public MarkerInPartyListConfig MarkerInPartyList { get; set; } = new();
+    public OptimizedEnemyListConfig EnemyList { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
+}
+
+public sealed class OptimizedEnemyListConfig
+{
+    public bool ShowHp = true;
+    public bool CompactNumbers = true;
+    public bool ShowHpPercent;
+    public bool ShowCast = true;
+    public bool HighlightTargetingYou = true;
+    public float TextScale = 0.9f;
+    public float OffsetX = 4f;
+    public float OffsetY = 20f;
 }
 
 public sealed class MarkerInPartyListConfig
