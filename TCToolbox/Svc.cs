@@ -1,3 +1,4 @@
+using Dalamud.Game;
 using Dalamud.Game.ClientState.Objects;
 using Dalamud.IoC;
 using Dalamud.Plugin;
@@ -22,4 +23,11 @@ public sealed class Svc
     [PluginService] public static IChatGui Chat { get; private set; } = null!;
     [PluginService] public static IPluginLog Log { get; private set; } = null!;
     [PluginService] public static ITextureProvider Textures { get; private set; } = null!;
+    [PluginService] public static IGameInteropProvider Hooks { get; private set; } = null!;
+    [PluginService] public static ISigScanner SigScanner { get; private set; } = null!;
+    [PluginService] public static IDutyState DutyState { get; private set; } = null!;
+    [PluginService] public static IPartyList Party { get; private set; } = null!;
+    [PluginService] public static IContextMenu ContextMenu { get; private set; } = null!;
+    [PluginService] public static IGameConfig GameConfig { get; private set; } = null!;
+    [PluginService] public static IKeyState Keys { get; private set; } = null!;
 }

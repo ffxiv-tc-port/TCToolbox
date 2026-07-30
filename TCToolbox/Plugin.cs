@@ -34,6 +34,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoQTE());
         Modules.Add(new AutoCountPlayers());
         Modules.Add(new AutoGardensWork());
+        Modules.Add(new AutoAntiAfk());
 
         foreach (var module in Modules)
         {
