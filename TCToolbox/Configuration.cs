@@ -16,8 +16,18 @@ public sealed class Configuration : IPluginConfiguration
     public AutoAntiAfkConfig AntiAfk { get; set; } = new();
     public AutoConstantlyClickConfig ConstantlyClick { get; set; } = new();
     public AutoPlayerCommendConfig PlayerCommend { get; set; } = new();
+    public OptimizedDutyFinderSettingConfig DutyFinderSetting { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
+}
+
+public sealed class OptimizedDutyFinderSettingConfig
+{
+    /// <summary>疊圖按鈕邊長（像素）。</summary>
+    public float ButtonSize = 30f;
+
+    /// <summary>是否一併顯示語言按鈕。</summary>
+    public bool ShowLanguageButtons;
 }
 
 public sealed class AutoPlayerCommendConfig

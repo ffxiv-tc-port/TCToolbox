@@ -37,6 +37,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoAntiAfk());
         Modules.Add(new AutoConstantlyClick());
         Modules.Add(new AutoPlayerCommend());
+        Modules.Add(new OptimizedDutyFinderSetting());
 
         foreach (var module in Modules)
         {
