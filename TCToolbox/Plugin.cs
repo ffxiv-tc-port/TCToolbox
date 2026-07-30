@@ -31,6 +31,7 @@ public sealed class Plugin : IDalamudPlugin
 
         Modules.Add(new AutoFCWSDeliver());
         Modules.Add(new AutoGysahlGreens());
+        Modules.Add(new AutoQTE());
 
         foreach (var module in Modules)
         {
