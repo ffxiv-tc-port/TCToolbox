@@ -21,8 +21,18 @@ public sealed class Configuration : IPluginConfiguration
     public AutoRetargetConfig Retarget { get; set; } = new();
     public MarkerInPartyListConfig MarkerInPartyList { get; set; } = new();
     public OptimizedEnemyListConfig EnemyList { get; set; } = new();
+    public AutoInventoryTransferConfig InventoryTransfer { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
+}
+
+public sealed class AutoInventoryTransferConfig
+{
+    /// <summary>觸發用修飾鍵的 VirtualKey 值（0＝停用）。</summary>
+    public int ModifierKeyCode;
+
+    /// <summary>轉移後在聊天欄顯示訊息。</summary>
+    public bool NotifyOnTransfer = true;
 }
 
 public sealed class OptimizedEnemyListConfig

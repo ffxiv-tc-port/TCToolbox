@@ -44,6 +44,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new MarkerInPartyList());
         Modules.Add(new AutoBlockTitleMovie());
         Modules.Add(new OptimizedEnemyList());
+        Modules.Add(new AutoInventoryTransfer());
 
         foreach (var module in Modules)
         {
