@@ -17,8 +17,21 @@ public sealed class Configuration : IPluginConfiguration
     public AutoConstantlyClickConfig ConstantlyClick { get; set; } = new();
     public AutoPlayerCommendConfig PlayerCommend { get; set; } = new();
     public OptimizedDutyFinderSettingConfig DutyFinderSetting { get; set; } = new();
+    public AutoHideBannersConfig HideBanners { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
+}
+
+public sealed class AutoHideBannersConfig
+{
+    /// <summary>是否已套用過首次預設值（避免使用者清空後又被塞回來）。</summary>
+    public bool Initialized;
+
+    /// <summary>要屏蔽的橫幅圖示 ID。</summary>
+    public HashSet<uint> HiddenBanners { get; set; } = [];
+
+    /// <summary>設定畫面是否顯示橫幅預覽圖。</summary>
+    public bool ShowPreview = true;
 }
 
 public sealed class OptimizedDutyFinderSettingConfig
