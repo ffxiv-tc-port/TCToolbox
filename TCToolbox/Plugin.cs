@@ -36,6 +36,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoGardensWork());
         Modules.Add(new AutoAntiAfk());
         Modules.Add(new AutoConstantlyClick());
+        Modules.Add(new AutoPlayerCommend());
 
         foreach (var module in Modules)
         {

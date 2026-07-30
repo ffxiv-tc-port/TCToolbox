@@ -15,8 +15,18 @@ public sealed class Configuration : IPluginConfiguration
     public AutoGardensWorkConfig GardensWork { get; set; } = new();
     public AutoAntiAfkConfig AntiAfk { get; set; } = new();
     public AutoConstantlyClickConfig ConstantlyClick { get; set; } = new();
+    public AutoPlayerCommendConfig PlayerCommend { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
+}
+
+public sealed class AutoPlayerCommendConfig
+{
+    /// <summary>跳過遊戲黑名單內的玩家。</summary>
+    public bool IgnoreBlacklistedPlayers = true;
+
+    /// <summary>推薦後在聊天欄顯示訊息。</summary>
+    public bool NotifyOnCommend = true;
 }
 
 public sealed class AutoConstantlyClickConfig

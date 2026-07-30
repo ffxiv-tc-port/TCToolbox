@@ -30,4 +30,5 @@ public sealed class Svc
     [PluginService] public static IContextMenu ContextMenu { get; private set; } = null!;
     [PluginService] public static IGameConfig GameConfig { get; private set; } = null!;
     [PluginService] public static IKeyState Keys { get; private set; } = null!;
+    [PluginService] public static IPlayerState PlayerState { get; private set; } = null!;
 }
