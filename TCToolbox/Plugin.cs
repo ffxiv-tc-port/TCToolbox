@@ -33,6 +33,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoGysahlGreens());
         Modules.Add(new AutoQTE());
         Modules.Add(new AutoCountPlayers());
+        Modules.Add(new AutoGardensWork());
 
         foreach (var module in Modules)
         {
