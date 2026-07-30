@@ -148,8 +148,8 @@ public sealed unsafe class MarkerInPartyList : TcModule
     /// <summary>切換小隊列表原生序號文字節點的可見性（唯一會動到原生節點的地方，停用時必還原）。</summary>
     private void SetMemberNumbersVisible(bool visible)
     {
-        if (numbersHidden == !visible) return;
-
+        // 不能靠快取狀態提早返回：小隊列表 addon 重建（換區／重組隊）後節點會回到預設可見，
+        // 快取若說「已隱藏」就再也不會補上，所以每次都逐節點比對實際狀態。
         var addon = UiHelper.GetAddon("_PartyList");
         if (!UiHelper.IsReady(addon))
         {
