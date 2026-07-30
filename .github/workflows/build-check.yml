@@ -1,0 +1,58 @@
+# 台服 (TC) 建置檢查。Dalamud 釘在 API13 (dalamud-pin-v13.0.0.16)，外掛必須是 net9.0-windows7.0。
+# gate 會比對 VersionPrefix 與 7.15.0 基準，不同才會真的編譯。
+name: Build Check
+
+on:
+  push:
+    tags-ignore:
+      - "v*"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.check.outputs.proceed }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check if VersionPrefix changed from baseline
+        id: check
+        shell: bash
+        run: |
+          PREFIX=$(grep -oP '(?<=<VersionPrefix>)[^<]+' TCToolbox/TCToolbox.csproj || true)
+          echo "Current VersionPrefix: ${PREFIX:-<none>} (baseline: 7.15.0)"
+          if [ "$PREFIX" = "7.15.0" ]; then
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: gate
+    if: needs.gate.outputs.proceed == 'true'
+    runs-on: ubuntu-latest
+    env:
+      DALAMUD_HOME: /tmp/dalamud
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Download Dalamud (TC pin)
+        run: |
+          wget https://github.com/ffxiv-tc-port/DalamudPluginsTC/releases/download/dalamud-pin-v13.0.0.16/dalamud-api13-net9.zip -O ${{ env.DALAMUD_HOME }}.zip
+          unzip ${{ env.DALAMUD_HOME }}.zip -d ${{ env.DALAMUD_HOME }} || [ $? -eq 1 ]
+          test -f ${{ env.DALAMUD_HOME }}/Dalamud.dll
+
+      - name: Restore Project
+        run: dotnet restore TCToolbox/TCToolbox.csproj
+
+      - name: Build Project
+        run: dotnet build --configuration Release TCToolbox/TCToolbox.csproj
