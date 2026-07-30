@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Objects.Types;
+using Dalamud.Game.Config;
+using Dalamud.Interface.Utility.Raii;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Arrays;
 using FFXIVClientStructs.FFXIV.Component.GUI;
@@ -11,8 +13,10 @@ using TCToolbox.Core;
 namespace TCToolbox.Modules;
 
 /// <summary>
-/// 敵對列表界面最佳化：在敵對列表每一列旁疊上體力數值／百分比、詠唱技名與剩餘秒數，
+/// 敵對列表界面最佳化：在敵對列表每一列的**外側**疊上體力數值／百分比、詠唱剩餘秒數，
 /// 以及「這隻正在打你」的標示。
+/// 版面原則：疊圖只畫在整列矩形之外（預設右側），不覆蓋原生的名稱、體力條、體力%與詠唱列；
+/// 原生詠唱列本來就會顯示技名，所以預設只補「原生沒有」的剩餘秒數。
 /// ⚠️ 與 DR 原版的差異：DR 的 OptimizedEnemyList 核心是 3 個 MemoryPatch（改寫遊戲程式碼），
 /// 屬紅線一律不抄。本模組只做「顯示已存在的資訊」：資料全部讀自遊戲自己餵給敵對列表 UI 的
 /// NumberArray／StringArray 與 ObjectTable，不改任何行為、不動記憶體、零 hook；
@@ -24,7 +28,8 @@ public sealed unsafe class OptimizedEnemyList : TcModule
     public override string DisplayName => "敵對列表界面最佳化";
 
     public override string Description =>
-        "在敵對列表每列疊上體力數值／百分比、對方正在詠唱的技名與剩餘秒數，並標示哪一隻正以你為目標。" +
+        "在敵對列表每列的外側顯示體力數值／百分比與詠唱剩餘秒數，並標示哪一隻正以你為目標。" +
+        "技名交給遊戲原生的詠唱列（原生沒開時才自動補上），不會蓋住任何原生內容。" +
         "純顯示，不改變任何遊戲行為（DR 原版用記憶體 patch 實作的部分一律不抄）。";
 
     public override bool HasConfigUI => true;
@@ -47,6 +52,21 @@ public sealed unsafe class OptimizedEnemyList : TcModule
 
     private readonly List<RowInfo> rows = [];
 
+    /// <summary>一列在螢幕上的矩形（已含節點鏈的累積縮放）。</summary>
+    private readonly record struct RowRect(Vector2 TopLeft, Vector2 Size);
+
+    /// <summary>
+    /// 遊戲設定「敵對列表顯示詠唱列」。
+    /// 原生詠唱技名**不是必然顯示**——這個選項關掉時整條詠唱列（含技名）都不會出現，
+    /// 所以「只印秒數」不能寫死，否則把設定關掉的人就完全看不到技名。
+    /// 走 Dalamud 的具名列舉（<c>UiConfigOption.EnemyListCastbarEnable</c>，CS 的 ConfigOption 914）
+    /// 而不是魔術字串，避免打錯字後靜默失效。
+    /// </summary>
+    private const UiConfigOption CastbarOption = UiConfigOption.EnemyListCastbarEnable;
+
+    private static readonly string[] CastDisplayLabels =
+        ["不顯示", "只顯示秒數", "技名＋秒數", "自動（依遊戲設定）"];
+
     private OptimizedEnemyListConfig Config => Plugin.Instance.Config.EnemyList;
 
     protected override void OnEnable()
@@ -68,23 +88,37 @@ public sealed unsafe class OptimizedEnemyList : TcModule
         CollectRows();
         if (rows.Count == 0) return;
 
-        var rowPositions = ResolveRowPositions(&addon->AtkUnitBase);
-        if (rowPositions == null) return;
+        var rowRects = ResolveRowRects(&addon->AtkUnitBase);
+        if (rowRects == null) return;
 
-        var scale = addon->AtkUnitBase.Scale;
         var drawList = ImGui.GetBackgroundDrawList();
-        var fontSize = ImGui.GetFontSize() * Config.TextScale;
+        var baseFontSize = ImGui.GetFontSize();
+        var fontSize = baseFontSize * Config.TextScale;
+        var textScale = fontSize / baseFontSize;
+        var showCastName = ShouldShowCastName();
 
         foreach (var row in rows)
         {
-            if (row.Slot < 0 || row.Slot >= rowPositions.Length) continue;
+            if (row.Slot < 0 || row.Slot >= rowRects.Length) continue;
 
-            var position = rowPositions[row.Slot];
-            if (position.X <= 0 && position.Y <= 0) continue;
+            var rect = rowRects[row.Slot];
+            if (rect.Size.X <= 0f) continue;
 
-            var origin = position + new Vector2(Config.OffsetX * scale, Config.OffsetY * scale);
-            var line = BuildLine(row);
+            var line = BuildLine(row, showCastName);
             if (line.Length == 0) continue;
+
+            var textSize = ImGui.CalcTextSize(line) * textScale;
+
+            // 疊圖一律畫在整列的「外側」——原生列裡已經有名稱、體力條、體力%、詠唱列，
+            // 任何畫在列內部的座標都會壓到原生內容（舊版預設 (4,20) 正好落在詠唱列上）。
+            var x = Config.AnchorRight
+                        ? rect.TopLeft.X + rect.Size.X + Config.OffsetX
+                        : rect.TopLeft.X - textSize.X - Config.OffsetX;
+
+            // 垂直置中對齊該列，跟原生列高無關地保持對位
+            var y = rect.TopLeft.Y + ((rect.Size.Y - textSize.Y) / 2f) + Config.OffsetY;
+
+            var origin = new Vector2(x, y);
 
             var color = row.TargetingLocalPlayer && Config.HighlightTargetingYou
                             ? ImGui.ColorConvertFloat4ToU32(new Vector4(1f, 0.45f, 0.4f, 1f))
@@ -97,7 +131,33 @@ public sealed unsafe class OptimizedEnemyList : TcModule
         }
     }
 
-    private string BuildLine(RowInfo row)
+    /// <summary>
+    /// 決定要不要連技名一起印。
+    /// 自動模式下讀遊戲設定：原生詠唱列開著就只印秒數（不重複），關著才補上技名。
+    /// 讀不到設定時一律當作「原生有顯示」，寧可少印也不要疊字。
+    /// </summary>
+    private bool ShouldShowCastName()
+    {
+        switch (Config.CastDisplay)
+        {
+            case CastDisplayMode.NameAndSeconds:
+                return true;
+            case CastDisplayMode.SecondsOnly:
+            case CastDisplayMode.Off:
+                return false;
+            default:
+                try
+                {
+                    return Svc.GameConfig.TryGet(CastbarOption, out uint enabled) && enabled == 0;
+                }
+                catch
+                {
+                    return false;
+                }
+        }
+    }
+
+    private string BuildLine(RowInfo row, bool showCastName)
     {
         var parts = new List<string>(3);
 
@@ -111,11 +171,14 @@ public sealed unsafe class OptimizedEnemyList : TcModule
         if (Config.ShowHpPercent)
             parts.Add($"{row.RemainingHpPercent}%");
 
-        if (Config.ShowCast && row.CastName.Length > 0)
+        if (Config.CastDisplay != CastDisplayMode.Off && row.CastName.Length > 0)
         {
-            parts.Add(row.CastRemaining > 0f
-                          ? $"{row.CastName} {row.CastRemaining:0.0}s"
-                          : row.CastName);
+            var seconds = row.CastRemaining > 0f ? $"{row.CastRemaining:0.0}s" : string.Empty;
+
+            if (showCastName)
+                parts.Add(seconds.Length > 0 ? $"{row.CastName} {seconds}" : row.CastName);
+            else if (seconds.Length > 0)
+                parts.Add(seconds);
         }
 
         if (Config.HighlightTargetingYou && row.TargetingLocalPlayer)
@@ -180,31 +243,59 @@ public sealed unsafe class OptimizedEnemyList : TcModule
     }
 
     /// <summary>
-    /// 取 8 列的螢幕座標。NodeList 的排列順序不保證，因此依 ScreenY 由上而下排序後
+    /// 取 8 列在螢幕上的矩形。NodeList 的排列順序不保證，因此依 ScreenY 由上而下排序後
     /// 才對應到敵對列表的列序（第 0 列在最上）。
+    /// 尺寸算法沿用 Pictomancy <c>AddonClipper.ClipAtkNodeRectangle</c> 的生產作法：
+    /// <c>ScreenX/ScreenY</c> 已是絕對座標，寬高則要乘上節點鏈一路累積的縮放。
     /// </summary>
-    private static Vector2[]? ResolveRowPositions(AtkUnitBase* addon)
+    private static RowRect[]? ResolveRowRects(AtkUnitBase* addon)
     {
         if (addon->UldManager.NodeList == null) return null;
         if (addon->UldManager.NodeListCount <= RowNodeIndexEnd) return null;
 
-        var found = new List<(float Y, Vector2 Position)>(MaxRows);
+        var found = new List<RowRect>(MaxRows);
         for (var i = RowNodeIndexStart; i <= RowNodeIndexEnd; i++)
         {
             var node = addon->UldManager.NodeList[i];
             if (node == null || !node->IsVisible()) continue;
-            found.Add((node->ScreenY, new Vector2(node->ScreenX, node->ScreenY)));
+
+            var scale = GetCumulativeScale(node);
+            var size = new Vector2(node->Width * scale.X, node->Height * scale.Y);
+
+            // 節點寬度取不到時退回 addon 自身寬度，至少不會把文字疊回列內
+            if (size.X <= 0f)
+                size.X = addon->GetScaledWidth(true);
+            if (size.Y <= 0f)
+                size.Y = ImGui.GetFontSize();
+
+            found.Add(new RowRect(new Vector2(node->ScreenX, node->ScreenY), size));
         }
 
         if (found.Count == 0) return null;
 
-        found.Sort((a, b) => a.Y.CompareTo(b.Y));
+        found.Sort((a, b) => a.TopLeft.Y.CompareTo(b.TopLeft.Y));
 
-        var result = new Vector2[MaxRows];
+        var result = new RowRect[MaxRows];
         for (var i = 0; i < found.Count && i < MaxRows; i++)
-            result[i] = found[i].Position;
+            result[i] = found[i];
 
         return result;
+    }
+
+    /// <summary>節點鏈一路往上累乘的縮放（同 Pictomancy 的 GetNodeScale）。</summary>
+    private static Vector2 GetCumulativeScale(AtkResNode* node)
+    {
+        if (node == null) return Vector2.One;
+
+        var scale = new Vector2(node->ScaleX, node->ScaleY);
+        var parent = node->ParentNode;
+        while (parent != null)
+        {
+            scale *= new Vector2(parent->ScaleX, parent->ScaleY);
+            parent = parent->ParentNode;
+        }
+
+        return scale;
     }
 
     public override void DrawConfig()
@@ -231,11 +322,24 @@ public sealed unsafe class OptimizedEnemyList : TcModule
             Plugin.Instance.Config.Save();
         }
 
-        var showCast = Config.ShowCast;
-        if (ImGui.Checkbox("顯示詠唱技名與剩餘秒數", ref showCast))
+        ImGui.SetNextItemWidth(240f);
+        var castIndex = (int)Config.CastDisplay;
+        if (ImGui.Combo("詠唱顯示", ref castIndex, CastDisplayLabels, CastDisplayLabels.Length))
         {
-            Config.ShowCast = showCast;
+            Config.CastDisplay = (CastDisplayMode)castIndex;
             Plugin.Instance.Config.Save();
+        }
+
+        using (ImRaii.PushIndent())
+        {
+            ImGui.TextDisabled(Config.CastDisplay switch
+            {
+                CastDisplayMode.Auto =>
+                    "依遊戲設定自動判斷：原生「敵對列表詠唱列」開著時只印秒數（避免技名重複），\n關著時才連技名一起印。",
+                CastDisplayMode.SecondsOnly => "只印剩餘秒數，技名交給原生詠唱列顯示。",
+                CastDisplayMode.NameAndSeconds => "技名與秒數都印；原生詠唱列若也開著會看到兩份技名。",
+                _ => "完全不顯示詠唱資訊。",
+            });
         }
 
         var highlight = Config.HighlightTargetingYou;
@@ -253,12 +357,36 @@ public sealed unsafe class OptimizedEnemyList : TcModule
             Plugin.Instance.Config.Save();
         }
 
+        var anchorRight = Config.AnchorRight;
+        if (ImGui.Checkbox("顯示在列的右側（取消＝顯示在左側）", ref anchorRight))
+        {
+            Config.AnchorRight = anchorRight;
+            Plugin.Instance.Config.Save();
+        }
+
+        ImGui.SameLine();
+        ImGui.TextDisabled("(?)");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("文字一律畫在整列的外側，不會蓋到原生的名稱、體力條與詠唱列。\n敵對列表若貼在畫面右緣，把這個取消改畫在左側。");
+
         ImGui.SetNextItemWidth(180f);
         var offset = new Vector2(Config.OffsetX, Config.OffsetY);
-        if (ImGui.InputFloat2("文字偏移（X／Y）", ref offset))
+        if (ImGui.InputFloat2("額外偏移（X／Y）", ref offset))
         {
             Config.OffsetX = offset.X;
             Config.OffsetY = offset.Y;
+            Plugin.Instance.Config.Save();
+        }
+
+        using (ImRaii.PushIndent())
+            ImGui.TextDisabled("X 是「離開列邊緣多遠」（兩側都是正值往外），Y 是相對垂直置中的微調。");
+
+        if (ImGui.Button("還原預設版面"))
+        {
+            Config.AnchorRight = true;
+            Config.OffsetX = 6f;
+            Config.OffsetY = 0f;
+            Config.TextScale = 0.9f;
             Plugin.Instance.Config.Save();
         }
 

@@ -52,16 +52,42 @@ public sealed class AutoInventoryTransferConfig
     public bool NotifyOnTransfer = true;
 }
 
+/// <summary>敵對列表疊圖的詠唱顯示方式。</summary>
+public enum CastDisplayMode
+{
+    /// <summary>完全不顯示詠唱資訊。</summary>
+    Off = 0,
+
+    /// <summary>只印剩餘秒數，技名交給原生詠唱列。</summary>
+    SecondsOnly = 1,
+
+    /// <summary>技名與秒數都印。</summary>
+    NameAndSeconds = 2,
+
+    /// <summary>依遊戲的「敵對列表詠唱列」設定自動決定（原生有顯示就只印秒數）。</summary>
+    Auto = 3,
+}
+
 public sealed class OptimizedEnemyListConfig
 {
     public bool ShowHp = true;
     public bool CompactNumbers = true;
     public bool ShowHpPercent;
-    public bool ShowCast = true;
+
+    /// <summary>詠唱顯示方式；預設自動——原生詠唱列開著時只印秒數，避免技名重複疊字。</summary>
+    public CastDisplayMode CastDisplay = CastDisplayMode.Auto;
+
     public bool HighlightTargetingYou = true;
     public float TextScale = 0.9f;
-    public float OffsetX = 4f;
-    public float OffsetY = 20f;
+
+    /// <summary>疊圖畫在整列的右側外緣（false＝左側外緣）。</summary>
+    public bool AnchorRight = true;
+
+    /// <summary>離開列邊緣的距離（兩側都是正值往外）。</summary>
+    public float OffsetX = 6f;
+
+    /// <summary>相對垂直置中的微調。</summary>
+    public float OffsetY;
 }
 
 public sealed class MarkerInPartyListConfig
