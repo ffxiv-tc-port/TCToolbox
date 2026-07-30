@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Keys;
+using Dalamud.Game.Text;
 using Dalamud.Hooking;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
@@ -74,6 +75,14 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         InventoryType.ArmoryNeck, InventoryType.ArmoryWrist, InventoryType.ArmoryRings,
     ];
 
+    /// <summary>同一格重複觸發的忽略視窗（毫秒）。</summary>
+    private const int DuplicateGuardMs = 500;
+
+    private InventoryType lastHandledSource = InventoryType.Invalid;
+    private int lastHandledSlot = -1;
+    private uint lastHandledItemId;
+    private long lastHandledTick;
+
     private AutoInventoryTransferConfig Config => Plugin.Instance.Config.InventoryTransfer;
 
     protected override void OnEnable()
@@ -87,6 +96,11 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
     {
         openForItemSlotHook?.Dispose();
         openForItemSlotHook = null;
+
+        lastHandledSource = InventoryType.Invalid;
+        lastHandledSlot = -1;
+        lastHandledItemId = 0;
+        lastHandledTick = 0;
     }
 
     private void OpenForItemSlotDetour(
@@ -116,6 +130,27 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         var item = manager->GetInventorySlot(source, slot);
         if (item == null || item->ItemId == 0) return;
 
+        // ⚠️ 道具識別資料一定要在 MoveItemSlot 之前抓下來：MoveItemSlot 會同步清空來源格，
+        // 之後再讀這個指標只會拿到空欄位（Item sheet 的 row 0 是有效列但名稱為空字串，
+        // 所以連 null 判斷都不會觸發，訊息就變成「已轉移『』」）。
+        var itemId = item->ItemId;
+        var baseItemId = item->GetBaseItemId();
+        var isHighQuality = (item->Flags & InventoryItem.ItemFlags.HighQuality) != 0;
+        var displayName = ResolveItemName(baseItemId, isHighQuality);
+
+        // 同一格、同一道具在極短時間內重複觸發只處理一次（防手滑連點與任何再進入路徑）
+        if (lastHandledSource == source && lastHandledSlot == slot && lastHandledItemId == itemId &&
+            Environment.TickCount64 - lastHandledTick < DuplicateGuardMs)
+        {
+            Svc.Log.Debug($"[{InternalName}] 略過重複觸發：{source}#{slot} itemId={itemId}");
+            return;
+        }
+
+        lastHandledSource = source;
+        lastHandledSlot = slot;
+        lastHandledItemId = itemId;
+        lastHandledTick = Environment.TickCount64;
+
         if (!TryResolveDestination(source, out var candidates, out var reason))
         {
             if (reason.Length > 0 && Throttle.Pass("AutoInventoryTransfer-NoDest", 3_000))
@@ -126,25 +161,53 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         if (!TryFindTargetSlot(manager, candidates, item, out var destination, out var destinationSlot))
         {
             if (Throttle.Pass("AutoInventoryTransfer-Full", 3_000))
-                Svc.Chat.PrintError("[TC Toolbox] 目的地沒有空位也沒有可疊的同款道具，未轉移。");
+                Svc.Chat.PrintError($"[TC Toolbox] 目的地沒有空位也沒有可疊的同款道具，「{displayName}」未轉移。");
             return;
         }
 
         var result = manager->MoveItemSlot(source, (ushort)slot, destination, (ushort)destinationSlot);
-        if (result != 0)
+
+        // MoveItemSlot 會同步更新本機容器（AutoDuty 的 AutoEquipHelper 就是靠「呼叫後立刻回讀
+        // 目的地格」判定成功），所以這裡可以直接驗結果，不必等伺服器回應。
+        // 兩邊都驗：疊加到既有堆疊時目的地本來就有同款道具，只驗目的地會恆真，
+        // 所以真正的判準是「來源格已經不是這個道具了」。
+        var moved = result == 0 &&
+                    !IsItemAt(manager, source, slot, baseItemId) &&
+                    IsItemAt(manager, destination, destinationSlot, baseItemId);
+
+        Svc.Log.Debug($"[{InternalName}] {source}#{slot} → {destination}#{destinationSlot} " +
+                      $"itemId={itemId} result={result} verified={moved}");
+
+        if (!moved)
         {
-            Svc.Log.Debug($"[{InternalName}] MoveItemSlot 回傳 {result}（{source}#{slot} → {destination}#{destinationSlot}）");
+            if (Throttle.Pass("AutoInventoryTransfer-Failed", 3_000))
+                Svc.Chat.PrintError($"[TC Toolbox] 「{displayName}」轉移失敗（遊戲回傳 {result}），請改用手動拖放。");
             return;
         }
 
         if (Config.NotifyOnTransfer)
-        {
-            var name = Svc.Data.GetExcelSheet<Item>().GetRowOrDefault(item->GetBaseItemId())?.Name.ExtractText()
-                       ?? $"#{item->ItemId}";
-            Svc.Chat.Print($"[TC Toolbox] 已轉移「{name}」。");
-        }
+            Svc.Chat.Print($"[TC Toolbox] 已轉移「{displayName}」。");
 
         CloseContextMenu(agent);
+    }
+
+    /// <summary>道具名稱一律走 Lumina Item 表（台服自帶繁中），不讀 addon 上的文字。</summary>
+    private static string ResolveItemName(uint baseItemId, bool isHighQuality)
+    {
+        var row = Svc.Data.GetExcelSheet<Item>().GetRowOrDefault(baseItemId);
+        var name = row?.Name.ExtractText() ?? string.Empty;
+
+        // Item 表的 row 0 是有效列但名稱為空，所以不能只判斷 null
+        if (string.IsNullOrEmpty(name))
+            return $"#{baseItemId}";
+
+        return isHighQuality ? $"{name} {(char)SeIconChar.HighQuality}" : name;
+    }
+
+    private static bool IsItemAt(InventoryManager* manager, InventoryType type, int slot, uint baseItemId)
+    {
+        var item = manager->GetInventorySlot(type, slot);
+        return item != null && item->GetBaseItemId() == baseItemId;
     }
 
     /// <summary>依來源容器與目前開著的視窗決定目的地候選（依序嘗試）。</summary>
