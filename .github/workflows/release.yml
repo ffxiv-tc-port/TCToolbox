@@ -1,4 +1,4 @@
-# 台服 (TC) 發版。由 release_plugin.py 以 workflow_dispatch 觸發，Dalamud 釘在 API13 (dalamud-pin-v13.0.0.16)。
+# 台服 (TC) 發版（TCToolbox）。由 release_plugin.py 以 workflow_dispatch 觸發，Dalamud 釘在 API13 (dalamud-pin-v13.0.0.16)。
 name: Release
 
 on:
