@@ -41,6 +41,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoHideBanners());
         Modules.Add(new AutoMaterialize());
         Modules.Add(new AutoRetarget());
+        Modules.Add(new MarkerInPartyList());
 
         foreach (var module in Modules)
         {
