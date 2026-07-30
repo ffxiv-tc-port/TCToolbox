@@ -14,8 +14,15 @@ public sealed class Configuration : IPluginConfiguration
     public AutoCountPlayersConfig CountPlayers { get; set; } = new();
     public AutoGardensWorkConfig GardensWork { get; set; } = new();
     public AutoAntiAfkConfig AntiAfk { get; set; } = new();
+    public AutoConstantlyClickConfig ConstantlyClick { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
+}
+
+public sealed class AutoConstantlyClickConfig
+{
+    /// <summary>按住期間的重複觸發間隔（毫秒）。</summary>
+    public int RepeatIntervalMs = 200;
 }
 
 public sealed class AutoAntiAfkConfig
