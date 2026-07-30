@@ -3,6 +3,7 @@ using Dalamud.Game.Command;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
 using TCToolbox.Core;
+using TCToolbox.Modules;
 using TCToolbox.Windows;
 
 namespace TCToolbox;
@@ -28,6 +29,7 @@ public sealed class Plugin : IDalamudPlugin
 
         Config = Svc.PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
 
+        Modules.Add(new AutoFCWSDeliver());
 
         foreach (var module in Modules)
         {
