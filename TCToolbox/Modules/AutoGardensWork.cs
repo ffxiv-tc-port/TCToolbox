@@ -43,12 +43,14 @@ public sealed unsafe class AutoGardensWork : TcModule
 
     private const string GardeningTextSheet = "custom/001/CmnDefHousingGardeningPlant_00151";
 
-    private enum GardenAction
+    /// <summary>園圃動作；<see cref="Scan"/> 只互動讀取可用選項後取消，不改變任何狀態。</summary>
+    public enum GardenAction
     {
         Harvest,
         Tend,
         Fertilize,
         Plant,
+        Scan,
     }
 
     private sealed class PatchJob
@@ -71,6 +73,12 @@ public sealed unsafe class AutoGardensWork : TcModule
     private int doneCount;
     private int skippedCount;
 
+    /// <summary>上一批（或上一次單格操作）的結果彙總，供 UI 與 IPC 查詢。</summary>
+    private string lastSummary = string.Empty;
+
+    /// <summary>各地壟最近一次 Scan 讀到的可用選項（不含「取消」）。狀態無法離線讀取，只能靠互動取得。</summary>
+    private readonly Dictionary<ulong, List<string>> scannedActions = [];
+
     private List<(uint Id, string Name)>? seedItems;
     private List<(uint Id, string Name)>? soilItems;
     private List<(uint Id, string Name)>? fertilizerItems;
@@ -83,15 +91,25 @@ public sealed unsafe class AutoGardensWork : TcModule
     protected override void OnEnable()
     {
         LoadSheetTexts();
-        queue.OnTimeout = step => Svc.Chat.PrintError($"[TC Toolbox] 園圃步驟逾時，批次已停止：{step}（已完成 {doneCount} 格）");
+        queue.OnTimeout = step =>
+        {
+            lastSummary = $"步驟逾時已中止：{step}（完成 {doneCount} 格、跳過 {skippedCount} 格）。";
+            Svc.Chat.PrintError($"[TC Toolbox] 園圃步驟逾時，批次已停止：{step}（已完成 {doneCount} 格）");
+        };
         Svc.Framework.Update += OnUpdate;
+        Svc.ClientState.TerritoryChanged += OnTerritoryChanged;
     }
 
     protected override void OnDisable()
     {
+        Svc.ClientState.TerritoryChanged -= OnTerritoryChanged;
         Svc.Framework.Update -= OnUpdate;
         queue.Abort();
+        scannedActions.Clear();
     }
+
+    /// <summary>換區後地壟 ObjectId 會重來，掃描結果一律作廢，避免拿到別座庭院的舊狀態。</summary>
+    private void OnTerritoryChanged(ushort territoryType) => scannedActions.Clear();
 
     private void OnUpdate(IFramework framework) => queue.Tick();
 
@@ -166,16 +184,20 @@ public sealed unsafe class AutoGardensWork : TcModule
         skippedCount = 0;
 
         foreach (var patchId in patches)
-            EnqueuePatch(patchId, action);
+            EnqueuePatch(patchId, action, Config.FertilizerItemId, Config.SeedItemId, Config.SoilItemId);
 
         queue.Enqueue("彙總結果", () =>
         {
-            Svc.Chat.Print($"[TC Toolbox] 園圃「{ActionText(action)}」批次完成：處理 {doneCount} 格、跳過 {skippedCount} 格。");
+            lastSummary = $"園圃「{ActionText(action)}」批次完成：處理 {doneCount} 格、跳過 {skippedCount} 格。";
+            Svc.Chat.Print($"[TC Toolbox] {lastSummary}");
             return true;
         });
     }
 
-    private void EnqueuePatch(ulong gameObjectId, GardenAction action)
+    /// <param name="fertilizerItemId">施肥用；批次走設定值，IPC 走呼叫端指定值。</param>
+    /// <param name="seedItemId">播種用種子。</param>
+    /// <param name="soilItemId">播種用土壤。</param>
+    private void EnqueuePatch(ulong gameObjectId, GardenAction action, uint fertilizerItemId, uint seedItemId, uint soilItemId)
     {
         var job = new PatchJob();
 
@@ -212,6 +234,22 @@ public sealed unsafe class AutoGardensWork : TcModule
             if (!UiHelper.IsReady(addon)) return false;
 
             var entries = UiHelper.GetSelectStringEntries(addon);
+            var cancelIndex = entries.FindIndex(x => x.Contains(textCancel, StringComparison.Ordinal));
+
+            // Scan：只記錄目前可用的選項後取消，不改變地壟狀態。
+            // 地壟的作物狀態無法從記憶體離線讀取（ClientStructs 無生長階段欄位），
+            // 「目前有哪些選項」就是唯一可靠的狀態訊號。
+            if (action == GardenAction.Scan)
+            {
+                scannedActions[gameObjectId] =
+                [
+                    .. entries.Where(x => !string.IsNullOrWhiteSpace(x) &&
+                                          !x.Contains(textCancel, StringComparison.Ordinal)),
+                ];
+                UiHelper.SelectStringEntry(addon, cancelIndex >= 0 ? cancelIndex : -1);
+                return true;
+            }
+
             var target = ActionText(action);
             var index = entries.FindIndex(x => x.Contains(target, StringComparison.Ordinal));
             if (index < 0)
@@ -219,7 +257,6 @@ public sealed unsafe class AutoGardensWork : TcModule
                 // 此地壟沒有這個動作（例如空地壟不能收穫、已成熟不能施肥）→ 取消並跳過
                 job.Skipped = true;
                 skippedCount++;
-                var cancelIndex = entries.FindIndex(x => x.Contains(textCancel, StringComparison.Ordinal));
                 UiHelper.SelectStringEntry(addon, cancelIndex >= 0 ? cancelIndex : -1);
                 return true;
             }
@@ -231,10 +268,10 @@ public sealed unsafe class AutoGardensWork : TcModule
         switch (action)
         {
             case GardenAction.Fertilize:
-                EnqueueFertilizeSteps(job);
+                EnqueueFertilizeSteps(job, fertilizerItemId);
                 break;
             case GardenAction.Plant:
-                EnqueuePlantSteps(job);
+                EnqueuePlantSteps(job, seedItemId, soilItemId);
                 break;
         }
 
@@ -254,14 +291,14 @@ public sealed unsafe class AutoGardensWork : TcModule
         }, 15_000);
     }
 
-    private void EnqueueFertilizeSteps(PatchJob job)
+    private void EnqueueFertilizeSteps(PatchJob job, uint fertilizerItemId)
     {
         queue.Enqueue("開啟肥料選單", () =>
         {
             if (job.Skipped) return true;
             if (UiHelper.IsAddonReady("SelectString")) return false; // 等選單收起
 
-            var fertilizer = FindInventoryItem(Config.FertilizerItemId);
+            var fertilizer = FindInventoryItem(fertilizerItemId);
             if (fertilizer == null)
             {
                 Svc.Chat.PrintError("[TC Toolbox] 肥料已用完，批次停止。");
@@ -305,7 +342,7 @@ public sealed unsafe class AutoGardensWork : TcModule
         }, 8_000);
     }
 
-    private void EnqueuePlantSteps(PatchJob job)
+    private void EnqueuePlantSteps(PatchJob job, uint seedItemId, uint soilItemId)
     {
         queue.Enqueue("填入種子與土壤", () =>
         {
@@ -314,8 +351,8 @@ public sealed unsafe class AutoGardensWork : TcModule
             var addon = UiHelper.GetAddon("HousingGardening");
             if (!UiHelper.IsReady(addon)) return false;
 
-            var soil = FindInventoryItem(Config.SoilItemId);
-            var seed = FindInventoryItem(Config.SeedItemId);
+            var soil = FindInventoryItem(soilItemId);
+            var seed = FindInventoryItem(seedItemId);
             if (soil == null || seed == null)
             {
                 Svc.Chat.PrintError("[TC Toolbox] 種子或土壤已用完，批次停止。");
@@ -454,6 +491,124 @@ public sealed unsafe class AutoGardensWork : TcModule
 
     #endregion
 
+    #region IPC 對外介面
+
+    /// <summary>
+    /// 給本機腳本（SND 等）用的細項操作層：一次一格，不提供「一鍵全自動」入口。
+    /// 呼叫端負責決策與逐格推進；批次入口只保留在本模組的 UI 上。
+    /// </summary>
+    public bool IsBusy => queue.IsBusy;
+
+    public string CurrentStepName => queue.CurrentStep ?? string.Empty;
+
+    public int DoneCount => doneCount;
+
+    public int SkippedCount => skippedCount;
+
+    public string LastSummary => lastSummary;
+
+    /// <summary>環境是否可執行園圃操作；回傳空字串代表可用，否則為 zh-TW 失敗原因。</summary>
+    public string GetUnavailableReason()
+    {
+        if (!IsEnabled) return "自動園圃作業模組未啟用（請在 TC Toolbox 設定視窗開啟）。";
+        return TryGetGardenPatches(out _, out var error) ? string.Empty : error;
+    }
+
+    /// <summary>附近（30 碼內）園圃地壟的 GameObjectId，依距離排序；環境不符時回空清單。</summary>
+    public List<ulong> GetNearbyPatchIds() =>
+        TryGetGardenPatches(out var patches, out _) ? patches : [];
+
+    /// <summary>地壟與玩家的距離（碼）；找不到時回 -1。</summary>
+    public float GetPatchDistance(ulong gameObjectId)
+    {
+        var localPlayer = Svc.Objects.LocalPlayer;
+        var obj = Svc.Objects.SearchById(gameObjectId);
+        return localPlayer == null || obj == null
+            ? -1f
+            : Vector3.Distance(localPlayer.Position, obj.Position);
+    }
+
+    /// <summary>該地壟最近一次 Scan 讀到的可用選項（不含「取消」）；沒掃過回空清單。</summary>
+    public List<string> GetScannedActions(ulong gameObjectId) =>
+        scannedActions.TryGetValue(gameObjectId, out var actions) ? [.. actions] : [];
+
+    /// <summary>
+    /// 由最近一次 Scan 的可用選項推導的地壟狀態：
+    /// unscanned（沒掃過）／mature（可收穫）／empty（可播種）／growing（生長中，可護理或施肥）／unknown。
+    /// 注意：作物狀態無法從記憶體離線讀取，必須先呼叫 Scan 互動一次。
+    /// </summary>
+    public string GetPatchState(ulong gameObjectId)
+    {
+        if (!scannedActions.TryGetValue(gameObjectId, out var actions)) return "unscanned";
+        if (actions.Any(x => x.Contains(textHarvest, StringComparison.Ordinal))) return "mature";
+        if (actions.Any(x => x.Contains(textPlant, StringComparison.Ordinal))) return "empty";
+        if (actions.Any(x => x.Contains(textTend, StringComparison.Ordinal) ||
+                             x.Contains(textFertilize, StringComparison.Ordinal))) return "growing";
+        return "unknown";
+    }
+
+    /// <summary>
+    /// 對單一地壟排入一個動作。<paramref name="gameObjectId"/> 傳 0 代表使用目前的目標。
+    /// 回傳空字串代表已排入佇列，否則為 zh-TW 失敗原因。
+    /// </summary>
+    public string EnqueueSingle(GardenAction action, ulong gameObjectId, uint fertilizerItemId, uint seedItemId, uint soilItemId)
+    {
+        if (!IsEnabled) return "自動園圃作業模組未啟用（請在 TC Toolbox 設定視窗開啟）。";
+        if (queue.IsBusy) return $"目前有作業執行中（{queue.CurrentStep}），請先等待或呼叫 Stop。";
+
+        if (!TryGetGardenPatches(out var patches, out var error))
+            return error;
+
+        if (gameObjectId == 0)
+        {
+            var target = Svc.Targets.Target;
+            if (target == null) return "沒有指定地壟，且目前沒有選取任何目標。";
+            gameObjectId = target.GameObjectId;
+        }
+
+        if (!patches.Contains(gameObjectId))
+            return "指定的目標不是這座庭院附近的園圃地壟。";
+
+        var distance = GetPatchDistance(gameObjectId);
+        if (distance < 0 || distance > InteractRange)
+            return $"地壟距離太遠（{distance:F1} 碼，上限 {InteractRange} 碼），請先走近。";
+
+        switch (action)
+        {
+            case GardenAction.Fertilize when fertilizerItemId == 0 || FindInventoryItem(fertilizerItemId) == null:
+                return "背包內沒有指定的肥料。";
+            case GardenAction.Plant when seedItemId == 0 || soilItemId == 0:
+                return "播種必須同時指定種子與土壤 ItemId。";
+            case GardenAction.Plant when FindInventoryItem(seedItemId) == null || FindInventoryItem(soilItemId) == null:
+                return "背包內沒有指定的種子或土壤。";
+        }
+
+        doneCount = 0;
+        skippedCount = 0;
+        lastSummary = string.Empty;
+
+        EnqueuePatch(gameObjectId, action, fertilizerItemId, seedItemId, soilItemId);
+        queue.Enqueue("彙總結果", () =>
+        {
+            lastSummary = action == GardenAction.Scan
+                ? $"掃描完成：狀態 {GetPatchState(gameObjectId)}。"
+                : $"單格「{ActionText(action)}」完成：處理 {doneCount} 格、跳過 {skippedCount} 格。";
+            return true;
+        });
+
+        return string.Empty;
+    }
+
+    /// <summary>停止目前佇列中的所有作業。</summary>
+    public void StopBatch()
+    {
+        if (!queue.IsBusy) return;
+        queue.Abort();
+        lastSummary = $"已停止（完成 {doneCount} 格、跳過 {skippedCount} 格）。";
+    }
+
+    #endregion
+
     #region 設定 UI
 
     public override void DrawConfig()
@@ -465,7 +620,7 @@ public sealed unsafe class AutoGardensWork : TcModule
             ImGui.TextColored(new Vector4(1f, 0.85f, 0.35f, 1f), $"執行中：{queue.CurrentStep}（完成 {doneCount}／跳過 {skippedCount}）");
             if (ImGui.Button("停止批次"))
             {
-                queue.Abort();
+                StopBatch();
                 Svc.Chat.Print($"[TC Toolbox] 已手動停止園圃批次（完成 {doneCount} 格、跳過 {skippedCount} 格）。");
             }
 
@@ -506,6 +661,11 @@ public sealed unsafe class AutoGardensWork : TcModule
 
         if (ImGui.Button($"開始{textPlant}##garden"))
             StartBatch(GardenAction.Plant);
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.TextDisabled("本模組啟用時另提供 TCToolbox.Gardening.* IPC，讓本機腳本（如 SND）逐格操作；");
+        ImGui.TextDisabled("腳本只能一次操作一格，整座庭院的批次入口只有上面這些按鈕。");
     }
 
     /// <summary>種子／土壤／肥料清單資料驅動：Item 表 ItemUICategory 82（園藝用品），FilterGroup 20／21／22。</summary>

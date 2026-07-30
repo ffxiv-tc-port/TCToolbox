@@ -22,6 +22,9 @@ public sealed class Plugin : IDalamudPlugin
 
     private readonly MainWindow mainWindow;
 
+    /// <summary>自動園圃作業的 IPC 端點（供本機腳本細項操作用；與模組開關無關，恆常註冊）。</summary>
+    private readonly GardeningIpc gardeningIpc;
+
     public Plugin(IDalamudPluginInterface pluginInterface)
     {
         Instance = this;
@@ -52,6 +55,8 @@ public sealed class Plugin : IDalamudPlugin
             if (Config.EnabledModules.Contains(module.InternalName))
                 module.Enable();
         }
+
+        gardeningIpc = new GardeningIpc();
 
         mainWindow = new MainWindow(this);
         WindowSystem.AddWindow(mainWindow);
@@ -88,6 +93,8 @@ public sealed class Plugin : IDalamudPlugin
     public void Dispose()
     {
         Svc.Commands.RemoveHandler(Command);
+
+        gardeningIpc.Dispose();
 
         Svc.PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
         Svc.PluginInterface.UiBuilder.OpenConfigUi -= mainWindow.Toggle;
