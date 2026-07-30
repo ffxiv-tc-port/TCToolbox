@@ -23,6 +23,7 @@ namespace TCToolbox.Core;
 ///       Plant(id, 種子ItemId, 土壤ItemId) / Scan(id)</item>
 /// <item>狀態：IsAvailable() / GetUnavailableReason() / IsBusy() / GetCurrentStep() /
 ///       GetDoneCount() / GetSkippedCount() / GetLastSummary() / GetNearbyPatches() /
+///       GetNearbyPatchesOfKind("plot"|"pot") / GetPatchKind(id) /
 ///       GetPatchDistance(id) / GetPatchActions(id) / GetPatchState(id)</item>
 /// <item>控制：Stop()</item>
 /// </list>
@@ -54,6 +55,8 @@ public sealed class GardeningIpc : IDisposable
         RegisterFunc("GetSkippedCount", () => Module?.SkippedCount ?? 0);
         RegisterFunc("GetLastSummary", () => Module?.LastSummary ?? string.Empty);
         RegisterFunc<List<ulong>>("GetNearbyPatches", () => Module?.GetNearbyPatchIds() ?? []);
+        RegisterFunc<string, List<ulong>>("GetNearbyPatchesOfKind", kind => Module?.GetNearbyPatchIdsOfKind(kind) ?? []);
+        RegisterFunc<ulong, string>("GetPatchKind", id => Module?.GetPatchKind(id) ?? "unknown");
         RegisterFunc<ulong, float>("GetPatchDistance", id => Module?.GetPatchDistance(id) ?? -1f);
         RegisterFunc<ulong, List<string>>("GetPatchActions", id => Module?.GetScannedActions(id) ?? []);
         RegisterFunc<ulong, string>("GetPatchState", id => Module?.GetPatchState(id) ?? "unscanned");

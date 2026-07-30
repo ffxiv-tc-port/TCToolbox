@@ -31,15 +31,28 @@ public sealed unsafe class AutoGardensWork : TcModule
 {
     public override string InternalName => "AutoGardensWork";
     public override string DisplayName => "自動園圃作業";
-    public override string Description => "站在自家（或部隊）庭院的園圃旁，一鍵批次收穫／護理／施肥附近所有地壟；亦可選定種子與土壤後批次播種。距離太遠或狀態不符的地壟會自動跳過。";
+    public override string Description => "站在自家（或部隊）庭院的園圃、或房屋內的花盆旁，一鍵批次收穫／護理／施肥附近所有地壟與花盆；亦可選定種子與土壤後批次播種。距離太遠或狀態不符的會自動跳過。";
 
     public override bool HasConfigUI => true;
 
-    /// <summary>園圃地壟 EObj（EObjName 2003757「園圃」，事件 721047）。</summary>
+    /// <summary>庭院園圃地壟 EObj（EObjName 2003757「園圃」，CustomTalk 721047）。</summary>
     private const uint GardenPatchDataId = 2003757;
 
-    /// <summary>互動距離上限（碼）；超出的地壟跳過。</summary>
+    /// <summary>
+    /// 室內園藝花盆的 CustomTalk（721227）。與庭院地壟的 721047 是不同的 CustomTalk，
+    /// 但兩者的 Script 指令完全相同（PLANT_TITLE→Addon 6420、FC_AUTHORITY_SEEDING），
+    /// 也就是同一套選單／播種流程，所以可以共用同一個狀態機。
+    /// </summary>
+    private const uint PotCustomTalkId = 721227;
+
+    /// <summary>HousingFurniture.UsageType 的「園藝花盆」值；與 <see cref="PotCustomTalkId"/> 完全對應。</summary>
+    private const byte PotUsageType = 11;
+
+    /// <summary>互動距離上限（碼）；超出的跳過。</summary>
     private const float InteractRange = 6f;
+
+    /// <summary>搜尋半徑（碼）：室外庭院與室內房間都用同一個值。</summary>
+    private const float SearchRange = 30f;
 
     private const string GardeningTextSheet = "custom/001/CmnDefHousingGardeningPlant_00151";
 
@@ -51,6 +64,16 @@ public sealed unsafe class AutoGardensWork : TcModule
         Fertilize,
         Plant,
         Scan,
+    }
+
+    /// <summary>可種植物件的種類：庭院地壟或室內花盆。</summary>
+    public enum PatchKind
+    {
+        /// <summary>庭院園圃地壟（室外）。</summary>
+        Plot,
+
+        /// <summary>園藝花盆（室內家具）。</summary>
+        Pot,
     }
 
     private sealed class PatchJob
@@ -183,12 +206,16 @@ public sealed unsafe class AutoGardensWork : TcModule
         doneCount = 0;
         skippedCount = 0;
 
-        foreach (var patchId in patches)
+        foreach (var (patchId, _) in patches)
             EnqueuePatch(patchId, action, Config.FertilizerItemId, Config.SeedItemId, Config.SoilItemId);
+
+        var plotCount = patches.Count(x => x.Kind == PatchKind.Plot);
+        var potCount = patches.Count - plotCount;
 
         queue.Enqueue("彙總結果", () =>
         {
-            lastSummary = $"園圃「{ActionText(action)}」批次完成：處理 {doneCount} 格、跳過 {skippedCount} 格。";
+            lastSummary = $"園圃「{ActionText(action)}」批次完成：處理 {doneCount} 格、跳過 {skippedCount} 格"
+                        + $"（地壟 {plotCount}、花盆 {potCount}）。";
             Svc.Chat.Print($"[TC Toolbox] {lastSummary}");
             return true;
         });
@@ -398,9 +425,67 @@ public sealed unsafe class AutoGardensWork : TcModule
 
     #region 環境與物品
 
-    private static bool TryGetGardenPatches(out List<ulong> patchIds, out string error)
+    /// <summary>
+    /// 園藝花盆的顯示名稱集合，由 HousingFurniture 表推導（UsageType 11／CustomTalk 721227），
+    /// 台服 7.20 為海濱／林間／綠洲花盆三種。刻意不寫死字串：名稱由 Lumina 以 client 語言回傳，
+    /// 而且這樣會**排除**南瓜花盆之類純裝飾的花盆（它們 UsageType=0、不能種東西）。
+    /// </summary>
+    private static HashSet<string>? potNames;
+
+    private static HashSet<string> GetPotNames()
     {
-        patchIds = [];
+        if (potNames != null) return potNames;
+
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        try
+        {
+            foreach (var furniture in Svc.Data.GetExcelSheet<Lumina.Excel.Sheets.HousingFurniture>())
+            {
+                if (furniture.UsageType != PotUsageType && furniture.CustomTalk.RowId != PotCustomTalkId)
+                    continue;
+
+                var name = furniture.Item.ValueNullable?.Name.ExtractText();
+                if (!string.IsNullOrWhiteSpace(name))
+                    names.Add(name);
+            }
+        }
+        catch (Exception ex)
+        {
+            Svc.Log.Warning(ex, "[AutoGardensWork] 讀取園藝花盆清單失敗，本次只處理庭院地壟");
+        }
+
+        potNames = names;
+        return potNames;
+    }
+
+    /// <summary>
+    /// 判斷物件是不是可種植的容器。庭院地壟以 EObj DataId 判定（精準）；
+    /// 花盆是玩家擺放的家具，物件名稱＝家具道具名，所以比對由表推導出的名稱集合。
+    /// </summary>
+    private static bool TryClassify(Dalamud.Game.ClientState.Objects.Types.IGameObject obj, out PatchKind kind)
+    {
+        if (obj.ObjectKind == ObjectKind.EventObj && obj.BaseId == GardenPatchDataId)
+        {
+            kind = PatchKind.Plot;
+            return true;
+        }
+
+        // 花盆可能以 EventObj 或 Housing 兩種 ObjectKind 出現（未能離線確認實際值），
+        // 兩者都接受；真正的把關是名稱必須在園藝花盆集合內。
+        if (obj.ObjectKind is ObjectKind.EventObj or ObjectKind.Housing &&
+            GetPotNames().Contains(obj.Name.TextValue))
+        {
+            kind = PatchKind.Pot;
+            return true;
+        }
+
+        kind = default;
+        return false;
+    }
+
+    private static bool TryGetGardenPatches(out List<(ulong Id, PatchKind Kind)> patches, out string error)
+    {
+        patches = [];
         error = string.Empty;
 
         var localPlayer = Svc.Objects.LocalPlayer;
@@ -411,34 +496,51 @@ public sealed unsafe class AutoGardensWork : TcModule
         }
 
         var housing = HousingManager.Instance();
-        if (housing == null || housing->OutdoorTerritory == null)
+        if (housing == null || (housing->OutdoorTerritory == null && housing->IndoorTerritory == null))
         {
-            error = "必須站在住宅區的庭院（室外）才能使用園圃批次。";
+            error = "必須站在住宅區的庭院或房屋內才能使用園圃／花盆批次。";
             return false;
         }
 
-        var currentHouse = housing->GetCurrentHouseId().Id;
-        if (currentHouse == 0 || !IsOwnedHouse(currentHouse))
+        if (!HasGardenPermission(housing))
         {
-            error = "這裡不是你擁有（或有權限）的房屋庭院。";
+            error = "這裡不是你擁有（或有權限）的房屋。";
             return false;
         }
 
-        patchIds = Svc.Objects
-            .Where(o => o.ObjectKind == ObjectKind.EventObj &&
-                        o.BaseId == GardenPatchDataId &&
-                        Vector3.Distance(localPlayer.Position, o.Position) <= 30f)
-            .OrderBy(o => Vector3.Distance(localPlayer.Position, o.Position))
-            .Select(o => o.GameObjectId)
-            .ToList();
-
-        if (patchIds.Count == 0)
+        var found = new List<(ulong Id, PatchKind Kind, float Distance)>();
+        foreach (var obj in Svc.Objects)
         {
-            error = "附近沒有園圃地壟（請站到園圃旁）。";
+            var distance = Vector3.Distance(localPlayer.Position, obj.Position);
+            if (distance > SearchRange) continue;
+            if (!TryClassify(obj, out var kind)) continue;
+            found.Add((obj.GameObjectId, kind, distance));
+        }
+
+        patches = [.. found.OrderBy(x => x.Distance).Select(x => (x.Id, x.Kind))];
+
+        if (patches.Count == 0)
+        {
+            error = "附近沒有園圃地壟或園藝花盆（請站到園圃／花盆旁）。";
             return false;
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// 是否有權在此處園藝。主要依遊戲自己的權限判定 <c>HasHousePermissions</c>（室內外皆適用），
+    /// 並保留原本的自宅 HouseId 比對作為後援，避免改動既有的室外行為。
+    /// </summary>
+    private static bool HasGardenPermission(HousingManager* housing)
+    {
+        if (housing->HasHousePermissions()) return true;
+
+        var outdoorId = housing->GetCurrentHouseId().Id;
+        if (outdoorId != 0 && IsOwnedHouse(outdoorId)) return true;
+
+        var indoorId = housing->GetCurrentIndoorHouseId().Id;
+        return indoorId != 0 && IsOwnedHouse(indoorId);
     }
 
     private static bool IsOwnedHouse(ulong houseId)
@@ -514,11 +616,35 @@ public sealed unsafe class AutoGardensWork : TcModule
         return TryGetGardenPatches(out _, out var error) ? string.Empty : error;
     }
 
-    /// <summary>附近（30 碼內）園圃地壟的 GameObjectId，依距離排序；環境不符時回空清單。</summary>
+    /// <summary>附近（30 碼內）可種植物件的 GameObjectId，依距離排序；環境不符時回空清單。含地壟與花盆。</summary>
     public List<ulong> GetNearbyPatchIds() =>
-        TryGetGardenPatches(out var patches, out _) ? patches : [];
+        TryGetGardenPatches(out var patches, out _) ? [.. patches.Select(x => x.Id)] : [];
 
-    /// <summary>地壟與玩家的距離（碼）；找不到時回 -1。</summary>
+    /// <summary>
+    /// 只取指定種類的可種植物件；<paramref name="kind"/> 傳 "plot"（庭院地壟）或 "pot"（園藝花盆），
+    /// 其他值視為全部。
+    /// </summary>
+    public List<ulong> GetNearbyPatchIdsOfKind(string kind)
+    {
+        if (!TryGetGardenPatches(out var patches, out _)) return [];
+
+        return kind switch
+        {
+            "plot" => [.. patches.Where(x => x.Kind == PatchKind.Plot).Select(x => x.Id)],
+            "pot" => [.. patches.Where(x => x.Kind == PatchKind.Pot).Select(x => x.Id)],
+            _ => [.. patches.Select(x => x.Id)],
+        };
+    }
+
+    /// <summary>該物件的種類："plot"（庭院地壟）／"pot"（園藝花盆）／"unknown"（不是可種植物件）。</summary>
+    public string GetPatchKind(ulong gameObjectId)
+    {
+        var obj = Svc.Objects.SearchById(gameObjectId);
+        if (obj == null || !TryClassify(obj, out var kind)) return "unknown";
+        return kind == PatchKind.Plot ? "plot" : "pot";
+    }
+
+    /// <summary>物件與玩家的距離（碼）；找不到時回 -1。</summary>
     public float GetPatchDistance(ulong gameObjectId)
     {
         var localPlayer = Svc.Objects.LocalPlayer;
@@ -562,16 +688,16 @@ public sealed unsafe class AutoGardensWork : TcModule
         if (gameObjectId == 0)
         {
             var target = Svc.Targets.Target;
-            if (target == null) return "沒有指定地壟，且目前沒有選取任何目標。";
+            if (target == null) return "沒有指定地壟／花盆，且目前沒有選取任何目標。";
             gameObjectId = target.GameObjectId;
         }
 
-        if (!patches.Contains(gameObjectId))
-            return "指定的目標不是這座庭院附近的園圃地壟。";
+        if (!patches.Any(x => x.Id == gameObjectId))
+            return "指定的目標不是附近的園圃地壟或園藝花盆。";
 
         var distance = GetPatchDistance(gameObjectId);
         if (distance < 0 || distance > InteractRange)
-            return $"地壟距離太遠（{distance:F1} 碼，上限 {InteractRange} 碼），請先走近。";
+            return $"距離太遠（{distance:F1} 碼，上限 {InteractRange} 碼），請先走近。";
 
         switch (action)
         {
@@ -627,7 +753,7 @@ public sealed unsafe class AutoGardensWork : TcModule
             return;
         }
 
-        ImGui.TextUnformatted("批次作業（對附近所有地壟）：");
+        ImGui.TextUnformatted("批次作業（對附近所有地壟與花盆）：");
         if (ImGui.Button($"{textHarvest}##garden"))
             StartBatch(GardenAction.Harvest);
         ImGui.SameLine();
@@ -645,7 +771,7 @@ public sealed unsafe class AutoGardensWork : TcModule
 
         ImGui.Spacing();
         ImGui.Separator();
-        ImGui.TextUnformatted($"{textPlant}（先選種子與土壤，會種滿附近所有空地壟）：");
+        ImGui.TextUnformatted($"{textPlant}（先選種子與土壤，會種滿附近所有空地壟與空花盆）：");
 
         DrawItemCombo("種子", seedItems!, ref seedSearch, Config.SeedItemId, id =>
         {
@@ -664,6 +790,9 @@ public sealed unsafe class AutoGardensWork : TcModule
 
         ImGui.Spacing();
         ImGui.Separator();
+        ImGui.TextDisabled($"支援庭院園圃地壟與室內園藝花盆（{string.Join("／", GetPotNames())}）；");
+        ImGui.TextDisabled("純裝飾用的花盆（例如南瓜花盆）不能種東西，不會被列入。");
+        ImGui.Spacing();
         ImGui.TextDisabled("本模組啟用時另提供 TCToolbox.Gardening.* IPC，讓本機腳本（如 SND）逐格操作；");
         ImGui.TextDisabled("腳本只能一次操作一格，整座庭院的批次入口只有上面這些按鈕。");
     }
