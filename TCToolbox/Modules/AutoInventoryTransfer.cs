@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Runtime.InteropServices;
 using System.Collections.Generic;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Keys;
@@ -17,8 +18,14 @@ namespace TCToolbox.Modules;
 /// <summary>
 /// 自動物品頁面轉移：按住指定鍵右鍵點物品，直接把它搬到對應的另一個頁面。
 /// 機制：hook 遊戲自己的「開啟物品右鍵選單」函式當觸發點（位址由 ClientStructs 解析，
-/// 不自帶 sig），符合條件時呼叫 <c>InventoryManager.MoveItemSlot</c>（＝遊戲拖放用的同一條路徑）
-/// 並關掉右鍵選單。零封包偽造、不寫記憶體、不做 patch。
+/// 不自帶 sig），符合條件時執行搬移並關掉右鍵選單。零封包偽造、不寫記憶體、不做 patch。
+///
+/// ⚠️ 搬移用哪條路徑要看容器：
+///  - **雇員**：走遊戲自己的雇員道具命令（見 <see cref="RetainerItemCommandDelegate"/>）。
+///    `MoveItemSlot` 在這裡會「假成功」——本機更新了但伺服器根本沒收到。
+///  - **其他**（部隊置物櫃／鞍袋／兵裝庫）：仍用 <c>InventoryManager.MoveItemSlot</c>。
+///    🔴 鞍袋已知同樣有假成功的情形（2026-07-31 實機），但目前還沒有實測有效的替代
+///    入口可用，所以**尚未修好**；不要把這段敘述當成它已經可靠。
 /// 參考 DailyRoutines AutoInventoryTransfer 的用途重寫（API13、無 OmenTools 相依）。
 /// </summary>
 public sealed unsafe class AutoInventoryTransfer : TcModule
@@ -45,6 +52,46 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         AgentInventoryContext* agent, InventoryType inventoryType, int slot, int a4, uint addonId);
 
     private Hook<OpenForItemSlotDelegate>? openForItemSlotHook;
+
+    /// <summary>
+    /// 🔴 雇員存取不能用 <c>InventoryManager.MoveItemSlot</c>。
+    ///
+    /// 2026-07-31 實機 log 證實：對 RetainerPage 呼叫 MoveItemSlot 會「成功」——回傳 0、
+    /// 本機容器立刻更新、來源格清空 —— 但**伺服器從來沒收到**。決定性證據是 17:55 那批：
+    ///   17:55:07  RetainerPage2#9 → Inventory1#20 itemId=45637 verified=True
+    ///   17:55:47  RetainerPage2#9 → Inventory1#20 itemId=45637 verified=True   ← 40 秒後一模一樣
+    /// 同一格、同一道具、同一目的地整批七筆重來，代表第一批完全沒生效、道具還在雇員身上，
+    /// 只是本機狀態被樂觀改掉、直到下一次伺服器同步才還原。
+    /// （所以先前那個 800ms 的延遲確認也抓不到——退回發生得比它晚太多。）
+    ///
+    /// 正解是走遊戲自己的雇員道具命令，也就是右鍵選單「取回／寄放」實際呼叫的函式。
+    /// 特徵碼與 agent 取法都照抄 AutoRetainer（`Internal/Memory.cs`、`InventorySpaceManager.cs`），
+    /// 那是**當天實測有效**的：log 裡 20:40 有 AutoRetainer 自己的自動化連續呼叫
+    /// slot 0→6（由 NeoTaskManager 驅動，不是旁觀遊戲），證明特徵碼與 +40 偏移在台服 7.20 都對。
+    /// </summary>
+    private delegate void RetainerItemCommandDelegate(
+        nint agentRetainerItemCommandModule, uint slot, InventoryType inventoryType,
+        uint a4, RetainerItemCommand command);
+
+    private const string RetainerItemCommandSig =
+        "48 89 5C 24 ?? 48 89 6C 24 ?? 48 89 74 24 ?? 57 48 83 EC 30 48 8B 5C 24 ?? 41 8B F0";
+
+    private RetainerItemCommandDelegate? retainerItemCommand;
+
+    private enum RetainerItemCommand : long
+    {
+        RetrieveFromRetainer = 0,
+        EntrustToRetainer = 1,
+    }
+
+    /// <summary>雇員道具命令模組。⚠️ `+ 40` 是未文件化偏移，照抄 AutoRetainer 的實測值。</summary>
+    private static nint GetAgentRetainerItemCommandModule()
+    {
+        var agentModule = AgentModule.Instance();
+        if (agentModule == null) return 0;
+        var agent = agentModule->GetAgentByInternalId(AgentId.Retainer);
+        return agent == null ? 0 : (nint)agent + 40;
+    }
 
     private static readonly InventoryType[] PlayerBags =
         [InventoryType.Inventory1, InventoryType.Inventory2, InventoryType.Inventory3, InventoryType.Inventory4];
@@ -109,6 +156,19 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         openForItemSlotHook = Svc.Hooks.HookFromAddress<OpenForItemSlotDelegate>(
             AgentInventoryContext.Addresses.OpenForItemSlot.Value, OpenForItemSlotDetour);
         openForItemSlotHook.Enable();
+
+        // 解析不到就讓 retainerItemCommand 留 null，雇員轉移會明確告知而不是靜默走錯路徑。
+        if (Svc.SigScanner.TryScanText(RetainerItemCommandSig, out var retainerCmdAddr))
+        {
+            retainerItemCommand =
+                Marshal.GetDelegateForFunctionPointer<RetainerItemCommandDelegate>(retainerCmdAddr);
+            Svc.Log.Information($"[{InternalName}] 雇員道具命令位址 0x{retainerCmdAddr:X}");
+        }
+        else
+        {
+            Svc.Log.Warning($"[{InternalName}] 找不到雇員道具命令的特徵碼，雇員轉移將無法使用。");
+        }
+
         Svc.Framework.Update += OnUpdate;
     }
 
@@ -153,6 +213,42 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
             if (Config.NotifyOnTransfer)
                 Svc.Chat.Print($"[TC Toolbox] 已轉移「{p.DisplayName}」。");
         }
+    }
+
+    /// <summary>
+    /// 走遊戲自己的雇員道具命令。與 MoveItemSlot 不同，這條會真的送到伺服器，
+    /// 落點也由遊戲決定（取回進背包空位／寄放進雇員空位）。
+    /// </summary>
+    private void TransferViaRetainerCommand(
+        AgentInventoryContext* agent, InventoryType source, int slot,
+        uint itemId, string displayName, bool retrieving)
+    {
+        if (retainerItemCommand == null)
+        {
+            if (Throttle.Pass("AutoInventoryTransfer-NoRetainerCmd", 3_000))
+                Svc.Chat.PrintError($"[TC Toolbox] 找不到雇員道具命令，「{displayName}」未轉移，請改用手動拖放。");
+            return;
+        }
+
+        var module = GetAgentRetainerItemCommandModule();
+        if (module == 0)
+        {
+            if (Throttle.Pass("AutoInventoryTransfer-NoRetainerAgent", 3_000))
+                Svc.Chat.PrintError($"[TC Toolbox] 雇員視窗未就緒，「{displayName}」未轉移。");
+            return;
+        }
+
+        var command = retrieving
+            ? RetainerItemCommand.RetrieveFromRetainer
+            : RetainerItemCommand.EntrustToRetainer;
+
+        Svc.Log.Debug($"[{InternalName}] 雇員命令 {command}：{source}#{slot} itemId={itemId}");
+        retainerItemCommand(module, (uint)slot, source, 0, command);
+
+        CloseContextMenu(agent);
+
+        if (Config.NotifyOnTransfer)
+            Svc.Chat.Print($"[TC Toolbox] 已{(retrieving ? "取回" : "寄放")}「{displayName}」。");
     }
 
     private void OpenForItemSlotDetour(
@@ -202,6 +298,19 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         lastHandledSlot = slot;
         lastHandledItemId = itemId;
         lastHandledTick = Environment.TickCount64;
+
+        // 🔴 雇員方向優先走遊戲自己的道具命令（見 RetainerItemCommandDelegate 的說明）。
+        // 這條路徑由遊戲決定落點，所以不需要我們自己挑目的地格。
+        var sourceIsRetainer = Array.IndexOf(RetainerPages, source) >= 0;
+        var retainerWindowOpen = GetAgentRetainerItemCommandModule() != 0
+            && (Svc.GameGui.GetAddonByName("InventoryRetainer", 1).Address != nint.Zero
+                || Svc.GameGui.GetAddonByName("InventoryRetainerLarge", 1).Address != nint.Zero);
+
+        if (sourceIsRetainer || (retainerWindowOpen && Array.IndexOf(PlayerBags, source) >= 0))
+        {
+            TransferViaRetainerCommand(agent, source, slot, itemId, displayName, sourceIsRetainer);
+            return;
+        }
 
         if (!TryResolveDestination(source, out var candidates, out var reason))
         {
