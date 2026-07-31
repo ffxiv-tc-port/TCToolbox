@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Collections.Generic;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Keys;
+using Dalamud.Game.Gui.ContextMenu;
 using Dalamud.Game.Text;
 using Dalamud.Hooking;
 using FFXIVClientStructs.FFXIV.Client.Game;
@@ -18,8 +19,19 @@ namespace TCToolbox.Modules;
 
 /// <summary>
 /// 自動物品頁面轉移：按住指定鍵右鍵點物品，直接把它搬到對應的另一個頁面。
-/// 機制：hook 遊戲自己的「開啟物品右鍵選單」函式當觸發點（位址由 ClientStructs 解析，
-/// 不自帶 sig），符合條件時執行搬移並關掉右鍵選單。零封包偽造、不寫記憶體、不做 patch。
+/// 零封包偽造、不寫記憶體、不做 patch。
+///
+/// ⚠️ 觸發點有**兩個**，因為單靠任一個都蓋不全（2026-08-01 實機釐清）：
+///  1. hook <c>AgentInventoryContext.OpenForItemSlot</c>：同步、資訊最完整，
+///     但**只有玩家背包會走這個函式**。實機 log 全部的觸發紀錄清一色是 Inventory*，
+///     部隊置物櫃右鍵**一次都沒有**進來過。
+///  2. Dalamud 的 <c>IContextMenu.OnMenuOpened</c>：它掛在 <c>RaptureAtkModule</c> vtable[22]，
+///     只要開的是 ContextMenu 且 agent 是 AgentInventoryContext 就會觸發，**跟哪個函式開的無關**，
+///     所以部隊置物櫃也蓋得到（同一份 log 裡 InventoryTools 就是靠這個看到 FreeCompanyChest 的）。
+///     ⚠️ 它在 addon 真正開起來**之前**觸發，所以只能先記下來、下一個 framework tick 再執行。
+///
+/// 兩者對背包會重複觸發，靠 <see cref="DuplicateGuardMs"/> 的同格同物去重：
+/// hook 是同步的、先跑完並設好 lastHandled*，延後那筆就會被擋掉。
 ///
 /// ⚠️ 搬移用哪條路徑要看容器：
 ///  - **雇員**：走遊戲自己的雇員道具命令（見 <see cref="RetainerItemCommandDelegate"/>）。
@@ -27,8 +39,6 @@ namespace TCToolbox.Modules;
 ///  - **鞍袋**：點遊戲右鍵選單自己的項目（見 <see cref="TryFireContextMenuEntry"/>）。
 ///    它同樣不能用 MoveItemSlot，而且**不走**雇員道具命令（實機驗證過）。
 ///  - **其他**（部隊置物櫃／兵裝庫）：仍用 <c>InventoryManager.MoveItemSlot</c>。
-///    ⚠️ 部隊置物櫃也是伺服器權威容器，理論上有同樣的假成功風險，但尚未實測；
-///    真的遇到就照鞍袋那條路加對應的 Addon row 即可。
 /// 參考 DailyRoutines AutoInventoryTransfer 的用途重寫（API13、無 OmenTools 相依）。
 /// </summary>
 public sealed unsafe class AutoInventoryTransfer : TcModule
@@ -138,21 +148,35 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
 
     /// <summary>
     /// 等伺服器確認的轉移。雇員／部隊置物櫃／鞍袋是伺服器權威容器，MoveItemSlot 只是先改
-    /// 本機狀態，伺服器拒絕時道具會彈回原處，所以要延遲一段時間再回頭確認。
+    /// 本機狀態，伺服器拒絕時道具會彈回原處。
     /// </summary>
     private readonly record struct PendingVerification(
-        InventoryType Source, int Slot, uint BaseItemId, string DisplayName, long DeadlineTick);
+        InventoryType Source, int Slot,
+        InventoryType Destination, int DestinationSlot,
+        uint BaseItemId, string DisplayName, long DeadlineTick);
 
     private readonly List<PendingVerification> pendingVerifications = [];
 
-    /// <summary>等伺服器回應的時間。太短會誤報成功，太長則回饋遲鈍。</summary>
-    private const int RollbackCheckDelayMs = 800;
+    /// <summary>
+    /// 🔴 觀察退回的時間長度。**不是**「等這麼久再看一眼」——是「持續盯到這麼久為止」。
+    ///
+    /// 原本寫 800ms 而且只在期限到的那一刻檢查一次，這是錯的工具：2026-08-01 實機那筆
+    /// 部隊置物櫃存入，伺服器的拒絕（「無法保存道具，其他玩家正在使用儲物櫃。」）
+    /// 是在 **5.1 秒後**才到的（02:04:52.166 搬移 → 02:04:57.281 錯誤訊息），
+    /// 800ms 的窗口從頭到尾都在「還沒退回」的狀態，必然誤報成功。
+    /// ⚠️ 這跟先前修雇員時踩過的是同一個坑，別再把它調回短窗口。
+    /// </summary>
+    private const int RollbackWatchMs = 12_000;
 
-    /// <summary>來源是不是伺服器權威的容器（本機容器之間的搬移不需要延遲確認）。</summary>
-    private static bool IsServerAuthoritative(InventoryType source)
-        => Array.IndexOf(RetainerPages, source) >= 0
-        || Array.IndexOf(FreeCompanyPages, source) >= 0
-        || Array.IndexOf(SaddleBags, source) >= 0;
+    /// <summary>
+    /// 這次搬移需不需要盯退回。**兩邊都要看**：來源是權威容器（取出）固然要，
+    /// 目的地是權威容器（存入）一樣要——原本只驗來源，所以「背包→部隊置物櫃」
+    /// 這個方向完全不進確認流程，伺服器退回時我們早就印了「已轉移」。
+    /// </summary>
+    private static bool IsServerAuthoritative(InventoryType type)
+        => Array.IndexOf(RetainerPages, type) >= 0
+        || Array.IndexOf(FreeCompanyPages, type) >= 0
+        || Array.IndexOf(SaddleBags, type) >= 0;
 
     protected override void OnEnable()
     {
@@ -172,15 +196,20 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
             Svc.Log.Warning($"[{InternalName}] 找不到雇員道具命令的特徵碼，雇員轉移將無法使用。");
         }
 
+        // 第二個觸發點：部隊置物櫃不走 OpenForItemSlot，只有這條蓋得到（見類別說明）。
+        Svc.ContextMenu.OnMenuOpened += OnMenuOpened;
+
         Svc.Framework.Update += OnUpdate;
     }
 
     protected override void OnDisable()
     {
         Svc.Framework.Update -= OnUpdate;
+        Svc.ContextMenu.OnMenuOpened -= OnMenuOpened;
         openForItemSlotHook?.Dispose();
         openForItemSlotHook = null;
 
+        pendingMenu = null;
         pendingVerifications.Clear();
         lastHandledSource = InventoryType.Invalid;
         lastHandledSlot = -1;
@@ -188,33 +217,87 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         lastHandledTick = 0;
     }
 
+    /// <summary>
+    /// 由 <see cref="OnMenuOpened"/> 記下、下一個 framework tick 才執行的右鍵選單。
+    /// ⚠️ 不能在 OnMenuOpened 當下就做事：那時 ContextMenu addon 還沒開起來，
+    /// <c>agent-&gt;AgentInterface.GetAddonId()</c> 拿到的是上一個選單（或 0）。
+    /// </summary>
+    private (InventoryType Source, int Slot)? pendingMenu;
+
+    private void OnMenuOpened(IMenuOpenedArgs args)
+    {
+        if (Config.ModifierKeyCode == 0) return;
+        if (args.MenuType != ContextMenuType.Inventory) return;
+
+        // TargetItem 拿不到就無從動作。這一行是給實機驗證用的：如果部隊置物櫃右鍵之後
+        // 連下一幀的「右鍵選單開啟」都沒有，就要靠這行分辨是「這裡沒收到」還是
+        //「收到了但 TargetInventorySlot 是空的」——兩者的下一步完全不同。
+        if (args.Target is not MenuTargetInventory inv || inv.TargetItem is not { } item)
+        {
+            Svc.Log.Information(
+                $"[{InternalName}] 收到道具右鍵選單（addon={args.AddonName ?? "?"}）但讀不到目標道具。");
+            return;
+        }
+
+        // GameInventoryType 的數值與 InventoryType 完全一致（Inventory1=0 … FreeCompanyPage1=20000）。
+        pendingMenu = ((InventoryType)(ushort)item.ContainerType, (int)item.InventorySlot);
+    }
+
     private void OnUpdate(IFramework _)
     {
+        if (pendingMenu is { } menu)
+        {
+            pendingMenu = null;
+            var agent = AgentInventoryContext.Instance();
+            if (agent != null)
+            {
+                try
+                {
+                    HandleContextMenu(agent, menu.Source, menu.Slot);
+                }
+                catch (Exception ex)
+                {
+                    Svc.Log.Error(ex, $"[{InternalName}] 處理延後的右鍵轉移時發生例外");
+                }
+            }
+        }
+
         if (pendingVerifications.Count == 0) return;
 
         var now = Environment.TickCount64;
         var manager = InventoryManager.Instance();
+        if (manager == null) return;
 
         for (var i = pendingVerifications.Count - 1; i >= 0; i--)
         {
             var p = pendingVerifications[i];
-            if (now < p.DeadlineTick) continue;
-            pendingVerifications.RemoveAt(i);
 
-            if (manager == null) continue;
+            // 🔴 每一幀都看，不是等到期限才看一眼。退回可能要好幾秒才回來，
+            // 但也可能一秒內就回來——只在期限那一刻取樣，兩種都會漏。
+            //
+            // 兩個方向的退回長得不一樣，所以兩個都驗：
+            //   取出被退回 → 道具**回到來源格**
+            //   存入被退回 → 道具**從目的地格消失**（部隊置物櫃 2026-08-01 實機就是這個）
+            var backAtSource = IsItemAt(manager, p.Source, p.Slot, p.BaseItemId);
+            var goneFromDestination = !IsItemAt(manager, p.Destination, p.DestinationSlot, p.BaseItemId);
 
-            // 道具又回到來源格 = 伺服器把它退回來了，先前那次「成功」是假的。
-            if (IsItemAt(manager, p.Source, p.Slot, p.BaseItemId))
+            if (backAtSource || goneFromDestination)
             {
-                Svc.Log.Debug($"[{InternalName}] 伺服器退回：{p.Source}#{p.Slot} itemId={p.BaseItemId}");
+                pendingVerifications.RemoveAt(i);
+                Svc.Log.Warning(
+                    $"[{InternalName}] 伺服器退回：{p.Source}#{p.Slot} → {p.Destination}#{p.DestinationSlot} " +
+                    $"itemId={p.BaseItemId} 回到來源={backAtSource} 目的地消失={goneFromDestination} " +
+                    $"（搬移後 {RollbackWatchMs - (p.DeadlineTick - now)}ms）");
+
                 if (Throttle.Pass("AutoInventoryTransfer-RolledBack", 3_000))
                     Svc.Chat.PrintError(
-                        $"[TC Toolbox] 「{p.DisplayName}」沒有真的轉移過去（伺服器已退回原處），請改用手動拖放。");
+                        $"[TC Toolbox] 「{p.DisplayName}」沒有真的轉移過去（伺服器已退回），請改用手動拖放。");
                 continue;
             }
 
-            if (Config.NotifyOnTransfer)
-                Svc.Chat.Print($"[TC Toolbox] 已轉移「{p.DisplayName}」。");
+            // 盯滿了都沒退回才算數，靜默移除（成功訊息在搬移當下就印過了）。
+            if (now >= p.DeadlineTick)
+                pendingVerifications.RemoveAt(i);
         }
     }
 
@@ -299,12 +382,22 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
             if (index == -1 && labels[entry] == wanted) index = entry;
         }
 
+        // 選單長相一律記下來（Information 級，因為使用者的記錄等級會濾掉 DBG）。
+        // 「▸」標的是被收進二級指令的項目——那是最可能讓找不到的原因，
+        // 而且從錯誤訊息裡看不出來，只能靠這行分辨「沒有這個項目」與「在二級選單裡」。
+        var dump = new string[itemCount];
+        for (var entry = 0; entry < itemCount; entry++)
+        {
+            var inSubmenu = (agent->ContextItemSubmenuMask & (1u << entry)) != 0;
+            dump[entry] = $"{entry}{(inSubmenu ? "▸" : "")}:{labels[entry]}";
+        }
+
+        Svc.Log.Information(
+            $"[{InternalName}] 找「{wanted}」→ {(index == -1 ? "沒找到" : $"第 {index} 項")}；" +
+            $"選單 {itemCount} 項（起點 EventParams[{startIndex}]，▸＝二級指令）：{string.Join(" | ", dump)}");
+
         if (index == -1)
         {
-            Svc.Log.Warning(
-                $"[{InternalName}] 右鍵選單裡找不到「{wanted}」，「{displayName}」未轉移。" +
-                $"選單有 {itemCount} 項（起點 EventParams[{startIndex}]）：" +
-                string.Join(" | ", labels));
             if (Throttle.Pass("AutoInventoryTransfer-NoMenuEntry", 3_000))
                 Svc.Chat.PrintError($"[TC Toolbox] 右鍵選單裡找不到「{wanted}」，「{displayName}」未轉移。");
             return false;
@@ -370,11 +463,12 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         if (Config.ModifierKeyCode == 0) return;
         if (CSFramework.Instance()->WindowInactive) return;
 
-        // 2026-08-01：部隊置物櫃「取出」時完全沒有任何輸出，連下面「讀不到來源格」那行都沒有，
-        // 代表在更前面就 return 了。這一行記在修飾鍵檢查**之前**，才分得出是
-        //「hook 沒被呼叫」還是「修飾鍵沒按到」。只有右鍵才會觸發，不會洗版。
+        // 2026-08-01：這行救了一次診斷——部隊置物櫃右鍵時它**完全沒出現**，
+        // 而它記在修飾鍵檢查之前，所以直接證明是「hook 根本沒被呼叫」而不是「修飾鍵沒按到」，
+        // 才找到 OpenForItemSlot 不是置物櫃入口這件事。留著，並改成 Information
+        // （使用者的記錄等級會濾掉 DBG，DBG 只是這台機器剛好開著）。只有右鍵才觸發，不會洗版。
         var modifierHeld = Svc.Keys[(VirtualKey)Config.ModifierKeyCode];
-        Svc.Log.Debug($"[{InternalName}] 右鍵選單開啟：{source}#{slot} 修飾鍵={(modifierHeld ? "有按" : "沒按")}");
+        Svc.Log.Information($"[{InternalName}] 右鍵選單開啟：{source}#{slot} 修飾鍵={(modifierHeld ? "有按" : "沒按")}");
 
         if (!modifierHeld) return;
 
@@ -498,24 +592,25 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
 
         CloseContextMenu(agent);
 
-        // 🔴 立即檢查通過「不代表真的拿到了」。
+        if (Config.NotifyOnTransfer)
+            Svc.Chat.Print($"[TC Toolbox] 已轉移「{displayName}」。");
+
+        // 🔴 立即檢查通過「不代表真的搬過去了」。
         // 雇員／部隊置物櫃／鞍袋是伺服器權威的容器：MoveItemSlot 只是樂觀地先改本機狀態，
-        // 伺服器若拒絕（或稍後重新同步），道具會彈回原處 —— 而我們早就印了「已轉移」。
-        // 實機徵狀就是「有時候顯示有拿到，實際上沒拿出來」（2026-07-31 使用者回報）。
+        // 伺服器若拒絕，道具會彈回原處 —— 而我們早就印了「已轉移」。
         //
         // ⚠️ 原本這裡引用 AutoDuty AutoEquipHelper「呼叫後立刻回讀就能判定」當依據，
         //    但那個先例搬的是裝備欄↔兵裝庫，都是本機容器，本機更新即最終狀態。
         //    跨伺服器容器不適用。
-        if (IsServerAuthoritative(source))
+        //
+        // 上面的「已轉移」照樣先印（畫面上道具確實動了，不印反而更困惑），
+        // 真的被退回時再補一則錯誤訊息蓋掉它。
+        if (IsServerAuthoritative(source) || IsServerAuthoritative(destination))
         {
             pendingVerifications.Add(new PendingVerification(
-                source, slot, baseItemId, displayName,
-                Environment.TickCount64 + RollbackCheckDelayMs));
-            return;
+                source, slot, destination, destinationSlot, baseItemId, displayName,
+                Environment.TickCount64 + RollbackWatchMs));
         }
-
-        if (Config.NotifyOnTransfer)
-            Svc.Chat.Print($"[TC Toolbox] 已轉移「{displayName}」。");
     }
 
     /// <summary>道具名稱一律走 Lumina Item 表（台服自帶繁中），不讀 addon 上的文字。</summary>
