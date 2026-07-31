@@ -227,20 +227,81 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
     private void OnMenuOpened(IMenuOpenedArgs args)
     {
         if (Config.ModifierKeyCode == 0) return;
-        if (args.MenuType != ContextMenuType.Inventory) return;
 
-        // TargetItem 拿不到就無從動作。這一行是給實機驗證用的：如果部隊置物櫃右鍵之後
-        // 連下一幀的「右鍵選單開啟」都沒有，就要靠這行分辨是「這裡沒收到」還是
-        //「收到了但 TargetInventorySlot 是空的」——兩者的下一步完全不同。
-        if (args.Target is not MenuTargetInventory inv || inv.TargetItem is not { } item)
+        if (args.MenuType == ContextMenuType.Inventory)
         {
-            Svc.Log.Information(
-                $"[{InternalName}] 收到道具右鍵選單（addon={args.AddonName ?? "?"}）但讀不到目標道具。");
+            if (args.Target is not MenuTargetInventory inv || inv.TargetItem is not { } item)
+            {
+                Svc.Log.Information(
+                    $"[{InternalName}] 收到道具右鍵選單（addon={args.AddonName ?? "?"}）但讀不到目標道具。");
+                return;
+            }
+
+            // GameInventoryType 的數值與 InventoryType 完全一致（Inventory1=0 … FreeCompanyPage1=20000）。
+            pendingMenu = ((InventoryType)(ushort)item.ContainerType, (int)item.InventorySlot);
             return;
         }
 
-        // GameInventoryType 的數值與 InventoryType 完全一致（Inventory1=0 … FreeCompanyPage1=20000）。
-        pendingMenu = ((InventoryType)(ushort)item.ContainerType, (int)item.InventorySlot);
+        // 🔴 部隊置物櫃的右鍵選單**不是道具選單**。
+        // 2026-08-01 實機證實：Dalamud 只在 agent 是 AgentInventoryContext 時才標成
+        // ContextMenuType.Inventory，而部隊置物櫃走的是 AgentContext（一般選單），
+        // 所以 MenuType 是 Default、MenuTargetInventory 拿不到、`OpenForItemSlot` 也不會被呼叫
+        // ——兩條路同時斷在同一個原因上，這就是它一直沒反應的真正理由。
+        //
+        // 一般選單給不了容器與格號，只好從「滑鼠正懸停在哪個道具上」反推。
+        // ⚠️ 不去讀 AgentContext 的選單項目來點：那需要未經驗證的索引對應，
+        //    而部隊置物櫃的選單裡有「丟棄」，點錯一格的代價太高。
+        if (args.AddonName != "FreeCompanyChest") return;
+
+        if (!TryResolveHoveredFreeCompanySlot(out var source, out var slot))
+        {
+            Svc.Log.Information(
+                $"[{InternalName}] 部隊置物櫃右鍵，但對不出懸停的格號（HoveredItem={Svc.GameGui.HoveredItem}）。");
+            return;
+        }
+
+        pendingMenu = (source, slot);
+    }
+
+    /// <summary>
+    /// 用 <c>GameGui.HoveredItem</c> 反推部隊置物櫃裡的來源格。
+    /// 同款道具有多份時取第一個——對「把這個拿出來」而言彼此可互換。
+    /// </summary>
+    private static bool TryResolveHoveredFreeCompanySlot(out InventoryType source, out int slot)
+    {
+        source = InventoryType.Invalid;
+        slot = -1;
+
+        var hovered = Svc.GameGui.HoveredItem;
+        if (hovered == 0) return false;
+
+        // HoveredItem 的 HQ 是 +1000000（和 InventoryItem.ItemId 的編碼方式不同）。
+        var wantedId = (uint)(hovered % 1_000_000);
+        var wantHq = hovered >= 1_000_000;
+        if (wantedId == 0) return false;
+
+        var manager = InventoryManager.Instance();
+        if (manager == null) return false;
+
+        foreach (var page in FreeCompanyPages)
+        {
+            var container = manager->GetInventoryContainer(page);
+            if (container == null || !container->IsLoaded) continue;
+
+            for (var i = 0; i < container->Size; i++)
+            {
+                var item = container->GetInventorySlot(i);
+                if (item == null || item->ItemId == 0) continue;
+                if (item->GetBaseItemId() != wantedId) continue;
+                if (((item->Flags & InventoryItem.ItemFlags.HighQuality) != 0) != wantHq) continue;
+
+                source = page;
+                slot = i;
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void OnUpdate(IFramework _)
@@ -351,9 +412,9 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
     /// </summary>
     private const uint AddonRowDepositToSaddlebag = 881;
     private const uint AddonRowRetrieveFromSaddlebag = 887;
-    // 部隊置物櫃：2950「取出」與 2951「放入儲物櫃」在 Addon 表裡相鄰＝同一個選單區塊。
-    private const uint AddonRowRetrieveFromFcChest = 2950;
-    private const uint AddonRowDepositToFcChest = 2951;
+    // ⚠️ 部隊置物櫃（Addon 2950「取出」／2951「放入儲物櫃」）刻意不走這條：
+    // 它的右鍵選單是 AgentContext 的一般選單，這個函式讀的是 AgentInventoryContext 的
+    // EventParams，索引對不上；而那個選單裡有「丟棄」，點錯一格的代價太高。
 
     private bool TryFireContextMenuEntry(AgentInventoryContext* agent, uint addonRowId, string displayName)
     {
@@ -537,26 +598,17 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
             return;
         }
 
-        // 部隊置物櫃：兩個方向的可用路徑不同，2026-08-01 實機釐清。
+        // 部隊置物櫃兩個方向都往下走 MoveItemSlot，理由不同（2026-08-01 實機釐清）：
         //
-        //  取出（置物櫃 → 背包）：右鍵選單裡**有**「取出」，走選單。
-        //  存入（背包 → 置物櫃）：遊戲**根本沒有**這個選單項——實機證實從背包右鍵時
-        //    主選單只有「自動整理 | 二級指令」兩項，使用者也確認平常是用拖的。
-        //    所以存入走不了選單，維持 MoveItemSlot（使用者回報這個方向能動）。
+        //  取出（置物櫃 → 背包）：不能點選單——那是 AgentContext 的一般選單，
+        //    要點得靠未經驗證的索引對應，而那個選單裡有「丟棄」，點錯的代價太高。
+        //    手動取出時遊戲沒有跳任何確認對話框，所以 MoveItemSlot 有機會直接成立；
+        //    成不成立由退回監看誠實回報，不用猜。
         //
-        // ⚠️ 別再嘗試把存入改成點選單了，那個項目不存在。
-        var sourceIsFreeCompany = Array.IndexOf(FreeCompanyPages, source) >= 0;
-
-        if (sourceIsFreeCompany)
-        {
-            if (TryFireContextMenuEntry(agent, AddonRowRetrieveFromFcChest, displayName)
-                && Config.NotifyOnTransfer)
-            {
-                Svc.Chat.Print($"[TC Toolbox] 已取出「{displayName}」。");
-            }
-            return;
-        }
-
+        //  存入（背包 → 置物櫃）：實機連兩次都在約 10 秒後被伺服器退回（置物櫃歷史裡查無該筆，
+        //    所以是真退回不是誤判）。**原因還沒查出來**——同一段 log 裡的 InputNumeric
+        //    「請設定放入的數量。」是使用者自己開來取消的，不是存入流程的必經步驟，
+        //    不能拿來當解釋。先留著這條路，讓退回監看誠實回報，等更多實測再判斷。
         if (!TryResolveDestination(source, out var candidates, out var reason))
         {
             if (reason.Length > 0 && Throttle.Pass("AutoInventoryTransfer-NoDest", 3_000))
