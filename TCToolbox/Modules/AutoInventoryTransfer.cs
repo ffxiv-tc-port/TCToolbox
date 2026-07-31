@@ -33,12 +33,15 @@ namespace TCToolbox.Modules;
 /// 兩者對背包會重複觸發，靠 <see cref="DuplicateGuardMs"/> 的同格同物去重：
 /// hook 是同步的、先跑完並設好 lastHandled*，延後那筆就會被擋掉。
 ///
-/// ⚠️ 搬移用哪條路徑要看容器：
+/// ⚠️ 搬移用哪條路徑要看容器，四種容器**各走各的**，沒有一條通吃：
 ///  - **雇員**：走遊戲自己的雇員道具命令（見 <see cref="RetainerItemCommandDelegate"/>）。
 ///    `MoveItemSlot` 在這裡會「假成功」——本機更新了但伺服器根本沒收到。
 ///  - **鞍袋**：點遊戲右鍵選單自己的項目（見 <see cref="TryFireContextMenuEntry"/>）。
 ///    它同樣不能用 MoveItemSlot，而且**不走**雇員道具命令（實機驗證過）。
-///  - **其他**（部隊置物櫃／兵裝庫）：仍用 <c>InventoryManager.MoveItemSlot</c>。
+///  - **部隊置物櫃**：走 <c>AgentFreeCompanyChest::MoveItemInChest</c>
+///    （見 <see cref="MoveItemInChestDelegate"/>）。MoveItemSlot 在這裡**兩個方向都只會假成功**，
+///    伺服器 3.9～10.6 秒後退回，2026-08-01 實機定案。
+///  - **兵裝庫**：本機容器，<c>InventoryManager.MoveItemSlot</c> 就夠了（本機更新即最終狀態）。
 /// 參考 DailyRoutines AutoInventoryTransfer 的用途重寫（API13、無 OmenTools 相依）。
 /// </summary>
 public sealed unsafe class AutoInventoryTransfer : TcModule
@@ -97,6 +100,103 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         EntrustToRetainer = 1,
     }
 
+    /// <summary>
+    /// 🔴 部隊置物櫃的正解：<c>AgentFreeCompanyChest::MoveItemInChest</c>。
+    ///
+    /// 我們 Dalamud 內建的 CS **沒有**這顆函式、也沒有 <c>AgentFreeCompanyChest</c> 這個結構
+    /// （2026-08-01 實查：`MoveItemInChest` 在 CS 樹裡 0 個 .cs 命中，`AgentFreeCompanyChest`
+    /// 只出現在 `ida/` 的中繼資料裡、0 個 .cs 命中；同一支 grep 對 `AgentInventoryContext`
+    /// 有 83 個 .cs 命中，所以回 0 是真的沒有、不是查詢壞掉）。
+    /// 因為不准動 CS pin（會波及全艦隊），這裡自己宣告 + 自己掃特徵碼。
+    ///
+    /// ── 以下每一項都是對台服 7.20 `ffxiv_dx11.exe` 離線鑑識得到的，不是照抄國服 ──
+    ///
+    /// 【函式本體】VA 0x14051D630（模組 RVA 0x51D630）。兩個候選特徵碼**各命中一次、
+    /// 而且指向同一顆函式**：
+    ///   上游 CS 的 `E9 ?? ?? ?? ?? 84 C0 75 5C` → 命中 0x14051C52E 的 E9 tail-call，跟隨後得 0x14051D630
+    ///   DailyRoutines 的 `40 53 55 56 57 41 57 48 83 EC ?? 45 33 FF` → 直接命中 0x14051D630 的 prologue
+    /// 我們選後者，理由見 <see cref="MoveItemInChestSig"/>。
+    ///
+    /// 【不是內聯掉的死碼】xref 四軸全查：E8 call ×3（0x1400F7478、0x14051CFB0、0x14051F04E）、
+    /// E9 jmp ×1（0x14051C52E）、rip-relative lea ×0、絕對 8 位元組指標（vtable）×0 —— **共 4 個引用**。
+    /// ⚠️ 對照組校準過：同一支掃描器對雇員道具命令那顆函式是 rel xref 0 但 .rdata 有 1 個 vtable 指標，
+    /// 而那顆是當天實機驗證有效的 —— 證明四個軸都真的會命中，「回 0」不是查詢壞掉。
+    ///
+    /// 【參數形狀】反編譯逐一對上，共 5 個參數：
+    ///   rcx=agent、edx=sourceInventory、r8d=sourceSlot、r9d=destinationInventory、
+    ///   [rsp+0x80]=destinationSlot（5 個 push ＋ sub rsp,0x30 ＝ 0x58，加上進入時的 [rsp+0x28] 正好 0x80）。
+    /// 函式內把 (edx, r8d) 與 (r9d, [rsp+0x80]) 分別餵給同一顆「取道具格」函式 0x140829CC0，
+    /// 兩次呼叫的形狀就是來源／目的地各一組 (容器, 格號) —— 與上游宣告完全一致。
+    ///
+    /// 【身分確認】函式裡對 InventoryType 的常數比較全部對得上 CS 的列舉值：
+    ///   0x7D1=2001 Crystals、0x55F1=22001 FreeCompanyCrystals、0x3E8=1000 EquippedItems、
+    ///   `lea eax,[reg-0x4E20]; cmp eax,4; jbe` ＝ 20000..20004 亦即 FreeCompanyPage1..5。
+    /// 這顆函式就是部隊置物櫃的搬移入口，沒有第二種解讀。
+    ///
+    /// 【agent 取法】呼叫點 0x1400F744F（那是**拖放**處理常式，也就是使用者手動拖得動的那條路）：
+    ///   mov edx, 0x55            ; 0x55 = 85 = AgentId.FreeCompanyChest（我們 CS pin 裡也是 85）
+    ///   call GetAgentByInternalId
+    ///   mov rcx, rax             ; → MoveItemInChest 的 this
+    /// 所以 `AgentModule::GetAgentByInternalId(AgentId.FreeCompanyChest)` 就是正確的 this，
+    /// 我們的取法與遊戲自己**逐指令一致**，不是猜的。
+    ///
+    /// 【回傳值是 void】反編譯所有 return 路徑都沒有設定 eax。上游 CS 宣告 void 是對的；
+    /// DailyRoutines 宣告成 `nint` 只是方便，那個值沒有意義，**不要拿它判斷成敗**。
+    /// </summary>
+    private delegate void MoveItemInChestDelegate(
+        nint agent, InventoryType sourceInventory, uint sourceSlot,
+        InventoryType destinationInventory, uint destinationSlot);
+
+    /// <summary>
+    /// 選 DailyRoutines 的函式本體 prologue，**不用**上游 CS 那條 `E9 ...` thunk 特徵碼。
+    /// 兩條在台服 7.20 都是唯一命中、且指向同一位址，所以這是純粹的穩健度取捨：
+    ///
+    ///  1. 本體特徵碼只押在**這顆函式自己的 prologue** 上。thunk 那條押的是
+    ///     「別的函式尾端的 tail-call」＋「再下一個基本區塊開頭的 4 個位元組」
+    ///     （`84 C0 75 5C` ＝ test al,al / jnz +0x5C），也就是**同時**押在兩顆不相干函式的
+    ///     碼產生結果上，改版時被打斷的面積比較大。
+    ///  2. thunk 那條要靠 Dalamud `ScanText` 自動跟隨 E8/E9 位移才會落到本體
+    ///     （`Dalamud/Game/SigScanner.cs:291-295`）。跟隨機制本身沒問題，但多一個環節就多一種
+    ///     「解錯而且靜默」的可能。本體特徵碼首位元組是 0x40（REX，push rbx），
+    ///     不會觸發跟隨，直接就是答案。
+    ///
+    /// ⚠️ 寫死的位元組樣式一律視為「下次改版必壞，而且靜默」。所以解析用
+    /// <see cref="ISigScanner.ScanAllText(string)"/> 檢查**命中次數必須恰好是 1**，
+    /// 不是 1 就拒絕安裝（見 <see cref="OnEnable"/>）—— 樣式變得不唯一時我們寧可整個功能不能用，
+    /// 也不要去呼叫一顆碰巧長得像的函式。
+    /// </summary>
+    private const string MoveItemInChestSig = "40 53 55 56 57 41 57 48 83 EC ?? 45 33 FF";
+
+    private MoveItemInChestDelegate? moveItemInChest;
+
+    /// <summary>
+    /// <c>AgentFreeCompanyChest</c> 裡記錄「右鍵點到的是哪一格」的兩個欄位。
+    ///
+    /// 數值來自 DailyRoutines（`OptimizedFreeCompanyChest.cs`，國服實測 6956/6960），
+    /// 但**台服的二進位獨立佐證過**，不是照抄：
+    ///   0x14051B6D8  mov dword ptr [rdi+0x1B2C], 0x270F   ; 0x270F = 9999 = InventoryType.Invalid
+    ///   0x14051B6E2  mov word  ptr [rdi+0x1B30], bp       ; bp = 0
+    /// 也就是 +0x1B2C 是「重設時填 InventoryType.Invalid」的 4 位元組容器欄位、
+    /// +0x1B30 是 2 位元組格號 —— **大小與重設值都**跟 DR 宣告的
+    /// `InventoryType ContextInventoryType` / `short ContextInventorySlot` 吻合。
+    ///
+    /// 而且它確實是「右鍵選單的目標」：右鍵選單的分派跳表（0x14051B8AB 的 `jmp rax`）其中一格是
+    ///   0x14051B8AD  lea  rcx, [rbx+0x1B2C]   ; 把這組 (容器,格號) 交出去
+    ///   0x14051B8B4  call 0x1401116D0         ; 解析成 InventoryItem*
+    ///   0x14051B8BF  call 0x14051EE10         ; → 內部呼叫 MoveItemInChest(.., Invalid, 0)
+    /// 處理完再把 +0x1B2C 寫回 0x270F、+0x1B30 寫回 0（0x14051B97F / 0x14051C44F）。
+    ///
+    /// 🔑 順帶一提，「台服的 agent 配置涵蓋得到這兩個偏移」因此是**證明**而不是假設 ——
+    /// 台服自己的程式碼就在讀寫它們，不可能落在配置範圍外。所以這裡沒有越界讀取的風險。
+    ///
+    /// ⚠️ **仍然沒被證明的**是「我們在 OnMenuOpened 之後那一幀讀到的值，是這次右鍵的、
+    /// 不是上一次殘留的」。這一點靠 <see cref="TryResolveChestSource"/> 的交叉比對擋住，不靠信任。
+    /// </summary>
+    private const int ChestContextInventoryTypeOffset = 0x1B2C;  // 6956
+
+    /// <inheritdoc cref="ChestContextInventoryTypeOffset"/>
+    private const int ChestContextInventorySlotOffset = 0x1B30;  // 6960
+
     /// <summary>雇員道具命令模組。⚠️ `+ 40` 是未文件化偏移，照抄 AutoRetainer 的實測值。</summary>
     private static nint GetAgentRetainerItemCommandModule()
     {
@@ -147,13 +247,33 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
     private AutoInventoryTransferConfig Config => Plugin.Instance.Config.InventoryTransfer;
 
     /// <summary>
-    /// 等伺服器確認的轉移。雇員／部隊置物櫃／鞍袋是伺服器權威容器，MoveItemSlot 只是先改
-    /// 本機狀態，伺服器拒絕時道具會彈回原處。
+    /// 觀察器的兩種判準。⚠️ **兩條路徑的「成功長相」是相反的**，不能共用一套判斷。
+    /// </summary>
+    private enum VerificationKind
+    {
+        /// <summary>
+        /// <c>MoveItemSlot</c> 用。它會**同步**改好本機狀態，所以呼叫完道具就已經不在來源格了；
+        /// 要盯的是「伺服器稍後把它退回來」。
+        /// </summary>
+        MoveItemSlotRollback,
+
+        /// <summary>
+        /// <c>MoveItemInChest</c> 用。它是**非同步請求**：呼叫當下本機什麼都不會變，
+        /// 要等伺服器回覆才會動。所以判準是反過來的 ——「來源格到底有沒有清空」。
+        /// 🔴 不能沿用退回那一套：對這條路徑而言「道具還在來源格」在剛呼叫完是**正常**的，
+        /// 拿它當退回會 100% 誤報成失敗。
+        /// </summary>
+        ChestDeparture,
+    }
+
+    /// <summary>
+    /// 等伺服器確認的轉移。雇員／部隊置物櫃／鞍袋是伺服器權威容器，本機狀態不等於最終狀態。
     /// </summary>
     private readonly record struct PendingVerification(
+        VerificationKind Kind,
         InventoryType Source, int Slot,
         InventoryType Destination, int DestinationSlot,
-        uint BaseItemId, string DisplayName, long DeadlineTick);
+        uint BaseItemId, string DisplayName, long StartTick, long DeadlineTick);
 
     private readonly List<PendingVerification> pendingVerifications = [];
 
@@ -196,6 +316,27 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
             Svc.Log.Warning($"[{InternalName}] 找不到雇員道具命令的特徵碼，雇員轉移將無法使用。");
         }
 
+        // 🔴 置物櫃搬移函式：**要求特徵碼恰好命中一次**，否則拒絕安裝。
+        // 離線鑑識時在台服 7.20 是唯一命中（RVA 0x51D630），但寫死的位元組樣式一律當成
+        // 「下次改版必壞而且靜默」——所以這裡把離線的唯一性結論改成執行期的閘門，
+        // 而不是相信它會永遠成立。命中 0 或 ≥2 都寧可整個功能不能用。
+        var chestHits = Svc.SigScanner.ScanAllText(MoveItemInChestSig);
+        if (chestHits.Length == 1)
+        {
+            moveItemInChest =
+                Marshal.GetDelegateForFunctionPointer<MoveItemInChestDelegate>(chestHits[0]);
+            var rva = chestHits[0] - Svc.SigScanner.Module.BaseAddress;
+            Svc.Log.Information(
+                $"[{InternalName}] 置物櫃搬移函式位址 0x{chestHits[0]:X}（RVA 0x{rva:X}，" +
+                $"離線鑑識預期 0x51D630、{(rva == 0x51D630 ? "相符" : "**不相符，請回報**")}）");
+        }
+        else
+        {
+            Svc.Log.Warning(
+                $"[{InternalName}] 置物櫃搬移函式的特徵碼命中 {chestHits.Length} 次（需要剛好 1 次），" +
+                "為了不呼叫到錯的函式，部隊置物櫃轉移已停用。");
+        }
+
         // 第二個觸發點：部隊置物櫃不走 OpenForItemSlot，只有這條蓋得到（見類別說明）。
         Svc.ContextMenu.OnMenuOpened += OnMenuOpened;
 
@@ -208,6 +349,7 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         Svc.ContextMenu.OnMenuOpened -= OnMenuOpened;
         openForItemSlotHook?.Dispose();
         openForItemSlotHook = null;
+        moveItemInChest = null;
 
         pendingMenu = null;
         pendingVerifications.Clear();
@@ -221,8 +363,16 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
     /// 由 <see cref="OnMenuOpened"/> 記下、下一個 framework tick 才執行的右鍵選單。
     /// ⚠️ 不能在 OnMenuOpened 當下就做事：那時 ContextMenu addon 還沒開起來，
     /// <c>agent-&gt;AgentInterface.GetAddonId()</c> 拿到的是上一個選單（或 0）。
+    ///
+    /// <para><see cref="HoverBaseItemId"/>／<see cref="HoverHighQuality"/> 只在
+    /// <see cref="IsChestHover"/> 為 true 時有意義，而且**必須在右鍵當下就抓**：
+    /// 它是「使用者到底點了什麼」的唯一可信快照，延後一幀滑鼠可能已經移開了。</para>
     /// </summary>
-    private (InventoryType Source, int Slot)? pendingMenu;
+    private readonly record struct PendingMenu(
+        InventoryType Source, int Slot,
+        bool IsChestHover, uint HoverBaseItemId, bool HoverHighQuality);
+
+    private PendingMenu? pendingMenu;
 
     private void OnMenuOpened(IMenuOpenedArgs args)
     {
@@ -238,7 +388,9 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
             }
 
             // GameInventoryType 的數值與 InventoryType 完全一致（Inventory1=0 … FreeCompanyPage1=20000）。
-            pendingMenu = ((InventoryType)(ushort)item.ContainerType, (int)item.InventorySlot);
+            pendingMenu = new PendingMenu(
+                (InventoryType)(ushort)item.ContainerType, (int)item.InventorySlot,
+                IsChestHover: false, HoverBaseItemId: 0, HoverHighQuality: false);
             return;
         }
 
@@ -253,24 +405,29 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         //    而部隊置物櫃的選單裡有「丟棄」，點錯一格的代價太高。
         if (args.AddonName != "FreeCompanyChest") return;
 
-        if (!TryResolveHoveredFreeCompanySlot(out var source, out var slot))
+        if (!TryResolveHoveredFreeCompanySlot(out var source, out var slot, out var hoverId, out var hoverHq))
         {
             Svc.Log.Information(
                 $"[{InternalName}] 部隊置物櫃右鍵，但對不出懸停的格號（HoveredItem={Svc.GameGui.HoveredItem}）。");
             return;
         }
 
-        pendingMenu = (source, slot);
+        pendingMenu = new PendingMenu(source, slot, IsChestHover: true, hoverId, hoverHq);
     }
 
     /// <summary>
     /// 用 <c>GameGui.HoveredItem</c> 反推部隊置物櫃裡的來源格。
     /// 同款道具有多份時取第一個——對「把這個拿出來」而言彼此可互換。
+    /// <para>⚠️ 這是交叉驗證的 (B) 側。它精確到**道具**、不精確到格號，
+    /// 所以真正拿去搬的格號取自 (A) 側，見 <see cref="TryResolveChestSource"/>。</para>
     /// </summary>
-    private static bool TryResolveHoveredFreeCompanySlot(out InventoryType source, out int slot)
+    private static bool TryResolveHoveredFreeCompanySlot(
+        out InventoryType source, out int slot, out uint baseItemId, out bool highQuality)
     {
         source = InventoryType.Invalid;
         slot = -1;
+        baseItemId = 0;
+        highQuality = false;
 
         var hovered = Svc.GameGui.HoveredItem;
         if (hovered == 0) return false;
@@ -297,11 +454,92 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
 
                 source = page;
                 slot = i;
+                baseItemId = wantedId;
+                highQuality = wantHq;
                 return true;
             }
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// 決定「右鍵點的到底是置物櫃哪一格」。**兩個獨立來源都要成立、而且要互相吻合**才回 true：
+    ///   (A) <c>AgentFreeCompanyChest</c> 的 +0x1B2C/+0x1B30（精確到格號，見
+    ///       <see cref="ChestContextInventoryTypeOffset"/> 的鑑識紀錄）
+    ///   (B) 右鍵當下 <c>GameGui.HoveredItem</c> 反推的道具（精確到道具，同款多份取第一個）
+    ///
+    /// 🔴 這個「必須一致」**不是保險絲，是這一版的核心安全設計**。
+    /// 那兩個偏移雖然在台服二進位裡佐證過大小與重設值，但「我們讀到的是這次右鍵寫進去的、
+    /// 而不是上一次的殘留或別的欄位」**無法離線證明**。
+    /// 萬一它其實是別的東西，(A) 讀出來的會是不相干的容器／格號，算出來的道具 ID
+    /// 幾乎不可能剛好等於使用者正懸停的那個 → 比對失敗 → 我們**什麼都不做**。
+    /// 也就是說「偏移是錯的」的後果是**不動作**，不是搬錯道具。
+    ///
+    /// 三道白名單同時把「欄位還沒被填」擋成 fail-closed：
+    ///   容器必須是 FreeCompanyPage1..5（重設值 <c>Invalid</c>(9999) 天然不通過）、
+    ///   格號必須落在該容器的 Size 內、該格必須真的有東西。
+    ///
+    /// 一致時採用 (A) 的格號 —— 它精確，(B) 在同款多份時只能取第一個。
+    /// </summary>
+    private static bool TryResolveChestSource(
+        nint agent, uint hoverBaseItemId, bool hoverHighQuality,
+        out InventoryType source, out int slot, out string diagnosis)
+    {
+        source = InventoryType.Invalid;
+        slot = -1;
+
+        var agentType = (InventoryType)(*(uint*)(agent + ChestContextInventoryTypeOffset));
+        var agentSlot = *(short*)(agent + ChestContextInventorySlotOffset);
+
+        if (Array.IndexOf(FreeCompanyPages, agentType) < 0)
+        {
+            diagnosis = $"(A) 容器={agentType}({(uint)agentType}) 不是部隊置物櫃分頁";
+            return false;
+        }
+
+        var manager = InventoryManager.Instance();
+        if (manager == null)
+        {
+            diagnosis = "(A) 拿不到 InventoryManager";
+            return false;
+        }
+
+        var container = manager->GetInventoryContainer(agentType);
+        if (container == null || !container->IsLoaded)
+        {
+            diagnosis = $"(A) 容器 {agentType} 未載入";
+            return false;
+        }
+
+        if (agentSlot < 0 || agentSlot >= container->Size)
+        {
+            diagnosis = $"(A) 格號 {agentSlot} 超出 {agentType} 範圍（Size={container->Size}）";
+            return false;
+        }
+
+        var item = container->GetInventorySlot(agentSlot);
+        if (item == null || item->ItemId == 0)
+        {
+            diagnosis = $"(A) {agentType}#{agentSlot} 是空格";
+            return false;
+        }
+
+        var agentBaseItemId = item->GetBaseItemId();
+        var agentHighQuality = (item->Flags & InventoryItem.ItemFlags.HighQuality) != 0;
+
+        if (agentBaseItemId != hoverBaseItemId || agentHighQuality != hoverHighQuality)
+        {
+            diagnosis =
+                $"(A) {agentType}#{agentSlot} 是 itemId={agentBaseItemId} hq={agentHighQuality}，" +
+                $"但 (B) 懸停的是 itemId={hoverBaseItemId} hq={hoverHighQuality} —— 不一致";
+            return false;
+        }
+
+        source = agentType;
+        slot = agentSlot;
+        diagnosis = $"(A)(B) 一致：{agentType}#{agentSlot} itemId={agentBaseItemId} hq={agentHighQuality}";
+        return true;
     }
 
     private void OnUpdate(IFramework _)
@@ -314,7 +552,7 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
             {
                 try
                 {
-                    HandleContextMenu(agent, menu.Source, menu.Slot);
+                    HandleContextMenu(agent, menu);
                 }
                 catch (Exception ex)
                 {
@@ -332,6 +570,46 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         for (var i = pendingVerifications.Count - 1; i >= 0; i--)
         {
             var p = pendingVerifications[i];
+            var elapsed = now - p.StartTick;
+
+            // ── MoveItemInChest：非同步請求，成功的長相是「道具離開來源格」 ──
+            //
+            // 🔑 這一組 log 就是判斷「只裝 MoveItemInChest 夠不夠」的依據
+            //    （我們刻意沒裝 SendInventoryRefresh 的 op-lock hook，見 TransferViaChest 的說明）。
+            //    看到「已生效」＝夠了；看到「逾時未生效」＝不夠，那時才需要重新評估 op-lock。
+            if (p.Kind == VerificationKind.ChestDeparture)
+            {
+                if (!IsItemAt(manager, p.Source, p.Slot, p.BaseItemId))
+                {
+                    pendingVerifications.RemoveAt(i);
+
+                    var landed = p.Destination != InventoryType.Invalid &&
+                                 IsItemAt(manager, p.Destination, p.DestinationSlot, p.BaseItemId);
+                    var where = p.Destination == InventoryType.Invalid
+                        ? "（落點由遊戲決定）"
+                        : $"{p.Destination}#{p.DestinationSlot} 落在指定格={landed}";
+
+                    Svc.Log.Information(
+                        $"[{InternalName}] 置物櫃搬移已生效：{p.Source}#{p.Slot} → {where} " +
+                        $"itemId={p.BaseItemId} 耗時={elapsed}ms");
+
+                    if (Config.NotifyOnTransfer)
+                        Svc.Chat.Print($"[TC Toolbox] 已轉移「{p.DisplayName}」。");
+                    continue;
+                }
+
+                if (now < p.DeadlineTick) continue;
+
+                pendingVerifications.RemoveAt(i);
+                Svc.Log.Warning(
+                    $"[{InternalName}] 置物櫃搬移逾時未生效：{p.Source}#{p.Slot} itemId={p.BaseItemId} " +
+                    $"——{RollbackWatchMs}ms 後道具仍在來源格，MoveItemInChest 沒有被伺服器受理。");
+
+                if (Throttle.Pass("AutoInventoryTransfer-ChestTimeout", 3_000))
+                    Svc.Chat.PrintError(
+                        $"[TC Toolbox] 「{p.DisplayName}」沒有轉移成功（置物櫃沒有回應），請改用手動拖放。");
+                continue;
+            }
 
             // 🔴 每一幀都看，不是等到期限才看一眼。退回可能要好幾秒才回來，
             // 但也可能一秒內就回來——只在期限那一刻取樣，兩種都會漏。
@@ -348,7 +626,7 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
                 Svc.Log.Warning(
                     $"[{InternalName}] 伺服器退回：{p.Source}#{p.Slot} → {p.Destination}#{p.DestinationSlot} " +
                     $"itemId={p.BaseItemId} 回到來源={backAtSource} 目的地消失={goneFromDestination} " +
-                    $"（搬移後 {RollbackWatchMs - (p.DeadlineTick - now)}ms）");
+                    $"（搬移後 {elapsed}ms）");
 
                 if (Throttle.Pass("AutoInventoryTransfer-RolledBack", 3_000))
                     Svc.Chat.PrintError(
@@ -415,10 +693,7 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
 
     // ⚠️ 部隊置物櫃刻意不走 TryFireContextMenuEntry：它的右鍵選單是 AgentContext 的一般選單，
     // 而那個函式讀的是 AgentInventoryContext 的 EventParams，索引對不上；
-    // 而且那個選單裡有「丟棄」，點錯一格的代價太高。這兩個 row id 目前只給診斷用。
-    // （2026-08-01 用台服 7.20 的 Addon 表核對過：2950=「取出」、2951=「放入儲物櫃」。）
-    private const uint AddonRowChestRetrieve = 2950;
-    private const uint AddonRowChestDeposit = 2951;
+    // 而且那個選單裡有「丟棄」，點錯一格的代價太高。置物櫃走 TransferViaChest。
 
     private bool TryFireContextMenuEntry(AgentInventoryContext* agent, uint addonRowId, string displayName)
     {
@@ -515,7 +790,8 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
 
         try
         {
-            HandleContextMenu(agent, inventoryType, slot);
+            HandleContextMenu(agent, new PendingMenu(
+                inventoryType, slot, IsChestHover: false, HoverBaseItemId: 0, HoverHighQuality: false));
         }
         catch (Exception ex)
         {
@@ -523,8 +799,11 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         }
     }
 
-    private void HandleContextMenu(AgentInventoryContext* agent, InventoryType source, int slot)
+    private void HandleContextMenu(AgentInventoryContext* agent, PendingMenu menu)
     {
+        var source = menu.Source;
+        var slot = menu.Slot;
+
         if (Config.ModifierKeyCode == 0) return;
         if (CSFramework.Instance()->WindowInactive) return;
 
@@ -536,6 +815,32 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         Svc.Log.Information($"[{InternalName}] 右鍵選單開啟：{source}#{slot} 修飾鍵={(modifierHeld ? "有按" : "沒按")}");
 
         if (!modifierHeld) return;
+
+        // 🔴 置物櫃「取出」方向：右鍵選單給不了格號，所以在動任何東西之前先做 (A)(B) 交叉驗證。
+        // 兩邊算出來的道具不一致就整段放棄 —— 寧可不動作，也不要搬錯道具。
+        if (menu.IsChestHover)
+        {
+            // ⚠️ 一定要先確定 agent 非 null 再去讀它的欄位。
+            // 少了這一步就會變成對 0x1B2C 這種低位址解參考，那是自找的存取違規。
+            var chestAgent = ResolveFreeCompanyChestAgent();
+            if (chestAgent == null)
+            {
+                Svc.Log.Information($"[{InternalName}] 置物櫃 agent 未就緒，不動作。");
+                return;
+            }
+
+            if (!TryResolveChestSource(
+                    (nint)chestAgent, menu.HoverBaseItemId, menu.HoverHighQuality,
+                    out var chestSource, out var chestSlot, out var diagnosis))
+            {
+                Svc.Log.Information($"[{InternalName}] 置物櫃來源格交叉驗證失敗，不動作：{diagnosis}");
+                return;
+            }
+
+            Svc.Log.Information($"[{InternalName}] 置物櫃來源格交叉驗證通過：{diagnosis}");
+            source = chestSource;
+            slot = chestSlot;
+        }
 
         var manager = InventoryManager.Instance();
         if (manager == null) return;
@@ -602,52 +907,27 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
             return;
         }
 
-        // 🔴 部隊置物櫃：MoveItemSlot **兩個方向都不成立**，2026-08-01 實機定案。
+        // 🔴 部隊置物櫃：走 AgentFreeCompanyChest::MoveItemInChest（見 MoveItemInChestDelegate）。
         //
+        // MoveItemSlot 在這個容器上 **兩個方向都不成立**，2026-08-01 實機定案：
         //   02:48:59 FreeCompanyPage1#0 → Inventory1#26  verified=True
         //   02:49:09 伺服器退回：回到來源=True（10625ms）
         //   02:49:39 FreeCompanyPage1#0 → Inventory1#5   verified=True
         //   02:49:43 伺服器退回：回到來源=True（3922ms）
         //   存入方向同樣連兩次被退回（置物櫃歷史查無該筆，是真退回不是誤判）。
         //
-        // ⚠️ 上一版賭「取出不需要確認對話框所以 MoveItemSlot 可能成立」——賭錯了。
-        // 部隊置物櫃跟雇員／鞍袋一樣是伺服器權威容器，MoveItemSlot 只會假成功。
-        //
-        // 🔴 2026-08-01：「改用 ExecuteCommand(405 MoveItemBetweenInventory)」這條路**已排除**，
-        //    不要再嘗試。三個獨立方向都指向同一結論：
-        //
-        //    1. OmenTools 雖然定義了 `InventoryCommand.Move(來源, 目標)`，但**全 GitHub 沒有任何
-        //       呼叫點**（`gh search code "InventoryCommand.Move"` 只有無關的 Unity 專案）。
-        //    2. DailyRoutines 自己的 AutoInventoryTransfer（我們這個模組的原型，原始碼公開在
-        //       `Dalamud-DailyRoutines/DailyRoutines.ModulesPublic:Interface/AutoInventoryTransfer.cs`）
-        //       **根本沒用 ExecuteCommand**，它就是點右鍵選單項目（比對 Addon 97/98/881/887）；
-        //       而且它的 `IsInventoryOpen()` **完全沒有列入部隊置物櫃**——上游也不支援這個容器。
-        //    3. 對台服 7.20 `ffxiv_dx11.exe` 離線反編譯：405 在整個 .text 只有 **2 個**呼叫點，
-        //       **兩個都是 param2=0**（不是 OmenTools 註解說的「param1=來源, param2=目標」）。
-        //       其中一個位在 0x14083ed4d 這個函式裡，它用一個「是否已請求過」的 bitmask 當守衛，
-        //       失敗路徑印的是 LogMessage #1860「獲得公會儲物櫃資料失敗。」——
-        //       也就是說 **405 是「向伺服器請求載入置物櫃頁面資料」，不是搬移道具**。
-        //
-        //    我們實機看到的退回訊息是 LogMessage #1873「無法保存道具，其他玩家正在使用儲物櫃。」，
-        //    那是伺服器端的拒絕；405 不會、也不該改變它。
-        //
-        // 唯一剩下的路仍是點遊戲自己的選單項目，但那是 AgentContext 的一般選單
-        // （不是 AgentInventoryContext），索引對應**還是沒驗證過**，而**那個選單裡有「丟棄」**。
-        //
-        // ⚠️ 索引基準目前有兩個互相矛盾的來源，差 1，而差 1 就是點到隔壁那項：
-        //     Dalamud 自己的 ContextMenu.cs：addon 的 AtkValues 前 **7** 格是表頭（SetupGenericMenu(7,…)），
-        //     OmenTools 的 AddonContextMenuEvent：讀的是 AtkValues[i + **8**]。
-        //   在這個差異被實機資料解決以前，這一版只傾印、**不點任何東西**。
-        if (Array.IndexOf(FreeCompanyPages, source) >= 0
+        // ⚠️ 兩條已經排除、不要再回頭嘗試的路：
+        //  - `ExecuteCommand(405)`：台服二進位反證。405 在整個 .text 只有 2 個呼叫點、
+        //    **兩個都是 param2=0**，而且失敗路徑印的是 LogMessage #1860「獲得公會儲物櫃資料失敗。」
+        //    ——405 是「請求載入置物櫃頁面資料」的前置動作，不是搬移手段。
+        //  - 點原生右鍵選單項目：那是 AgentContext 的一般選單，索引基準有兩個互相矛盾的來源
+        //    （Dalamud 的表頭算 7 格、OmenTools 讀 [i+8]），而**那個選單裡有「丟棄」**，
+        //    差 1 就是點到隔壁那項。DailyRoutines 與 FCCH 兩個獨立實作也都刻意不走這條。
+        var sourceIsChest = Array.IndexOf(FreeCompanyPages, source) >= 0;
+        if (sourceIsChest
             || (Array.IndexOf(PlayerBags, source) >= 0 && UiHelper.IsAddonReady("FreeCompanyChest")))
         {
-            DumpContextMenuLayout(displayName);
-            if (Throttle.Pass("AutoInventoryTransfer-FcUnsupported", 3_000))
-            {
-                Svc.Chat.PrintError(
-                    $"[TC Toolbox] 部隊置物櫃目前只能手動拖放，「{displayName}」未轉移。" +
-                    "（遊戲不接受這個容器的程式化搬移，選單內容已記進記錄檔供後續修正）");
-            }
+            TransferViaChest(agent, source, slot, baseItemId, displayName, sourceIsChest);
             return;
         }
 
@@ -701,10 +981,120 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         // 真的被退回時再補一則錯誤訊息蓋掉它。
         if (IsServerAuthoritative(source) || IsServerAuthoritative(destination))
         {
+            var startTick = Environment.TickCount64;
             pendingVerifications.Add(new PendingVerification(
+                VerificationKind.MoveItemSlotRollback,
                 source, slot, destination, destinationSlot, baseItemId, displayName,
-                Environment.TickCount64 + RollbackWatchMs));
+                startTick, startTick + RollbackWatchMs));
         }
+    }
+
+    /// <summary>
+    /// 取部隊置物櫃 agent。取法與遊戲自己的拖放處理常式逐指令一致
+    /// （0x1400F7456 `mov edx, 0x55` → GetAgentByInternalId → 當成 MoveItemInChest 的 this）。
+    /// </summary>
+    private static AgentInterface* ResolveFreeCompanyChestAgent()
+    {
+        var agentModule = AgentModule.Instance();
+        if (agentModule == null) return null;
+
+        var agent = agentModule->GetAgentByInternalId(AgentId.FreeCompanyChest);
+        return agent == null || !agent->IsAgentActive() ? null : agent;
+    }
+
+    /// <summary>
+    /// 用 <c>AgentFreeCompanyChest::MoveItemInChest</c> 搬移。兩個方向的呼叫形狀**不一樣**，
+    /// 而且兩種都是照抄遊戲自己的呼叫點，不是自己發明的：
+    ///
+    ///  - **取出**（置物櫃 → 背包）：目的地填 <c>InventoryType.Invalid</c>(9999) 與格號 0，
+    ///    由**遊戲**決定落在背包哪一格。這正是遊戲右鍵選單處理常式的做法
+    ///    （0x14051F03C `mov r9d, 0x270F`、`[rsp+0x20] = 0`）。
+    ///    🔑 我們刻意**不自己挑背包空格**：少挑一次就少一次挑錯的機會。
+    ///  - **存入**（背包 → 置物櫃）：必須給實際的 (分頁, 格號)，這是遊戲**拖放**處理常式的形狀
+    ///    （0x1400F7465-0x1400F7478）。落點沿用既有的 <see cref="TryFindTargetSlot"/>，
+    ///    它只會選「可疊的同款」或「真正的空格」，不會挑到別人的道具上去覆蓋。
+    ///
+    /// ⚠️ **這一版刻意不安裝 <c>SendInventoryRefresh</c> 的 op-lock hook。**
+    /// DailyRoutines 與 FreeCompanyChestHelper 兩邊都有裝，但那個 hook 是**取代原函式**
+    /// （detour 裡不呼叫 Original），而我們**無法離線證明**「拿掉它就搬不動」或「裝了它沒有副作用」。
+    /// 在還沒有證據以前就去攔截遊戲的庫存刷新，風險比它可能解決的問題大。
+    /// 所以先只裝 MoveItemInChest ——「這樣是不是已經夠了」可以用**一次實機操作**證偽，
+    /// 那是能把未知數收斂掉的最小一步。判斷依據是 <see cref="VerificationKind.ChestDeparture"/>
+    /// 那組 log：「已生效」＝夠了；「逾時未生效」＝不夠，那時才重新評估 op-lock。
+    /// </summary>
+    private void TransferViaChest(
+        AgentInventoryContext* menuAgent, InventoryType source, int slot,
+        uint baseItemId, string displayName, bool withdrawing)
+    {
+        if (moveItemInChest == null)
+        {
+            if (Throttle.Pass("AutoInventoryTransfer-NoChestFn", 3_000))
+                Svc.Chat.PrintError($"[TC Toolbox] 找不到置物櫃搬移函式，「{displayName}」未轉移，請改用手動拖放。");
+            return;
+        }
+
+        var chestAgent = ResolveFreeCompanyChestAgent();
+        if (chestAgent == null)
+        {
+            Svc.Log.Warning($"[{InternalName}] 置物櫃 agent 未就緒，「{displayName}」未轉移。");
+            if (Throttle.Pass("AutoInventoryTransfer-NoChestAgent", 3_000))
+                Svc.Chat.PrintError($"[TC Toolbox] 部隊置物櫃視窗未就緒，「{displayName}」未轉移。");
+            return;
+        }
+
+        InventoryType destination;
+        int destinationSlot;
+
+        if (withdrawing)
+        {
+            destination = InventoryType.Invalid;
+            destinationSlot = 0;
+        }
+        else
+        {
+            if (!TryResolveDestination(source, out var candidates, out var reason))
+            {
+                if (reason.Length > 0 && Throttle.Pass("AutoInventoryTransfer-NoDest", 3_000))
+                    Svc.Chat.Print($"[TC Toolbox] {reason}");
+                return;
+            }
+
+            var manager = InventoryManager.Instance();
+            var sourceItem = manager == null ? null : manager->GetInventorySlot(source, slot);
+            if (manager == null || sourceItem == null ||
+                !TryFindTargetSlot(manager, candidates, sourceItem, out destination, out destinationSlot))
+            {
+                if (Throttle.Pass("AutoInventoryTransfer-Full", 3_000))
+                    Svc.Chat.PrintError($"[TC Toolbox] 部隊置物櫃沒有空位也沒有可疊的同款道具，「{displayName}」未轉移。");
+                return;
+            }
+        }
+
+        // 遊戲自己在轉呼叫這顆函式之前也做同一道白名單檢查（0x1400F7429-0x1400F744D）：
+        // 來源或目的地必須是置物櫃分頁，否則就不該走這條路。免費的 fail-closed，照抄。
+        if (Array.IndexOf(FreeCompanyPages, source) < 0 &&
+            Array.IndexOf(FreeCompanyPages, destination) < 0)
+        {
+            Svc.Log.Warning($"[{InternalName}] {source} → {destination} 兩邊都不是置物櫃分頁，放棄。");
+            return;
+        }
+
+        Svc.Log.Information(
+            $"[{InternalName}] 置物櫃搬移送出（{(withdrawing ? "取出" : "存入")}）：{source}#{slot} → " +
+            $"{(withdrawing ? "（落點由遊戲決定）" : $"{destination}#{destinationSlot}")} itemId={baseItemId}");
+
+        moveItemInChest((nint)chestAgent, source, (uint)slot, destination, (uint)destinationSlot);
+
+        CloseContextMenu(menuAgent);
+
+        // ⚠️ 這裡**故意不印**「已轉移」。MoveItemInChest 是非同步請求，呼叫當下本機什麼都還沒變，
+        // 先報成功就是重蹈 MoveItemSlot 那個「假成功」的覆轍。
+        // 成功訊息改由 ChestDeparture 觀察器在道具真的離開來源格時才印。
+        var now = Environment.TickCount64;
+        pendingVerifications.Add(new PendingVerification(
+            VerificationKind.ChestDeparture,
+            source, slot, destination, destinationSlot, baseItemId, displayName,
+            now, now + RollbackWatchMs));
     }
 
     /// <summary>道具名稱一律走 Lumina Item 表（台服自帶繁中），不讀 addon 上的文字。</summary>
@@ -841,110 +1231,6 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         }
 
         return false;
-    }
-
-    /// <summary>讀 AtkValue 的字串內容；不是字串型別或指標為 null 就回 null。</summary>
-    private static string? ReadAtkString(AtkValue v)
-    {
-        if (v.Type is not FFXIVClientStructs.FFXIV.Component.GUI.ValueType.String
-            and not FFXIVClientStructs.FFXIV.Component.GUI.ValueType.ManagedString)
-            return null;
-
-        var ptr = v.String.Value;
-        if (ptr == null) return null;
-        return MemoryHelper.ReadSeStringNullTerminated((nint)ptr).TextValue.Trim();
-    }
-
-    /// <summary>
-    /// 傾印部隊置物櫃右鍵選單的**兩份**資料。⚠️ 只讀不點，不碰任何道具。
-    ///
-    /// 這個函式存在的唯一目的，是用一次實機右鍵把「選單項目的索引基準」定死，
-    /// 因為現有兩個來源互相矛盾（差 1），而在有「丟棄」的選單裡差 1 會毀掉道具：
-    ///   - Dalamud `ContextMenu.cs` 的 `SetupGenericMenu(7, …)`：addon AtkValues 前 7 格是表頭
-    ///   - OmenTools `AddonContextMenuEvent`：讀 `AtkValues[i + 8]`
-    ///
-    /// 所以兩邊都印：
-    ///   (A) AgentContext.CurrentContextMenu-&gt;EventParams[0..32] ＋ 兩個遮罩
-    ///   (B) ContextMenu **addon 自己**的 AtkValues[0..Count]，含型別
-    /// 有了 (B) 就能直接看出 `AtkValues[0]` 的項目數、字串區塊實際從第幾格開始，
-    /// 以及「取出」「放入儲物櫃」落在哪個絕對索引 —— 不用再猜。
-    /// </summary>
-    private void DumpContextMenuLayout(string displayName)
-    {
-        var sheet = Svc.Data.GetExcelSheet<Addon>();
-        var wantRetrieve = sheet?.GetRowOrDefault(AddonRowChestRetrieve)?.Text.ExtractText().Trim() ?? "";
-        var wantDeposit = sheet?.GetRowOrDefault(AddonRowChestDeposit)?.Text.ExtractText().Trim() ?? "";
-
-        // ---- (A) agent 側 ----
-        var agentContext = AgentContext.Instance();
-        var menu = agentContext == null ? null : agentContext->CurrentContextMenu;
-        if (menu == null)
-        {
-            Svc.Log.Information($"[{InternalName}] 「{displayName}」：拿不到 AgentContext 的目前選單。");
-        }
-        else
-        {
-            var entries = new List<string>();
-            for (var i = 0; i < 33; i++)
-            {
-                var text = ReadAtkString(menu->EventParams[i]);
-                if (string.IsNullOrEmpty(text)) continue;
-
-                var disabled = (menu->ContextItemDisabledMask & (1u << i)) != 0 ? "✖" : "";
-                var submenu = (menu->ContextSubMenuMask & (1u << i)) != 0 ? "▸" : "";
-                entries.Add($"[{i}]{disabled}{submenu}{text}");
-            }
-
-            Svc.Log.Information(
-                $"[{InternalName}] (A) AgentContext.EventParams（✖＝停用 ▸＝二級指令）：" +
-                string.Join(" | ", entries));
-        }
-
-        // ---- (B) addon 側：這份才是 Callback 索引真正對應的陣列 ----
-        var addon = UiHelper.GetAddon("ContextMenu");
-        if (addon == null || addon->AtkValues == null)
-        {
-            Svc.Log.Information($"[{InternalName}] (B) 拿不到 ContextMenu addon 的 AtkValues。");
-            return;
-        }
-
-        var count = addon->AtkValuesCount;
-        if (count == 0)
-        {
-            Svc.Log.Information($"[{InternalName}] (B) ContextMenu addon 的 AtkValuesCount=0，沒有東西可讀。");
-            return;
-        }
-
-        // ⚠️ 只有在 count>0 之後才讀得起 [0]，否則就是讀不屬於我們的記憶體。
-        var declared = addon->AtkValues[0].Type == FFXIVClientStructs.FFXIV.Component.GUI.ValueType.UInt
-            ? addon->AtkValues[0].UInt
-            : 0u;
-
-        var dump = new List<string>();
-        var hitRetrieve = -1;
-        var hitDeposit = -1;
-        for (var i = 0; i < count && i < 64; i++)
-        {
-            var v = addon->AtkValues[i];
-            var text = ReadAtkString(v);
-            dump.Add(text == null ? $"[{i}]{v.Type}" : $"[{i}]\"{text}\"");
-
-            if (text == null) continue;
-            if (hitRetrieve < 0 && wantRetrieve.Length > 0 && text == wantRetrieve) hitRetrieve = i;
-            if (hitDeposit < 0 && wantDeposit.Length > 0 && text == wantDeposit) hitDeposit = i;
-        }
-
-        Svc.Log.Information(
-            $"[{InternalName}] (B) ContextMenu addon AtkValues（AtkValuesCount={count} 宣告項目數={declared}）：" +
-            string.Join(" ", dump));
-
-        // 把結論直接算好印出來，省掉人工對照。兩種基準都列，實機一比就知道哪個對。
-        static string Interpret(int absolute) =>
-            absolute < 0 ? "沒找到" : $"絕對索引 {absolute} → 基準7 時項目#{absolute - 7}／基準8 時項目#{absolute - 8}";
-
-        Svc.Log.Information(
-            $"[{InternalName}] (B) 「{wantRetrieve}」(Addon#{AddonRowChestRetrieve})：{Interpret(hitRetrieve)}；" +
-            $"「{wantDeposit}」(Addon#{AddonRowChestDeposit})：{Interpret(hitDeposit)}");
     }
 
     private static void CloseContextMenu(AgentInventoryContext* agent)
