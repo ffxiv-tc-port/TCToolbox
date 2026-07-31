@@ -598,17 +598,33 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
             return;
         }
 
-        // 部隊置物櫃兩個方向都往下走 MoveItemSlot，理由不同（2026-08-01 實機釐清）：
+        // 🔴 部隊置物櫃：MoveItemSlot **兩個方向都不成立**，2026-08-01 實機定案。
         //
-        //  取出（置物櫃 → 背包）：不能點選單——那是 AgentContext 的一般選單，
-        //    要點得靠未經驗證的索引對應，而那個選單裡有「丟棄」，點錯的代價太高。
-        //    手動取出時遊戲沒有跳任何確認對話框，所以 MoveItemSlot 有機會直接成立；
-        //    成不成立由退回監看誠實回報，不用猜。
+        //   02:48:59 FreeCompanyPage1#0 → Inventory1#26  verified=True
+        //   02:49:09 伺服器退回：回到來源=True（10625ms）
+        //   02:49:39 FreeCompanyPage1#0 → Inventory1#5   verified=True
+        //   02:49:43 伺服器退回：回到來源=True（3922ms）
+        //   存入方向同樣連兩次被退回（置物櫃歷史查無該筆，是真退回不是誤判）。
         //
-        //  存入（背包 → 置物櫃）：實機連兩次都在約 10 秒後被伺服器退回（置物櫃歷史裡查無該筆，
-        //    所以是真退回不是誤判）。**原因還沒查出來**——同一段 log 裡的 InputNumeric
-        //    「請設定放入的數量。」是使用者自己開來取消的，不是存入流程的必經步驟，
-        //    不能拿來當解釋。先留著這條路，讓退回監看誠實回報，等更多實測再判斷。
+        // ⚠️ 上一版賭「取出不需要確認對話框所以 MoveItemSlot 可能成立」——賭錯了。
+        // 部隊置物櫃跟雇員／鞍袋一樣是伺服器權威容器，MoveItemSlot 只會假成功。
+        //
+        // 唯一剩下的路是點遊戲自己的選單項目，但那是 AgentContext 的一般選單
+        // （不是 AgentInventoryContext），索引對應還沒驗證過，而**那個選單裡有「丟棄」**。
+        // 所以這一版只傾印選單內容、不點任何東西；等索引對應確認過再開。
+        if (Array.IndexOf(FreeCompanyPages, source) >= 0
+            || (Array.IndexOf(PlayerBags, source) >= 0 && UiHelper.IsAddonReady("FreeCompanyChest")))
+        {
+            DumpAgentContextMenu(displayName);
+            if (Throttle.Pass("AutoInventoryTransfer-FcUnsupported", 3_000))
+            {
+                Svc.Chat.PrintError(
+                    $"[TC Toolbox] 部隊置物櫃目前只能手動拖放，「{displayName}」未轉移。" +
+                    "（遊戲不接受這個容器的程式化搬移，選單內容已記進記錄檔供後續修正）");
+            }
+            return;
+        }
+
         if (!TryResolveDestination(source, out var candidates, out var reason))
         {
             if (reason.Length > 0 && Throttle.Pass("AutoInventoryTransfer-NoDest", 3_000))
@@ -801,15 +817,71 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         return false;
     }
 
+    /// <summary>
+    /// 傾印 AgentContext（一般選單）的項目。⚠️ 只讀不點。
+    ///
+    /// Dalamud 的 ContextMenu 對 AgentContext 是 `handlers.Slice(7, count)`，
+    /// 也就是**真正的項目從第 7 格起算**，前 7 格是保留的。這裡把 0..32 全部印出來，
+    /// 就能直接看出偏移對不對，不用猜。確認之後才有資格去點「取出」。
+    /// </summary>
+    private void DumpAgentContextMenu(string displayName)
+    {
+        var agentContext = AgentContext.Instance();
+        var menu = agentContext == null ? null : agentContext->CurrentContextMenu;
+        if (menu == null)
+        {
+            Svc.Log.Information($"[{InternalName}] 「{displayName}」：拿不到 AgentContext 的目前選單。");
+            return;
+        }
+
+        var wanted = Svc.Data.GetExcelSheet<Addon>()?.GetRowOrDefault(2950)?.Text.ExtractText().Trim();
+        var entries = new List<string>();
+        for (var i = 0; i < 32; i++)
+        {
+            var v = menu->EventParams[i];
+            if (v.Type is not FFXIVClientStructs.FFXIV.Component.GUI.ValueType.String
+                and not FFXIVClientStructs.FFXIV.Component.GUI.ValueType.ManagedString)
+                continue;
+
+            var ptr = v.String.Value;
+            if (ptr == null) continue;
+
+            var text = MemoryHelper.ReadSeStringNullTerminated((nint)ptr).TextValue.Trim();
+            if (text.Length == 0) continue;
+
+            var disabled = (menu->ContextItemDisabledMask & (1u << i)) != 0 ? "✖" : "";
+            var submenu = (menu->ContextSubMenuMask & (1u << i)) != 0 ? "▸" : "";
+            entries.Add($"[{i}]{disabled}{submenu}{text}");
+        }
+
+        Svc.Log.Information(
+            $"[{InternalName}] AgentContext 選單傾印（找 Addon#2950「{wanted}」，✖＝停用 ▸＝二級指令）：" +
+            string.Join(" | ", entries));
+    }
+
     private static void CloseContextMenu(AgentInventoryContext* agent)
     {
+        // 兩種選單都要關得掉：道具選單掛在 AgentInventoryContext，
+        // 部隊置物櫃那種一般選單掛在 AgentContext。
+        // ⚠️ 原本只問 AgentInventoryContext 要 addon id，一般選單那條路拿到 0 就直接 return，
+        // 所以實機看到的是「道具搬走了但右鍵選單還開著」。
         var addonId = agent->AgentInterface.GetAddonId();
+        AgentInterface* owner = &agent->AgentInterface;
+
+        if (addonId == 0)
+        {
+            var agentContext = AgentContext.Instance();
+            if (agentContext == null) return;
+            addonId = agentContext->AgentInterface.GetAddonId();
+            owner = &agentContext->AgentInterface;
+        }
+
         if (addonId == 0) return;
 
         var addon = AtkStage.Instance()->RaptureAtkUnitManager->GetAddonById((ushort)addonId);
         if (addon == null) return;
 
-        agent->AgentInterface.Hide();
+        owner->Hide();
         addon->Close(true);
     }
 
