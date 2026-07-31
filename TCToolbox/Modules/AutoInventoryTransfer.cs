@@ -369,7 +369,14 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
     {
         if (Config.ModifierKeyCode == 0) return;
         if (CSFramework.Instance()->WindowInactive) return;
-        if (!Svc.Keys[(VirtualKey)Config.ModifierKeyCode]) return;
+
+        // 2026-08-01：部隊置物櫃「取出」時完全沒有任何輸出，連下面「讀不到來源格」那行都沒有，
+        // 代表在更前面就 return 了。這一行記在修飾鍵檢查**之前**，才分得出是
+        //「hook 沒被呼叫」還是「修飾鍵沒按到」。只有右鍵才會觸發，不會洗版。
+        var modifierHeld = Svc.Keys[(VirtualKey)Config.ModifierKeyCode];
+        Svc.Log.Debug($"[{InternalName}] 右鍵選單開啟：{source}#{slot} 修飾鍵={(modifierHeld ? "有按" : "沒按")}");
+
+        if (!modifierHeld) return;
 
         var manager = InventoryManager.Instance();
         if (manager == null) return;
@@ -436,21 +443,22 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
             return;
         }
 
-        // 部隊置物櫃同樣是伺服器權威容器，2026-07-31 使用者回報「取出有問題、存入看起來正常」
-        // ——跟鞍袋一樣的形狀，所以走同一條路。Addon row 2950「取出」與 2951「放入儲物櫃」
-        // 在資料表裡相鄰，是同一個選單區塊。
+        // 部隊置物櫃：兩個方向的可用路徑不同，2026-08-01 實機釐清。
+        //
+        //  取出（置物櫃 → 背包）：右鍵選單裡**有**「取出」，走選單。
+        //  存入（背包 → 置物櫃）：遊戲**根本沒有**這個選單項——實機證實從背包右鍵時
+        //    主選單只有「自動整理 | 二級指令」兩項，使用者也確認平常是用拖的。
+        //    所以存入走不了選單，維持 MoveItemSlot（使用者回報這個方向能動）。
+        //
+        // ⚠️ 別再嘗試把存入改成點選單了，那個項目不存在。
         var sourceIsFreeCompany = Array.IndexOf(FreeCompanyPages, source) >= 0;
-        var fcChestOpen = Svc.GameGui.GetAddonByName("FreeCompanyChest", 1).Address != nint.Zero;
 
-        if (sourceIsFreeCompany || (fcChestOpen && Array.IndexOf(PlayerBags, source) >= 0))
+        if (sourceIsFreeCompany)
         {
-            if (TryFireContextMenuEntry(
-                    agent,
-                    sourceIsFreeCompany ? AddonRowRetrieveFromFcChest : AddonRowDepositToFcChest,
-                    displayName)
+            if (TryFireContextMenuEntry(agent, AddonRowRetrieveFromFcChest, displayName)
                 && Config.NotifyOnTransfer)
             {
-                Svc.Chat.Print($"[TC Toolbox] 已{(sourceIsFreeCompany ? "取出" : "放入")}「{displayName}」。");
+                Svc.Chat.Print($"[TC Toolbox] 已取出「{displayName}」。");
             }
             return;
         }
