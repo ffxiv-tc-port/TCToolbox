@@ -30,6 +30,9 @@ public sealed class AutoCountPlayers : TcModule
 
     private readonly List<PlayerInfo> players = [];
     private IDtrBarEntry? dtrEntry;
+
+    /// <summary>DTR 提示裡最多預覽幾個玩家（超過的以「…等共 N 人」帶過）。</summary>
+    private const int DtrPreviewCount = 5;
     private bool windowOpen;
     private string search = string.Empty;
 
@@ -125,9 +128,9 @@ public sealed class AutoCountPlayers : TcModule
         else
         {
             var sb = new StringBuilder();
-            foreach (var p in players.Take(30))
+            foreach (var p in players.Take(DtrPreviewCount))
                 sb.AppendLine($"[{p.Job}] {p.Name}{(string.IsNullOrEmpty(p.World) ? "" : $" @ {p.World}")}");
-            if (players.Count > 30)
+            if (players.Count > DtrPreviewCount)
                 sb.AppendLine($"…等共 {players.Count} 人");
             sb.Append("點擊開啟周邊玩家清單");
             dtrEntry.Tooltip = sb.ToString();
