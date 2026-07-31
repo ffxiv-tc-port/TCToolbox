@@ -412,9 +412,13 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
     /// </summary>
     private const uint AddonRowDepositToSaddlebag = 881;
     private const uint AddonRowRetrieveFromSaddlebag = 887;
-    // ⚠️ 部隊置物櫃（Addon 2950「取出」／2951「放入儲物櫃」）刻意不走這條：
-    // 它的右鍵選單是 AgentContext 的一般選單，這個函式讀的是 AgentInventoryContext 的
-    // EventParams，索引對不上；而那個選單裡有「丟棄」，點錯一格的代價太高。
+
+    // ⚠️ 部隊置物櫃刻意不走 TryFireContextMenuEntry：它的右鍵選單是 AgentContext 的一般選單，
+    // 而那個函式讀的是 AgentInventoryContext 的 EventParams，索引對不上；
+    // 而且那個選單裡有「丟棄」，點錯一格的代價太高。這兩個 row id 目前只給診斷用。
+    // （2026-08-01 用台服 7.20 的 Addon 表核對過：2950=「取出」、2951=「放入儲物櫃」。）
+    private const uint AddonRowChestRetrieve = 2950;
+    private const uint AddonRowChestDeposit = 2951;
 
     private bool TryFireContextMenuEntry(AgentInventoryContext* agent, uint addonRowId, string displayName)
     {
@@ -609,13 +613,35 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         // ⚠️ 上一版賭「取出不需要確認對話框所以 MoveItemSlot 可能成立」——賭錯了。
         // 部隊置物櫃跟雇員／鞍袋一樣是伺服器權威容器，MoveItemSlot 只會假成功。
         //
-        // 唯一剩下的路是點遊戲自己的選單項目，但那是 AgentContext 的一般選單
-        // （不是 AgentInventoryContext），索引對應還沒驗證過，而**那個選單裡有「丟棄」**。
-        // 所以這一版只傾印選單內容、不點任何東西；等索引對應確認過再開。
+        // 🔴 2026-08-01：「改用 ExecuteCommand(405 MoveItemBetweenInventory)」這條路**已排除**，
+        //    不要再嘗試。三個獨立方向都指向同一結論：
+        //
+        //    1. OmenTools 雖然定義了 `InventoryCommand.Move(來源, 目標)`，但**全 GitHub 沒有任何
+        //       呼叫點**（`gh search code "InventoryCommand.Move"` 只有無關的 Unity 專案）。
+        //    2. DailyRoutines 自己的 AutoInventoryTransfer（我們這個模組的原型，原始碼公開在
+        //       `Dalamud-DailyRoutines/DailyRoutines.ModulesPublic:Interface/AutoInventoryTransfer.cs`）
+        //       **根本沒用 ExecuteCommand**，它就是點右鍵選單項目（比對 Addon 97/98/881/887）；
+        //       而且它的 `IsInventoryOpen()` **完全沒有列入部隊置物櫃**——上游也不支援這個容器。
+        //    3. 對台服 7.20 `ffxiv_dx11.exe` 離線反編譯：405 在整個 .text 只有 **2 個**呼叫點，
+        //       **兩個都是 param2=0**（不是 OmenTools 註解說的「param1=來源, param2=目標」）。
+        //       其中一個位在 0x14083ed4d 這個函式裡，它用一個「是否已請求過」的 bitmask 當守衛，
+        //       失敗路徑印的是 LogMessage #1860「獲得公會儲物櫃資料失敗。」——
+        //       也就是說 **405 是「向伺服器請求載入置物櫃頁面資料」，不是搬移道具**。
+        //
+        //    我們實機看到的退回訊息是 LogMessage #1873「無法保存道具，其他玩家正在使用儲物櫃。」，
+        //    那是伺服器端的拒絕；405 不會、也不該改變它。
+        //
+        // 唯一剩下的路仍是點遊戲自己的選單項目，但那是 AgentContext 的一般選單
+        // （不是 AgentInventoryContext），索引對應**還是沒驗證過**，而**那個選單裡有「丟棄」**。
+        //
+        // ⚠️ 索引基準目前有兩個互相矛盾的來源，差 1，而差 1 就是點到隔壁那項：
+        //     Dalamud 自己的 ContextMenu.cs：addon 的 AtkValues 前 **7** 格是表頭（SetupGenericMenu(7,…)），
+        //     OmenTools 的 AddonContextMenuEvent：讀的是 AtkValues[i + **8**]。
+        //   在這個差異被實機資料解決以前，這一版只傾印、**不點任何東西**。
         if (Array.IndexOf(FreeCompanyPages, source) >= 0
             || (Array.IndexOf(PlayerBags, source) >= 0 && UiHelper.IsAddonReady("FreeCompanyChest")))
         {
-            DumpAgentContextMenu(displayName);
+            DumpContextMenuLayout(displayName);
             if (Throttle.Pass("AutoInventoryTransfer-FcUnsupported", 3_000))
             {
                 Svc.Chat.PrintError(
@@ -817,46 +843,108 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         return false;
     }
 
-    /// <summary>
-    /// 傾印 AgentContext（一般選單）的項目。⚠️ 只讀不點。
-    ///
-    /// Dalamud 的 ContextMenu 對 AgentContext 是 `handlers.Slice(7, count)`，
-    /// 也就是**真正的項目從第 7 格起算**，前 7 格是保留的。這裡把 0..32 全部印出來，
-    /// 就能直接看出偏移對不對，不用猜。確認之後才有資格去點「取出」。
-    /// </summary>
-    private void DumpAgentContextMenu(string displayName)
+    /// <summary>讀 AtkValue 的字串內容；不是字串型別或指標為 null 就回 null。</summary>
+    private static string? ReadAtkString(AtkValue v)
     {
+        if (v.Type is not FFXIVClientStructs.FFXIV.Component.GUI.ValueType.String
+            and not FFXIVClientStructs.FFXIV.Component.GUI.ValueType.ManagedString)
+            return null;
+
+        var ptr = v.String.Value;
+        if (ptr == null) return null;
+        return MemoryHelper.ReadSeStringNullTerminated((nint)ptr).TextValue.Trim();
+    }
+
+    /// <summary>
+    /// 傾印部隊置物櫃右鍵選單的**兩份**資料。⚠️ 只讀不點，不碰任何道具。
+    ///
+    /// 這個函式存在的唯一目的，是用一次實機右鍵把「選單項目的索引基準」定死，
+    /// 因為現有兩個來源互相矛盾（差 1），而在有「丟棄」的選單裡差 1 會毀掉道具：
+    ///   - Dalamud `ContextMenu.cs` 的 `SetupGenericMenu(7, …)`：addon AtkValues 前 7 格是表頭
+    ///   - OmenTools `AddonContextMenuEvent`：讀 `AtkValues[i + 8]`
+    ///
+    /// 所以兩邊都印：
+    ///   (A) AgentContext.CurrentContextMenu-&gt;EventParams[0..32] ＋ 兩個遮罩
+    ///   (B) ContextMenu **addon 自己**的 AtkValues[0..Count]，含型別
+    /// 有了 (B) 就能直接看出 `AtkValues[0]` 的項目數、字串區塊實際從第幾格開始，
+    /// 以及「取出」「放入儲物櫃」落在哪個絕對索引 —— 不用再猜。
+    /// </summary>
+    private void DumpContextMenuLayout(string displayName)
+    {
+        var sheet = Svc.Data.GetExcelSheet<Addon>();
+        var wantRetrieve = sheet?.GetRowOrDefault(AddonRowChestRetrieve)?.Text.ExtractText().Trim() ?? "";
+        var wantDeposit = sheet?.GetRowOrDefault(AddonRowChestDeposit)?.Text.ExtractText().Trim() ?? "";
+
+        // ---- (A) agent 側 ----
         var agentContext = AgentContext.Instance();
         var menu = agentContext == null ? null : agentContext->CurrentContextMenu;
         if (menu == null)
         {
             Svc.Log.Information($"[{InternalName}] 「{displayName}」：拿不到 AgentContext 的目前選單。");
+        }
+        else
+        {
+            var entries = new List<string>();
+            for (var i = 0; i < 33; i++)
+            {
+                var text = ReadAtkString(menu->EventParams[i]);
+                if (string.IsNullOrEmpty(text)) continue;
+
+                var disabled = (menu->ContextItemDisabledMask & (1u << i)) != 0 ? "✖" : "";
+                var submenu = (menu->ContextSubMenuMask & (1u << i)) != 0 ? "▸" : "";
+                entries.Add($"[{i}]{disabled}{submenu}{text}");
+            }
+
+            Svc.Log.Information(
+                $"[{InternalName}] (A) AgentContext.EventParams（✖＝停用 ▸＝二級指令）：" +
+                string.Join(" | ", entries));
+        }
+
+        // ---- (B) addon 側：這份才是 Callback 索引真正對應的陣列 ----
+        var addon = UiHelper.GetAddon("ContextMenu");
+        if (addon == null || addon->AtkValues == null)
+        {
+            Svc.Log.Information($"[{InternalName}] (B) 拿不到 ContextMenu addon 的 AtkValues。");
             return;
         }
 
-        var wanted = Svc.Data.GetExcelSheet<Addon>()?.GetRowOrDefault(2950)?.Text.ExtractText().Trim();
-        var entries = new List<string>();
-        for (var i = 0; i < 32; i++)
+        var count = addon->AtkValuesCount;
+        if (count == 0)
         {
-            var v = menu->EventParams[i];
-            if (v.Type is not FFXIVClientStructs.FFXIV.Component.GUI.ValueType.String
-                and not FFXIVClientStructs.FFXIV.Component.GUI.ValueType.ManagedString)
-                continue;
+            Svc.Log.Information($"[{InternalName}] (B) ContextMenu addon 的 AtkValuesCount=0，沒有東西可讀。");
+            return;
+        }
 
-            var ptr = v.String.Value;
-            if (ptr == null) continue;
+        // ⚠️ 只有在 count>0 之後才讀得起 [0]，否則就是讀不屬於我們的記憶體。
+        var declared = addon->AtkValues[0].Type == FFXIVClientStructs.FFXIV.Component.GUI.ValueType.UInt
+            ? addon->AtkValues[0].UInt
+            : 0u;
 
-            var text = MemoryHelper.ReadSeStringNullTerminated((nint)ptr).TextValue.Trim();
-            if (text.Length == 0) continue;
+        var dump = new List<string>();
+        var hitRetrieve = -1;
+        var hitDeposit = -1;
+        for (var i = 0; i < count && i < 64; i++)
+        {
+            var v = addon->AtkValues[i];
+            var text = ReadAtkString(v);
+            dump.Add(text == null ? $"[{i}]{v.Type}" : $"[{i}]\"{text}\"");
 
-            var disabled = (menu->ContextItemDisabledMask & (1u << i)) != 0 ? "✖" : "";
-            var submenu = (menu->ContextSubMenuMask & (1u << i)) != 0 ? "▸" : "";
-            entries.Add($"[{i}]{disabled}{submenu}{text}");
+            if (text == null) continue;
+            if (hitRetrieve < 0 && wantRetrieve.Length > 0 && text == wantRetrieve) hitRetrieve = i;
+            if (hitDeposit < 0 && wantDeposit.Length > 0 && text == wantDeposit) hitDeposit = i;
         }
 
         Svc.Log.Information(
-            $"[{InternalName}] AgentContext 選單傾印（找 Addon#2950「{wanted}」，✖＝停用 ▸＝二級指令）：" +
-            string.Join(" | ", entries));
+            $"[{InternalName}] (B) ContextMenu addon AtkValues（AtkValuesCount={count} 宣告項目數={declared}）：" +
+            string.Join(" ", dump));
+
+        // 把結論直接算好印出來，省掉人工對照。兩種基準都列，實機一比就知道哪個對。
+        static string Interpret(int absolute) =>
+            absolute < 0 ? "沒找到" : $"絕對索引 {absolute} → 基準7 時項目#{absolute - 7}／基準8 時項目#{absolute - 8}";
+
+        Svc.Log.Information(
+            $"[{InternalName}] (B) 「{wantRetrieve}」(Addon#{AddonRowChestRetrieve})：{Interpret(hitRetrieve)}；" +
+            $"「{wantDeposit}」(Addon#{AddonRowChestDeposit})：{Interpret(hitDeposit)}");
     }
 
     private static void CloseContextMenu(AgentInventoryContext* agent)
