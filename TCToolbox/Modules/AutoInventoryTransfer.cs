@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Keys;
@@ -8,6 +8,7 @@ using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using Lumina.Excel.Sheets;
+using Dalamud.Plugin.Services;
 using TCToolbox.Core;
 using CSFramework = FFXIVClientStructs.FFXIV.Client.System.Framework.Framework;
 
@@ -85,22 +86,73 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
 
     private AutoInventoryTransferConfig Config => Plugin.Instance.Config.InventoryTransfer;
 
+    /// <summary>
+    /// 等伺服器確認的轉移。雇員／部隊置物櫃／鞍袋是伺服器權威容器，MoveItemSlot 只是先改
+    /// 本機狀態，伺服器拒絕時道具會彈回原處，所以要延遲一段時間再回頭確認。
+    /// </summary>
+    private readonly record struct PendingVerification(
+        InventoryType Source, int Slot, uint BaseItemId, string DisplayName, long DeadlineTick);
+
+    private readonly List<PendingVerification> pendingVerifications = [];
+
+    /// <summary>等伺服器回應的時間。太短會誤報成功，太長則回饋遲鈍。</summary>
+    private const int RollbackCheckDelayMs = 800;
+
+    /// <summary>來源是不是伺服器權威的容器（本機容器之間的搬移不需要延遲確認）。</summary>
+    private static bool IsServerAuthoritative(InventoryType source)
+        => Array.IndexOf(RetainerPages, source) >= 0
+        || Array.IndexOf(FreeCompanyPages, source) >= 0
+        || Array.IndexOf(SaddleBags, source) >= 0;
+
     protected override void OnEnable()
     {
         openForItemSlotHook = Svc.Hooks.HookFromAddress<OpenForItemSlotDelegate>(
             AgentInventoryContext.Addresses.OpenForItemSlot.Value, OpenForItemSlotDetour);
         openForItemSlotHook.Enable();
+        Svc.Framework.Update += OnUpdate;
     }
 
     protected override void OnDisable()
     {
+        Svc.Framework.Update -= OnUpdate;
         openForItemSlotHook?.Dispose();
         openForItemSlotHook = null;
 
+        pendingVerifications.Clear();
         lastHandledSource = InventoryType.Invalid;
         lastHandledSlot = -1;
         lastHandledItemId = 0;
         lastHandledTick = 0;
+    }
+
+    private void OnUpdate(IFramework _)
+    {
+        if (pendingVerifications.Count == 0) return;
+
+        var now = Environment.TickCount64;
+        var manager = InventoryManager.Instance();
+
+        for (var i = pendingVerifications.Count - 1; i >= 0; i--)
+        {
+            var p = pendingVerifications[i];
+            if (now < p.DeadlineTick) continue;
+            pendingVerifications.RemoveAt(i);
+
+            if (manager == null) continue;
+
+            // 道具又回到來源格 = 伺服器把它退回來了，先前那次「成功」是假的。
+            if (IsItemAt(manager, p.Source, p.Slot, p.BaseItemId))
+            {
+                Svc.Log.Debug($"[{InternalName}] 伺服器退回：{p.Source}#{p.Slot} itemId={p.BaseItemId}");
+                if (Throttle.Pass("AutoInventoryTransfer-RolledBack", 3_000))
+                    Svc.Chat.PrintError(
+                        $"[TC Toolbox] 「{p.DisplayName}」沒有真的轉移過去（伺服器已退回原處），請改用手動拖放。");
+                continue;
+            }
+
+            if (Config.NotifyOnTransfer)
+                Svc.Chat.Print($"[TC Toolbox] 已轉移「{p.DisplayName}」。");
+        }
     }
 
     private void OpenForItemSlotDetour(
@@ -167,8 +219,7 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
 
         var result = manager->MoveItemSlot(source, (ushort)slot, destination, (ushort)destinationSlot);
 
-        // MoveItemSlot 會同步更新本機容器（AutoDuty 的 AutoEquipHelper 就是靠「呼叫後立刻回讀
-        // 目的地格」判定成功），所以這裡可以直接驗結果，不必等伺服器回應。
+        // 立即檢查：MoveItemSlot 會同步更新本機容器，所以這一步能擋掉「呼叫當下就沒成功」。
         // 兩邊都驗：疊加到既有堆疊時目的地本來就有同款道具，只驗目的地會恆真，
         // 所以真正的判準是「來源格已經不是這個道具了」。
         var moved = result == 0 &&
@@ -185,10 +236,26 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
             return;
         }
 
+        CloseContextMenu(agent);
+
+        // 🔴 立即檢查通過「不代表真的拿到了」。
+        // 雇員／部隊置物櫃／鞍袋是伺服器權威的容器：MoveItemSlot 只是樂觀地先改本機狀態，
+        // 伺服器若拒絕（或稍後重新同步），道具會彈回原處 —— 而我們早就印了「已轉移」。
+        // 實機徵狀就是「有時候顯示有拿到，實際上沒拿出來」（2026-07-31 使用者回報）。
+        //
+        // ⚠️ 原本這裡引用 AutoDuty AutoEquipHelper「呼叫後立刻回讀就能判定」當依據，
+        //    但那個先例搬的是裝備欄↔兵裝庫，都是本機容器，本機更新即最終狀態。
+        //    跨伺服器容器不適用。
+        if (IsServerAuthoritative(source))
+        {
+            pendingVerifications.Add(new PendingVerification(
+                source, slot, baseItemId, displayName,
+                Environment.TickCount64 + RollbackCheckDelayMs));
+            return;
+        }
+
         if (Config.NotifyOnTransfer)
             Svc.Chat.Print($"[TC Toolbox] 已轉移「{displayName}」。");
-
-        CloseContextMenu(agent);
     }
 
     /// <summary>道具名稱一律走 Lumina Item 表（台服自帶繁中），不讀 addon 上的文字。</summary>
