@@ -7,6 +7,8 @@ using System.Text.RegularExpressions;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Objects.SubKinds;
+using Dalamud.Game.Text.SeStringHandling;
+using Dalamud.Game.Text.SeStringHandling.Payloads;
 using Dalamud.Game.Gui.Dtr;
 using Dalamud.Plugin.Services;
 using TCToolbox.Core;
@@ -33,6 +35,9 @@ public sealed class AutoCountPlayers : TcModule
 
     /// <summary>DTR 提示裡最多預覽幾個玩家（超過的以「…等共 N 人」帶過）。</summary>
     private const int DtrPreviewCount = 5;
+
+    /// <summary>資訊列圖示：一群人＝周邊玩家。</summary>
+    private const BitmapFontIcon DtrIcon = BitmapFontIcon.GroupFinder;
     private bool windowOpen;
     private string search = string.Empty;
 
@@ -50,9 +55,16 @@ public sealed class AutoCountPlayers : TcModule
     {
         dtrEntry = Svc.DtrBar.Get("TC Toolbox 周邊玩家");
         dtrEntry.Shown = true;
-        dtrEntry.Text = "周邊玩家: 0";
-        dtrEntry.Tooltip = "點擊開啟周邊玩家清單";
-        dtrEntry.OnClick = _ => windowOpen = !windowOpen;
+        dtrEntry.Text = new SeString(new IconPayload(DtrIcon), new TextPayload("0"));
+        dtrEntry.Tooltip = "TC Toolbox — 周邊玩家\n左鍵：開啟周邊玩家清單\n右鍵：開啟 TC Toolbox 設定";
+        // 左鍵＝開關名單視窗；右鍵＝開 TC Toolbox 主視窗。
+        dtrEntry.OnClick = ev =>
+        {
+            if (ev.ClickType == MouseClickType.Right)
+                Plugin.Instance.ToggleMainWindow();
+            else
+                windowOpen = !windowOpen;
+        };
 
         Svc.Framework.Update += OnUpdate;
         Svc.PluginInterface.UiBuilder.Draw += DrawWindow;
@@ -119,11 +131,12 @@ public sealed class AutoCountPlayers : TcModule
         }
 
         dtrEntry.Shown = true;
-        dtrEntry.Text = $"周邊玩家: {players.Count}";
+        // DTR 空間很擠：用圖示取代「周邊玩家: 」這個每次都一樣的前綴，只留數字。
+        dtrEntry.Text = new SeString(new IconPayload(DtrIcon), new TextPayload(players.Count.ToString()));
 
         if (players.Count == 0)
         {
-            dtrEntry.Tooltip = "附近沒有其他玩家";
+            dtrEntry.Tooltip = "TC Toolbox — 周邊玩家\n附近沒有其他玩家\n\n左鍵：開啟清單　右鍵：開啟設定";
         }
         else
         {
@@ -132,7 +145,7 @@ public sealed class AutoCountPlayers : TcModule
                 sb.AppendLine($"[{p.Job}] {p.Name}{(string.IsNullOrEmpty(p.World) ? "" : $" @ {p.World}")}");
             if (players.Count > DtrPreviewCount)
                 sb.AppendLine($"…等共 {players.Count} 人");
-            sb.Append("點擊開啟周邊玩家清單");
+            sb.Append("左鍵：開啟周邊玩家清單\n右鍵：開啟 TC Toolbox 設定");
             dtrEntry.Tooltip = sb.ToString();
         }
     }

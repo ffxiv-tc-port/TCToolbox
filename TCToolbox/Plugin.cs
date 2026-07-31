@@ -88,6 +88,9 @@ public sealed class Plugin : IDalamudPlugin
         Config.Save();
     }
 
+    /// <summary>開關主視窗。給模組用（例如 DTR 的右鍵動作）。</summary>
+    public void ToggleMainWindow() => mainWindow.Toggle();
+
     private void OnCommand(string command, string args) => mainWindow.Toggle();
 
     public void Dispose()
