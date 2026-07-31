@@ -268,6 +268,9 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
     /// </summary>
     private const uint AddonRowDepositToSaddlebag = 881;
     private const uint AddonRowRetrieveFromSaddlebag = 887;
+    // 部隊置物櫃：2950「取出」與 2951「放入儲物櫃」在 Addon 表裡相鄰＝同一個選單區塊。
+    private const uint AddonRowRetrieveFromFcChest = 2950;
+    private const uint AddonRowDepositToFcChest = 2951;
 
     private bool TryFireContextMenuEntry(AgentInventoryContext* agent, uint addonRowId, string displayName)
     {
@@ -372,7 +375,15 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         if (manager == null) return;
 
         var item = manager->GetInventorySlot(source, slot);
-        if (item == null || item->ItemId == 0) return;
+
+        // 2026-07-31：部隊置物櫃「取出」完全沒有任何輸出（存入正常），代表在這之前就 return 了，
+        // 不是搬移失敗。這行把遊戲實際傳進來的容器與格號記下來，才能分辨是
+        //「hook 沒被呼叫」還是「讀不到那一格」。右鍵才會觸發，不會洗版。
+        if (item == null || item->ItemId == 0)
+        {
+            Svc.Log.Debug($"[{InternalName}] 讀不到來源格：{source}#{slot}（item={(item == null ? "null" : "ItemId=0")}）");
+            return;
+        }
 
         // ⚠️ 道具識別資料一定要在 MoveItemSlot 之前抓下來：MoveItemSlot 會同步清空來源格，
         // 之後再讀這個指標只會拿到空欄位（Item sheet 的 row 0 是有效列但名稱為空字串，
@@ -421,6 +432,25 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
                 && Config.NotifyOnTransfer)
             {
                 Svc.Chat.Print($"[TC Toolbox] 已{(sourceIsSaddleBag ? "取回" : "放入")}「{displayName}」。");
+            }
+            return;
+        }
+
+        // 部隊置物櫃同樣是伺服器權威容器，2026-07-31 使用者回報「取出有問題、存入看起來正常」
+        // ——跟鞍袋一樣的形狀，所以走同一條路。Addon row 2950「取出」與 2951「放入儲物櫃」
+        // 在資料表裡相鄰，是同一個選單區塊。
+        var sourceIsFreeCompany = Array.IndexOf(FreeCompanyPages, source) >= 0;
+        var fcChestOpen = Svc.GameGui.GetAddonByName("FreeCompanyChest", 1).Address != nint.Zero;
+
+        if (sourceIsFreeCompany || (fcChestOpen && Array.IndexOf(PlayerBags, source) >= 0))
+        {
+            if (TryFireContextMenuEntry(
+                    agent,
+                    sourceIsFreeCompany ? AddonRowRetrieveFromFcChest : AddonRowDepositToFcChest,
+                    displayName)
+                && Config.NotifyOnTransfer)
+            {
+                Svc.Chat.Print($"[TC Toolbox] 已{(sourceIsFreeCompany ? "取出" : "放入")}「{displayName}」。");
             }
             return;
         }
