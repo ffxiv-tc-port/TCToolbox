@@ -1,4 +1,5 @@
 ﻿using System;
+using Dalamud.Memory;
 using System.Runtime.InteropServices;
 using System.Collections.Generic;
 using Dalamud.Bindings.ImGui;
@@ -23,9 +24,11 @@ namespace TCToolbox.Modules;
 /// ⚠️ 搬移用哪條路徑要看容器：
 ///  - **雇員**：走遊戲自己的雇員道具命令（見 <see cref="RetainerItemCommandDelegate"/>）。
 ///    `MoveItemSlot` 在這裡會「假成功」——本機更新了但伺服器根本沒收到。
-///  - **其他**（部隊置物櫃／鞍袋／兵裝庫）：仍用 <c>InventoryManager.MoveItemSlot</c>。
-///    🔴 鞍袋已知同樣有假成功的情形（2026-07-31 實機），但目前還沒有實測有效的替代
-///    入口可用，所以**尚未修好**；不要把這段敘述當成它已經可靠。
+///  - **鞍袋**：點遊戲右鍵選單自己的項目（見 <see cref="TryFireContextMenuEntry"/>）。
+///    它同樣不能用 MoveItemSlot，而且**不走**雇員道具命令（實機驗證過）。
+///  - **其他**（部隊置物櫃／兵裝庫）：仍用 <c>InventoryManager.MoveItemSlot</c>。
+///    ⚠️ 部隊置物櫃也是伺服器權威容器，理論上有同樣的假成功風險，但尚未實測；
+///    真的遇到就照鞍袋那條路加對應的 Addon row 即可。
 /// 參考 DailyRoutines AutoInventoryTransfer 的用途重寫（API13、無 OmenTools 相依）。
 /// </summary>
 public sealed unsafe class AutoInventoryTransfer : TcModule
@@ -251,6 +254,99 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
             Svc.Chat.Print($"[TC Toolbox] 已{(retrieving ? "取回" : "寄放")}「{displayName}」。");
     }
 
+    /// <summary>
+    /// 🔴 鞍袋也不能用 MoveItemSlot（同樣是假成功），但它**不走**雇員道具命令 ——
+    /// 2026-07-31 請使用者手動取出一次，AutoRetainer 的 RetainerItemCommand hook
+    /// 全程沒有任何輸出，而道具確實從 InventoryBuddy 移到了 InventoryExpansion。
+    ///
+    /// 所以改成「點玩家自己會點的那個選單項目」。判準用 Addon 表的 row id 去查**客戶端
+    /// 自己的字串**，不是寫死翻譯，所以跟語言無關：
+    ///   881 = 放入陸行鳥鞍囊 / 887 = 從陸行鳥鞍囊中取回
+    /// 索引方式照抄 Artisan `Tasks/TaskSelectRetainer.cs`（台服實測有效）：選單實際佔用
+    /// EventParams[ContexItemStartIndex .. +ContextItemCount]，**不能掃完 98 格再數字串** ——
+    /// 那樣會掃到上一次選單的殘留，算出來的序號也不是 callback 要的列號。
+    /// </summary>
+    private const uint AddonRowDepositToSaddlebag = 881;
+    private const uint AddonRowRetrieveFromSaddlebag = 887;
+
+    private bool TryFireContextMenuEntry(AgentInventoryContext* agent, uint addonRowId, string displayName)
+    {
+        var wanted = Svc.Data.GetExcelSheet<Addon>()?.GetRowOrDefault(addonRowId)?.Text.ExtractText().Trim();
+        if (string.IsNullOrEmpty(wanted))
+        {
+            Svc.Log.Warning($"[{InternalName}] 讀不到 Addon#{addonRowId} 的字串，無法比對選單項目。");
+            return false;
+        }
+
+        var startIndex = Math.Clamp(agent->ContexItemStartIndex, 0, 98);
+        var itemCount = Math.Clamp(agent->ContextItemCount, 0, 98 - startIndex);
+
+        var index = -1;
+        var labels = new string[itemCount];
+        for (var entry = 0; entry < itemCount; entry++)
+        {
+            var v = agent->EventParams[startIndex + entry];
+            if (v.Type is not FFXIVClientStructs.FFXIV.Component.GUI.ValueType.String
+                and not FFXIVClientStructs.FFXIV.Component.GUI.ValueType.ManagedString)
+                continue;
+
+            var ptr = v.String.Value;
+            if (ptr == null) continue;
+            labels[entry] = MemoryHelper.ReadSeStringNullTerminated((nint)ptr).TextValue.Trim();
+            if (index == -1 && labels[entry] == wanted) index = entry;
+        }
+
+        if (index == -1)
+        {
+            Svc.Log.Warning(
+                $"[{InternalName}] 右鍵選單裡找不到「{wanted}」，「{displayName}」未轉移。" +
+                $"選單有 {itemCount} 項（起點 EventParams[{startIndex}]）：" +
+                string.Join(" | ", labels));
+            if (Throttle.Pass("AutoInventoryTransfer-NoMenuEntry", 3_000))
+                Svc.Chat.PrintError($"[TC Toolbox] 右鍵選單裡找不到「{wanted}」，「{displayName}」未轉移。");
+            return false;
+        }
+
+        // 被收進次選單的項目不能直接用這個序號觸發（那是主選單的列號）。
+        if ((agent->ContextItemSubmenuMask & (1u << index)) != 0)
+        {
+            Svc.Log.Warning($"[{InternalName}] 「{wanted}」在次選單裡（submenu mask），無法直接觸發。");
+            if (Throttle.Pass("AutoInventoryTransfer-Submenu", 3_000))
+                Svc.Chat.PrintError($"[TC Toolbox] 「{wanted}」被收在次選單裡，請改用手動拖放。");
+            return false;
+        }
+
+        if (agent->IsContextItemDisabled(index))
+        {
+            Svc.Log.Warning($"[{InternalName}] 選單項目 {index}（{wanted}）是停用狀態。");
+            if (Throttle.Pass("AutoInventoryTransfer-MenuDisabled", 3_000))
+                Svc.Chat.PrintError($"[TC Toolbox] 「{wanted}」目前無法使用，「{displayName}」未轉移。");
+            return false;
+        }
+
+        var addonId = agent->AgentInterface.GetAddonId();
+        var addon = addonId == 0
+            ? null
+            : AtkStage.Instance()->RaptureAtkUnitManager->GetAddonById((ushort)addonId);
+        if (addon == null)
+        {
+            Svc.Log.Warning($"[{InternalName}] 取不到右鍵選單 addon，「{displayName}」未轉移。");
+            return false;
+        }
+
+        Svc.Log.Debug($"[{InternalName}] 觸發選單項目 {index}（{wanted}）給「{displayName}」");
+
+        var values = stackalloc AtkValue[5];
+        for (var i = 0; i < 5; i++)
+        {
+            values[i].Type = FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Int;
+            values[i].Int = 0;
+        }
+        values[1].Int = index;
+        addon->FireCallback(5, values, true);
+        return true;
+    }
+
     private void OpenForItemSlotDetour(
         AgentInventoryContext* agent, InventoryType inventoryType, int slot, int a4, uint addonId)
     {
@@ -309,6 +405,23 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         if (sourceIsRetainer || (retainerWindowOpen && Array.IndexOf(PlayerBags, source) >= 0))
         {
             TransferViaRetainerCommand(agent, source, slot, itemId, displayName, sourceIsRetainer);
+            return;
+        }
+
+        // 🔴 鞍袋方向走右鍵選單（見 TryFireContextMenuEntry）。MoveItemSlot 在這裡同樣是假成功。
+        var sourceIsSaddleBag = Array.IndexOf(SaddleBags, source) >= 0;
+        var saddleBagWindowOpen = Svc.GameGui.GetAddonByName("InventoryBuddy", 1).Address != nint.Zero;
+
+        if (sourceIsSaddleBag || (saddleBagWindowOpen && Array.IndexOf(PlayerBags, source) >= 0))
+        {
+            if (TryFireContextMenuEntry(
+                    agent,
+                    sourceIsSaddleBag ? AddonRowRetrieveFromSaddlebag : AddonRowDepositToSaddlebag,
+                    displayName)
+                && Config.NotifyOnTransfer)
+            {
+                Svc.Chat.Print($"[TC Toolbox] 已{(sourceIsSaddleBag ? "取回" : "放入")}「{displayName}」。");
+            }
             return;
         }
 
