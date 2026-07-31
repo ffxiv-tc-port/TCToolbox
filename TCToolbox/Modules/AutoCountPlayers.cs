@@ -432,8 +432,17 @@ public sealed class AutoCountPlayers : TcModule
             if (IsEnabled && rule.Enabled && !string.IsNullOrWhiteSpace(rule.Pattern))
             {
                 ImGui.SameLine();
-                var count = players.Count(p => Matches(rule, p));
-                ImGui.TextDisabled($"目前命中 {count} 人");
+                var matched = players.Where(p => Matches(rule, p)).ToList();
+                ImGui.TextDisabled($"目前命中 {matched.Count} 人");
+                if (matched.Count > 0 && ImGui.IsItemHovered())
+                {
+                    var sb = new StringBuilder();
+                    foreach (var p in matched.Take(30))
+                        sb.AppendLine($"[{p.Job}] {p.Name}{(string.IsNullOrEmpty(p.World) ? "" : $" @ {p.World}")} {p.Distance:0.0}m");
+                    if (matched.Count > 30)
+                        sb.AppendLine($"…等共 {matched.Count} 人");
+                    ImGui.SetTooltip(sb.ToString().TrimEnd('\n'));
+                }
             }
 
             ImGui.Separator();
