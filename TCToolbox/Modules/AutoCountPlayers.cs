@@ -1,7 +1,9 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using System.Text;
+using System.Text.RegularExpressions;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Objects.SubKinds;
@@ -13,13 +15,14 @@ namespace TCToolbox.Modules;
 
 /// <summary>
 /// 周邊玩家數量統計：伺服器資訊列（DTR）顯示人數，點擊開啟清單懸浮窗。
+/// 另含偵測規則：玩家出現且名稱命中（完全相符或正規表達式）時通知並執行斜線指令。
 /// 機制：Framework 輪詢 ObjectTable 枚舉，零 hook（不抄 DR 的 InfoProxy hook 部分）。
 /// </summary>
 public sealed class AutoCountPlayers : TcModule
 {
     public override string InternalName => "AutoCountPlayers";
     public override string DisplayName => "周邊玩家統計";
-    public override string Description => "在伺服器資訊列顯示周邊玩家數量，滑鼠移上顯示名單，點擊開啟可搜尋的清單視窗（點名單可選取目標）。";
+    public override string Description => "在伺服器資訊列顯示周邊玩家數量，滑鼠移上顯示名單，點擊開啟可搜尋的清單視窗（點名單可選取目標）。可設定偵測規則：玩家出現且名稱命中正規表達式時通知並執行指令。";
 
     public override bool HasConfigUI => true;
 
@@ -29,6 +32,14 @@ public sealed class AutoCountPlayers : TcModule
     private IDtrBarEntry? dtrEntry;
     private bool windowOpen;
     private string search = string.Empty;
+
+    // 偵測規則的執行期狀態（不進存檔）
+    private readonly Dictionary<PlayerWatchRule, (string Pattern, Regex? Regex, string? Error)> regexCache = [];
+    private readonly Dictionary<(PlayerWatchRule Rule, string Player), long> lastTrigger = [];
+    private readonly HashSet<(PlayerWatchRule Rule, string Player)> activeTriggered = [];
+    private readonly Dictionary<PlayerWatchRule, long> patternChangedAt = [];
+    private readonly HashSet<uint> matchedEntityIds = [];
+    private readonly Queue<List<string>> pendingCommands = new();
 
     private AutoCountPlayersConfig Config => Plugin.Instance.Config.CountPlayers;
 
@@ -53,6 +64,13 @@ public sealed class AutoCountPlayers : TcModule
         dtrEntry = null;
         players.Clear();
         windowOpen = false;
+
+        regexCache.Clear();
+        lastTrigger.Clear();
+        activeTriggered.Clear();
+        patternChangedAt.Clear();
+        matchedEntityIds.Clear();
+        pendingCommands.Clear();
     }
 
     private void OnUpdate(IFramework framework)
@@ -64,17 +82,12 @@ public sealed class AutoCountPlayers : TcModule
         if (localPlayer == null)
         {
             players.Clear();
+            activeTriggered.Clear();
+            matchedEntityIds.Clear();
+            pendingCommands.Clear();
             dtrEntry.Shown = false;
             return;
         }
-
-        if (Config.HideInCombat && Svc.Condition[ConditionFlag.InCombat])
-        {
-            dtrEntry.Shown = false;
-            return;
-        }
-
-        dtrEntry.Shown = true;
 
         players.Clear();
         foreach (var obj in Svc.Objects)
@@ -92,6 +105,17 @@ public sealed class AutoCountPlayers : TcModule
 
         players.Sort((a, b) => a.Distance.CompareTo(b.Distance));
 
+        EvaluateWatchRules();
+        PumpPendingCommands();
+
+        // 戰鬥中只隱藏資訊列顯示，輪詢與偵測照常運作
+        if (Config.HideInCombat && Svc.Condition[ConditionFlag.InCombat])
+        {
+            dtrEntry.Shown = false;
+            return;
+        }
+
+        dtrEntry.Shown = true;
         dtrEntry.Text = $"周邊玩家: {players.Count}";
 
         if (players.Count == 0)
@@ -109,6 +133,139 @@ public sealed class AutoCountPlayers : TcModule
             dtrEntry.Tooltip = sb.ToString();
         }
     }
+
+    #region 偵測規則
+
+    /// <summary>
+    /// 觸發語意：命中的玩家在場且尚未處理過→觸發；持續在場不重複觸發；
+    /// 離場後再出現且超過冷卻→再次觸發。新增或修改規則對已在場的命中者立即生效。
+    /// </summary>
+    private void EvaluateWatchRules()
+    {
+        matchedEntityIds.Clear();
+
+        var rules = Config.WatchRules;
+        if (rules.Count == 0)
+        {
+            activeTriggered.Clear();
+            return;
+        }
+
+        var now = Environment.TickCount64;
+        var present = new HashSet<string>();
+
+        foreach (var p in players)
+        {
+            var key = $"{p.Name}@{p.World}";
+            present.Add(key);
+
+            foreach (var rule in rules)
+            {
+                if (!rule.Enabled || string.IsNullOrWhiteSpace(rule.Pattern)) continue;
+                if (!Matches(rule, p)) continue;
+
+                matchedEntityIds.Add(p.EntityId);
+
+                // 樣式剛在設定視窗改過（可能還在輸入中），沉澱一下再武裝
+                if (patternChangedAt.TryGetValue(rule, out var changed) && now - changed < 1500) continue;
+
+                var triggerKey = (rule, key);
+                if (!activeTriggered.Add(triggerKey)) continue;
+
+                // 冷卻中：只標記在場，不執行（避免冷卻結束時對持續在場者補觸發）
+                if (lastTrigger.TryGetValue(triggerKey, out var last) &&
+                    now - last < rule.CooldownSeconds * 1000L)
+                    continue;
+
+                lastTrigger[triggerKey] = now;
+                Trigger(rule, p);
+            }
+        }
+
+        activeTriggered.RemoveWhere(tk => !present.Contains(tk.Player));
+
+        // 定期清掉過期的觸發紀錄與已刪除規則的殘留
+        if (Throttle.Pass("AutoCountPlayers-PruneTriggers", 60_000))
+        {
+            foreach (var entry in lastTrigger.Where(kv =>
+                         !rules.Contains(kv.Key.Rule) ||
+                         now - kv.Value > Math.Max(3_600_000, kv.Key.Rule.CooldownSeconds * 2000L)).ToArray())
+                lastTrigger.Remove(entry.Key);
+            foreach (var rule in patternChangedAt.Keys.Where(r => !rules.Contains(r)).ToArray())
+                patternChangedAt.Remove(rule);
+        }
+    }
+
+    private bool Matches(PlayerWatchRule rule, PlayerInfo p)
+    {
+        var target = rule.MatchWithWorld ? $"{p.Name}@{p.World}" : p.Name;
+
+        if (!rule.UseRegex)
+            return string.Equals(target, rule.Pattern.Trim(), StringComparison.OrdinalIgnoreCase);
+
+        var regex = GetRegex(rule).Regex;
+        if (regex == null) return false;
+
+        try
+        {
+            return regex.IsMatch(target);
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return false;
+        }
+    }
+
+    private (string Pattern, Regex? Regex, string? Error) GetRegex(PlayerWatchRule rule)
+    {
+        if (regexCache.TryGetValue(rule, out var cached) && cached.Pattern == rule.Pattern)
+            return cached;
+
+        (string, Regex?, string?) entry;
+        try
+        {
+            entry = (rule.Pattern, new Regex(rule.Pattern,
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+                TimeSpan.FromMilliseconds(100)), null);
+        }
+        catch (ArgumentException ex)
+        {
+            entry = (rule.Pattern, null, ex.Message);
+        }
+
+        regexCache[rule] = entry;
+        return entry;
+    }
+
+    private void Trigger(PlayerWatchRule rule, PlayerInfo p)
+    {
+        if (rule.NotifyChat)
+            Svc.Chat.Print($"[TC Toolbox] 偵測到玩家：{p.Name}{(string.IsNullOrEmpty(p.World) ? "" : $" @ {p.World}")}（規則：{rule.Pattern}）");
+
+        if (string.IsNullOrWhiteSpace(rule.Command)) return;
+
+        var lines = rule.Command.Split('\n')
+            .Select(line => ApplyPlaceholders(line.Trim(), p))
+            .Where(line => line.Length > 0)
+            .ToList();
+        if (lines.Count > 0)
+            pendingCommands.Enqueue(lines);
+    }
+
+    private static string ApplyPlaceholders(string command, PlayerInfo p) => command
+        .Replace("{name}", p.Name, StringComparison.OrdinalIgnoreCase)
+        .Replace("{world}", p.World, StringComparison.OrdinalIgnoreCase)
+        .Replace("{job}", p.Job, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>每次輪詢只送一批指令，避免多名玩家同時命中時瞬間灌爆指令處理。</summary>
+    private void PumpPendingCommands()
+    {
+        if (!pendingCommands.TryDequeue(out var lines)) return;
+        foreach (var line in lines)
+            ChatSender.ExecuteCommand(line);
+    }
+
+    #endregion
 
     private void DrawWindow()
     {
@@ -140,14 +297,19 @@ public sealed class AutoCountPlayers : TcModule
                     ImGui.TextUnformatted(p.Job);
 
                     ImGui.TableNextColumn();
+                    var watched = matchedEntityIds.Contains(p.EntityId);
+                    if (watched)
+                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.85f, 0.3f, 1f));
                     if (ImGui.Selectable($"{p.Name}##{p.EntityId}", false, ImGuiSelectableFlags.SpanAllColumns))
                     {
                         var obj = Svc.Objects.SearchByEntityId(p.EntityId);
                         if (obj != null)
                             Svc.Targets.Target = obj;
                     }
+                    if (watched)
+                        ImGui.PopStyleColor();
                     if (ImGui.IsItemHovered())
-                        ImGui.SetTooltip("點擊選取為目標");
+                        ImGui.SetTooltip(watched ? "偵測規則命中｜點擊選取為目標" : "點擊選取為目標");
 
                     ImGui.TableNextColumn();
                     ImGui.TextUnformatted(p.World);
@@ -169,6 +331,126 @@ public sealed class AutoCountPlayers : TcModule
         if (ImGui.Checkbox("戰鬥中隱藏資訊列項目", ref hide))
         {
             Config.HideInCombat = hide;
+            Plugin.Instance.Config.Save();
+        }
+
+        ImGui.Separator();
+        ImGui.TextUnformatted("玩家偵測規則");
+        ImGui.SameLine();
+        ImGui.TextDisabled("(?)");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(
+                "命中的玩家「出現」時觸發（進入視野；離開後再出現需超過冷卻時間才會再次觸發）。\n" +
+                "指令欄每行一個斜線指令，可呼叫其他外掛（例如 /snd run 巨集名）。\n" +
+                "支援佔位符：{name}＝玩家名、{world}＝伺服器、{job}＝職業縮寫。\n" +
+                "正規表達式不分大小寫、部分符合即命中（要整名相符請用 ^…$）。");
+
+        var rules = Config.WatchRules;
+        int? removeIndex = null;
+
+        for (var i = 0; i < rules.Count; i++)
+        {
+            var rule = rules[i];
+            ImGui.PushID($"watchRule{i}");
+
+            var enabled = rule.Enabled;
+            if (ImGui.Checkbox("##enabled", ref enabled))
+            {
+                rule.Enabled = enabled;
+                Plugin.Instance.Config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("啟用此規則");
+
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(180f);
+            var pattern = rule.Pattern;
+            if (ImGui.InputTextWithHint("##pattern", "名稱樣式…", ref pattern, 128))
+            {
+                rule.Pattern = pattern;
+                patternChangedAt[rule] = Environment.TickCount64;
+            }
+            if (ImGui.IsItemDeactivatedAfterEdit())
+                Plugin.Instance.Config.Save();
+
+            ImGui.SameLine();
+            var useRegex = rule.UseRegex;
+            if (ImGui.Checkbox("正規表達式", ref useRegex))
+            {
+                rule.UseRegex = useRegex;
+                patternChangedAt[rule] = Environment.TickCount64;
+                Plugin.Instance.Config.Save();
+            }
+
+            ImGui.SameLine();
+            var withWorld = rule.MatchWithWorld;
+            if (ImGui.Checkbox("含伺服器", ref withWorld))
+            {
+                rule.MatchWithWorld = withWorld;
+                patternChangedAt[rule] = Environment.TickCount64;
+                Plugin.Instance.Config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("比對「名稱@伺服器」而非只有名稱");
+
+            ImGui.SameLine();
+            if (ImGui.SmallButton("刪除"))
+                removeIndex = i;
+
+            if (rule.UseRegex && !string.IsNullOrWhiteSpace(rule.Pattern))
+            {
+                var (_, _, error) = GetRegex(rule);
+                if (error != null)
+                    ImGui.TextColored(new Vector4(1f, 0.4f, 0.4f, 1f), $"正規表達式無效：{error}");
+            }
+
+            var command = rule.Command;
+            if (ImGui.InputTextMultiline("##command", ref command, 1024,
+                    new Vector2(-1f, ImGui.GetTextLineHeight() * 3f)))
+                rule.Command = command;
+            if (ImGui.IsItemDeactivatedAfterEdit())
+                Plugin.Instance.Config.Save();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("命中時執行的指令，每行一個，須以 / 開頭。\n例：/snd run 巨集名\n　　/echo 偵測到 {name} @ {world}");
+
+            var notify = rule.NotifyChat;
+            if (ImGui.Checkbox("聊天欄通知", ref notify))
+            {
+                rule.NotifyChat = notify;
+                Plugin.Instance.Config.Save();
+            }
+
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(80f);
+            var cooldown = rule.CooldownSeconds;
+            if (ImGui.InputInt("冷卻(秒)", ref cooldown, 0))
+            {
+                rule.CooldownSeconds = Math.Max(0, cooldown);
+                Plugin.Instance.Config.Save();
+            }
+
+            if (IsEnabled && rule.Enabled && !string.IsNullOrWhiteSpace(rule.Pattern))
+            {
+                ImGui.SameLine();
+                var count = players.Count(p => Matches(rule, p));
+                ImGui.TextDisabled($"目前命中 {count} 人");
+            }
+
+            ImGui.Separator();
+            ImGui.PopID();
+        }
+
+        if (removeIndex is { } idx)
+        {
+            regexCache.Remove(rules[idx]);
+            patternChangedAt.Remove(rules[idx]);
+            rules.RemoveAt(idx);
+            Plugin.Instance.Config.Save();
+        }
+
+        if (ImGui.Button("新增規則"))
+        {
+            rules.Add(new PlayerWatchRule());
             Plugin.Instance.Config.Save();
         }
     }

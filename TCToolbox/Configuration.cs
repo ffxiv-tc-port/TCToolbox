@@ -174,6 +174,33 @@ public sealed class AutoCountPlayersConfig
 {
     /// <summary>戰鬥中隱藏伺服器資訊列項目（PvP 區域除外的副本戰鬥干擾）。</summary>
     public bool HideInCombat = true;
+
+    /// <summary>玩家偵測規則（命中時通知／執行指令）。</summary>
+    public List<PlayerWatchRule> WatchRules { get; set; } = [];
+}
+
+/// <summary>周邊玩家偵測規則：玩家出現且名稱命中時通知並執行指令。</summary>
+public sealed class PlayerWatchRule
+{
+    public bool Enabled = true;
+
+    /// <summary>比對樣式；<see cref="UseRegex"/> 時為 .NET 正規表達式，否則須與名稱完全相符。</summary>
+    public string Pattern = string.Empty;
+
+    /// <summary>以正規表達式比對（不分大小寫、部分符合即命中）。</summary>
+    public bool UseRegex = true;
+
+    /// <summary>比對對象改為「名稱@伺服器」而非只有名稱。</summary>
+    public bool MatchWithWorld;
+
+    /// <summary>命中時逐行執行的斜線指令；支援 {name}／{world}／{job} 佔位符。</summary>
+    public string Command = string.Empty;
+
+    /// <summary>命中時在聊天欄顯示通知。</summary>
+    public bool NotifyChat = true;
+
+    /// <summary>同一位玩家再次觸發的冷卻（秒）。</summary>
+    public int CooldownSeconds = 300;
 }
 
 public sealed class AutoGardensWorkConfig
