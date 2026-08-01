@@ -49,6 +49,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new OptimizedEnemyList());
         Modules.Add(new AutoInventoryTransfer());
         Modules.Add(new OptimizedTargetInfo());
+        Modules.Add(new CustomDeliveriesOverview());
 
         foreach (var module in Modules)
         {
