@@ -33,15 +33,29 @@ namespace TCToolbox.Modules;
 /// 兩者對背包會重複觸發，靠 <see cref="DuplicateGuardMs"/> 的同格同物去重：
 /// hook 是同步的、先跑完並設好 lastHandled*，延後那筆就會被擋掉。
 ///
-/// ⚠️ 搬移用哪條路徑要看容器，四種容器**各走各的**，沒有一條通吃：
+/// 🔴🔴 <c>InventoryManager.MoveItemSlot</c> 的**第 6 個參數 <c>a6</c> 是「這次搬移要不要送給
+/// 伺服器」的總開關**，不是無關緊要的 unknown（2026-08-02 台服 7.20 二進位鑑識定案）：
+///  - <c>a6 == false</c>（**預設值，省略不寫就是它**）→ 遊戲只更新本機容器 + 刷新 UI，
+///    **一個封包都不送**。這對**任何**容器都成立，背包→背包也一樣。
+///  - <c>a6 == true</c> → 把作業排進 <c>_pendingOperations</c> 並組封包送出。
+///    遊戲自己的拖放處理常式（0x1400F7160）對雇員頁走的就是 <c>MoveItemSlot(..., a6: true)</c>，
+///    **沒有雇員特例**。
+///
+/// ⚠️⚠️ 本檔 2026-07-31／08-01 那幾批「MoveItemSlot 假成功、伺服器 3.9～10.6 秒後退回」的實機紀錄，
+/// **全部是在 <c>a6</c> 被省略的情況下量到的**（git 歷史查證：這個呼叫從第一版到 2026-08-02
+/// 只存在過四引數形式）。所以那些紀錄證明的是「封包沒送出」，**不是**「這些容器拒絕 MoveItemSlot」。
+/// 先前寫在這裡的「伺服器權威容器 vs 本機容器」因果模型是**錯的** —— 真正的軸是這個旗標。
+/// 每一則實機觀察本身仍然成立，只有歸因被推翻。
+///
+/// ⚠️ 即使如此，下面三條專用路徑**照舊保留**，因為它們是實機來回驗證過會動的，
+/// 而「改用 <c>MoveItemSlot(a6: true)</c> 也能動」目前**只是推論、沒有實機證據**。
+/// 要換路徑請先實測，不要憑這段說明就改：
 ///  - **雇員**：走遊戲自己的雇員道具命令（見 <see cref="RetainerItemCommandDelegate"/>）。
-///    `MoveItemSlot` 在這裡會「假成功」——本機更新了但伺服器根本沒收到。
 ///  - **鞍袋**：點遊戲右鍵選單自己的項目（見 <see cref="TryFireContextMenuEntry"/>）。
-///    它同樣不能用 MoveItemSlot，而且**不走**雇員道具命令（實機驗證過）。
+///    它**不走**雇員道具命令（實機驗證過）。
 ///  - **部隊置物櫃**：走 <c>AgentFreeCompanyChest::MoveItemInChest</c>
-///    （見 <see cref="MoveItemInChestDelegate"/>）。MoveItemSlot 在這裡**兩個方向都只會假成功**，
-///    伺服器 3.9～10.6 秒後退回，2026-08-01 實機定案。
-///  - **兵裝庫**：本機容器，<c>InventoryManager.MoveItemSlot</c> 就夠了（本機更新即最終狀態）。
+///    （見 <see cref="MoveItemInChestDelegate"/>）。
+///  - **兵裝庫**：走 <c>InventoryManager.MoveItemSlot</c>，**且一定要帶 <c>a6: true</c>**。
 /// 參考 DailyRoutines AutoInventoryTransfer 的用途重寫（API13、無 OmenTools 相依）。
 /// </summary>
 public sealed unsafe class AutoInventoryTransfer : TcModule
@@ -70,9 +84,13 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
     private Hook<OpenForItemSlotDelegate>? openForItemSlotHook;
 
     /// <summary>
-    /// 🔴 雇員存取不能用 <c>InventoryManager.MoveItemSlot</c>。
+    /// 🔴 雇員存取走遊戲自己的道具命令，**不是**因為 <c>MoveItemSlot</c> 對雇員無效
+    /// （見類別說明：那個結論的實機證據是在 <c>a6</c> 被省略的情況下量到的，已被推翻），
+    /// 而是因為這條路徑是實機來回驗證過會動的，而 <c>MoveItemSlot(a6: true)</c> 對雇員
+    /// **還沒有實機證據**。要換請先實測。
     ///
-    /// 2026-07-31 實機 log 證實：對 RetainerPage 呼叫 MoveItemSlot 會「成功」——回傳 0、
+    /// 2026-07-31 實機 log（⚠️ 當時的呼叫**沒帶 a6**，所以封包根本沒送出）：
+    /// 對 RetainerPage 呼叫 MoveItemSlot 會「成功」——回傳 0、
     /// 本機容器立刻更新、來源格清空 —— 但**伺服器從來沒收到**。決定性證據是 17:55 那批：
     ///   17:55:07  RetainerPage2#9 → Inventory1#20 itemId=45637 verified=True
     ///   17:55:47  RetainerPage2#9 → Inventory1#20 itemId=45637 verified=True   ← 40 秒後一模一樣
@@ -80,7 +98,7 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
     /// 只是本機狀態被樂觀改掉、直到下一次伺服器同步才還原。
     /// （所以先前那個 800ms 的延遲確認也抓不到——退回發生得比它晚太多。）
     ///
-    /// 正解是走遊戲自己的雇員道具命令，也就是右鍵選單「取回／寄放」實際呼叫的函式。
+    /// 所以改走遊戲自己的雇員道具命令，也就是右鍵選單「取回／寄放」實際呼叫的函式。
     /// 特徵碼與 agent 取法都照抄 AutoRetainer（`Internal/Memory.cs`、`InventorySpaceManager.cs`），
     /// 那是**當天實測有效**的：log 裡 20:40 有 AutoRetainer 自己的自動化連續呼叫
     /// slot 0→6（由 NeoTaskManager 驅動，不是旁觀遊戲），證明特徵碼與 +40 偏移在台服 7.20 都對。
@@ -267,7 +285,8 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
     }
 
     /// <summary>
-    /// 等伺服器確認的轉移。雇員／部隊置物櫃／鞍袋是伺服器權威容器，本機狀態不等於最終狀態。
+    /// 等伺服器確認的轉移。雇員／部隊置物櫃／鞍袋這三個容器伺服器有可能拒絕
+    /// （另一名玩家正在用置物櫃、雇員 session 狀態…），所以本機狀態不等於最終狀態。
     /// </summary>
     private readonly record struct PendingVerification(
         VerificationKind Kind,
@@ -289,11 +308,17 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
     private const int RollbackWatchMs = 12_000;
 
     /// <summary>
-    /// 這次搬移需不需要盯退回。**兩邊都要看**：來源是權威容器（取出）固然要，
-    /// 目的地是權威容器（存入）一樣要——原本只驗來源，所以「背包→部隊置物櫃」
+    /// 這次搬移需不需要盯伺服器退回。**兩邊都要看**：來源是這三個容器（取出）固然要，
+    /// 目的地是這三個容器（存入）一樣要——原本只驗來源，所以「背包→部隊置物櫃」
     /// 這個方向完全不進確認流程，伺服器退回時我們早就印了「已轉移」。
+    ///
+    /// ⚠️ 這個判斷式原本叫 <c>IsServerAuthoritative</c>，那個名字建立在一個**已被推翻的**
+    /// 因果模型上（「這些容器是伺服器權威的，所以 MoveItemSlot 只能假成功」——見類別說明，
+    /// 真正的軸是 <c>a6</c> 旗標，而且**所有**容器的內容其實都是伺服器說了算）。
+    /// 改成只描述呼叫端真正用它做的事：這三個容器伺服器**有可能拒絕**，值得盯著看會不會退回。
+    /// 判斷內容一個字都沒動。
     /// </summary>
-    private static bool IsServerAuthoritative(InventoryType type)
+    private static bool NeedsRollbackWatch(InventoryType type)
         => Array.IndexOf(RetainerPages, type) >= 0
         || Array.IndexOf(FreeCompanyPages, type) >= 0
         || Array.IndexOf(SaddleBags, type) >= 0;
@@ -677,7 +702,7 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
     }
 
     /// <summary>
-    /// 🔴 鞍袋也不能用 MoveItemSlot（同樣是假成功），但它**不走**雇員道具命令 ——
+    /// 🔴 鞍袋走遊戲自己的右鍵選單項目。它**不走**雇員道具命令 ——
     /// 2026-07-31 請使用者手動取出一次，AutoRetainer 的 RetainerItemCommand hook
     /// 全程沒有任何輸出，而道具確實從 InventoryBuddy 移到了 InventoryExpansion。
     ///
@@ -890,7 +915,8 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
             return;
         }
 
-        // 🔴 鞍袋方向走右鍵選單（見 TryFireContextMenuEntry）。MoveItemSlot 在這裡同樣是假成功。
+        // 🔴 鞍袋方向走右鍵選單（見 TryFireContextMenuEntry）——實機驗證過會動的那條。
+        // ⚠️ 不要改成 MoveItemSlot：即使帶了 a6: true 也**沒有實機證據**，先測再說。
         var sourceIsSaddleBag = Array.IndexOf(SaddleBags, source) >= 0;
         var saddleBagWindowOpen = Svc.GameGui.GetAddonByName("InventoryBuddy", 1).Address != nint.Zero;
 
@@ -909,12 +935,15 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
 
         // 🔴 部隊置物櫃：走 AgentFreeCompanyChest::MoveItemInChest（見 MoveItemInChestDelegate）。
         //
-        // MoveItemSlot 在這個容器上 **兩個方向都不成立**，2026-08-01 實機定案：
+        // 2026-08-01 實機：**沒帶 a6 的** MoveItemSlot 在這個容器上兩個方向都被退回。
         //   02:48:59 FreeCompanyPage1#0 → Inventory1#26  verified=True
         //   02:49:09 伺服器退回：回到來源=True（10625ms）
         //   02:49:39 FreeCompanyPage1#0 → Inventory1#5   verified=True
         //   02:49:43 伺服器退回：回到來源=True（3922ms）
         //   存入方向同樣連兩次被退回（置物櫃歷史查無該筆，是真退回不是誤判）。
+        // ⚠️ 這批紀錄證明的是「封包沒送出」（a6 省略＝預設 false，見類別說明），
+        //    **不是**「置物櫃拒絕 MoveItemSlot」。歸因已修正，但這條路徑照舊保留：
+        //    它是實機來回驗證過會動的，而 MoveItemSlot(a6: true) 對置物櫃沒有實機證據。
         //
         // ⚠️ 兩條已經排除、不要再回頭嘗試的路：
         //  - `ExecuteCommand(405)`：台服二進位反證。405 在整個 .text 只有 2 個呼叫點、
@@ -945,9 +974,14 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
             return;
         }
 
-        var result = manager->MoveItemSlot(source, (ushort)slot, destination, (ushort)destinationSlot);
+        // 🔴 <c>a6: true</c> 絕對不能省。省略＝預設 false＝遊戲只改本機容器、**一個封包都不送**，
+        // 畫面上道具會動但伺服器不知道，下次同步就彈回原處（見類別說明的旗標語意）。
+        // 這條路徑實務上只有「兵裝庫→背包」走得到（雇員／鞍袋／置物櫃都在上面提早 return），
+        // 而該路徑實機命中 0 次，所以這個缺陷從來沒有人回報過——不是它沒壞，是沒人走過。
+        var result = manager->MoveItemSlot(source, (ushort)slot, destination, (ushort)destinationSlot, a6: true);
 
-        // 立即檢查：MoveItemSlot 會同步更新本機容器，所以這一步能擋掉「呼叫當下就沒成功」。
+        // 立即檢查：MoveItemSlot 會同步更新本機容器（a6 只影響送不送封包，不影響本機同步更新），
+        // 所以這一步能擋掉「呼叫當下就沒成功」。
         // 兩邊都驗：疊加到既有堆疊時目的地本來就有同款道具，只驗目的地會恆真，
         // 所以真正的判準是「來源格已經不是這個道具了」。
         var moved = result == 0 &&
@@ -969,17 +1003,17 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         if (Config.NotifyOnTransfer)
             Svc.Chat.Print($"[TC Toolbox] 已轉移「{displayName}」。");
 
-        // 🔴 立即檢查通過「不代表真的搬過去了」。
-        // 雇員／部隊置物櫃／鞍袋是伺服器權威的容器：MoveItemSlot 只是樂觀地先改本機狀態，
-        // 伺服器若拒絕，道具會彈回原處 —— 而我們早就印了「已轉移」。
+        // 🔴 立即檢查通過「不代表真的搬過去了」。本機容器是同步就改好的，
+        // 但封包送出後伺服器仍可能拒絕（雇員／部隊置物櫃／鞍袋），道具會彈回原處
+        // —— 而我們早就印了「已轉移」。
         //
         // ⚠️ 原本這裡引用 AutoDuty AutoEquipHelper「呼叫後立刻回讀就能判定」當依據，
-        //    但那個先例搬的是裝備欄↔兵裝庫，都是本機容器，本機更新即最終狀態。
-        //    跨伺服器容器不適用。
+        //    那個先例搬的是裝備欄↔兵裝庫，伺服器實務上不會拒絕，所以回讀就夠。
+        //    會被別人搶用的容器（置物櫃）或有 session 狀態的容器（雇員）不適用。
         //
         // 上面的「已轉移」照樣先印（畫面上道具確實動了，不印反而更困惑），
         // 真的被退回時再補一則錯誤訊息蓋掉它。
-        if (IsServerAuthoritative(source) || IsServerAuthoritative(destination))
+        if (NeedsRollbackWatch(source) || NeedsRollbackWatch(destination))
         {
             var startTick = Environment.TickCount64;
             pendingVerifications.Add(new PendingVerification(
@@ -1088,7 +1122,7 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         CloseContextMenu(menuAgent);
 
         // ⚠️ 這裡**故意不印**「已轉移」。MoveItemInChest 是非同步請求，呼叫當下本機什麼都還沒變，
-        // 先報成功就是重蹈 MoveItemSlot 那個「假成功」的覆轍。
+        // 先報成功就是重蹈先前「本機動了就宣告成功」的覆轍。
         // 成功訊息改由 ChestDeparture 觀察器在道具真的離開來源格時才印。
         var now = Environment.TickCount64;
         pendingVerifications.Add(new PendingVerification(
