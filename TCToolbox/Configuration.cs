@@ -23,8 +23,18 @@ public sealed class Configuration : IPluginConfiguration
     public OptimizedEnemyListConfig EnemyList { get; set; } = new();
     public AutoInventoryTransferConfig InventoryTransfer { get; set; } = new();
     public OptimizedTargetInfoConfig TargetInfo { get; set; } = new();
+    public AutoHideNeedlessPopupsConfig HideNeedlessPopups { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
+}
+
+public sealed class AutoHideNeedlessPopupsConfig
+{
+    /// <summary>是否已套用過首次預設值（避免使用者清空後又被塞回來）。</summary>
+    public bool Initialized;
+
+    /// <summary>要自動關閉的彈窗 addon 名稱。</summary>
+    public HashSet<string> HiddenPopups { get; set; } = [];
 }
 
 public sealed class OptimizedTargetInfoConfig

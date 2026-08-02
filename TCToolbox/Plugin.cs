@@ -50,6 +50,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoInventoryTransfer());
         Modules.Add(new OptimizedTargetInfo());
         Modules.Add(new CustomDeliveriesOverview());
+        Modules.Add(new AutoHideNeedlessPopups());
 
         foreach (var module in Modules)
         {
