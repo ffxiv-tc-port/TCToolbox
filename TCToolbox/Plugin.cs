@@ -53,6 +53,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoHideNeedlessPopups());
         Modules.Add(new OptimizedFreeShop());
         Modules.Add(new AutoRefreshPartyFinder());
+        Modules.Add(new AutoClaimPVPRewards());
 
         foreach (var module in Modules)
         {

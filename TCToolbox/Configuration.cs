@@ -26,8 +26,15 @@ public sealed class Configuration : IPluginConfiguration
     public AutoHideNeedlessPopupsConfig HideNeedlessPopups { get; set; } = new();
     public OptimizedFreeShopConfig FreeShop { get; set; } = new();
     public AutoRefreshPartyFinderConfig RefreshPartyFinder { get; set; } = new();
+    public AutoClaimPVPRewardsConfig ClaimPvpRewards { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
+}
+
+public sealed class AutoClaimPVPRewardsConfig
+{
+    /// <summary>戰利水晶持有量到達此數就停止領取（上限 20000，超出的部分會消失）。</summary>
+    public int StopAtTrophyCrystals = 19000;
 }
 
 public sealed class AutoRefreshPartyFinderConfig
