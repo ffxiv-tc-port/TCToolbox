@@ -24,8 +24,15 @@ public sealed class Configuration : IPluginConfiguration
     public AutoInventoryTransferConfig InventoryTransfer { get; set; } = new();
     public OptimizedTargetInfoConfig TargetInfo { get; set; } = new();
     public AutoHideNeedlessPopupsConfig HideNeedlessPopups { get; set; } = new();
+    public OptimizedFreeShopConfig FreeShop { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
+}
+
+public sealed class OptimizedFreeShopConfig
+{
+    /// <summary>領取時自動按掉確認對話框（只在「報酬」視窗開著時生效）。</summary>
+    public bool SkipConfirmation = true;
 }
 
 public sealed class AutoHideNeedlessPopupsConfig
