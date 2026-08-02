@@ -25,8 +25,21 @@ public sealed class Configuration : IPluginConfiguration
     public OptimizedTargetInfoConfig TargetInfo { get; set; } = new();
     public AutoHideNeedlessPopupsConfig HideNeedlessPopups { get; set; } = new();
     public OptimizedFreeShopConfig FreeShop { get; set; } = new();
+    public AutoRefreshPartyFinderConfig RefreshPartyFinder { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
+}
+
+public sealed class AutoRefreshPartyFinderConfig
+{
+    /// <summary>自動刷新間隔（秒）。</summary>
+    public int IntervalSeconds = 30;
+
+    /// <summary>清單自己更新過就重新計時。</summary>
+    public bool OnlyWhenIdle = true;
+
+    /// <summary>在招募板上方顯示倒數與立即刷新鈕。</summary>
+    public bool ShowCountdown = true;
 }
 
 public sealed class OptimizedFreeShopConfig
