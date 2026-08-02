@@ -64,9 +64,31 @@ namespace TCToolbox.Modules;
 /// 裡（不在互動閘門上），所以<b>預設關閉</b>。</item>
 /// </list>
 ///
-/// <para><b>安全性</b>：所有 detour 都<b>不解參考任何參數</b>，一律回傳常數，
-/// 所以就算某支的參數型別推斷錯了也不會產生 AccessViolation。
-/// 特徵碼掛不上時只記一行 Warning 並跳過該項，模組與外掛照常運作。</para>
+/// <para><b>安全性：不重寫函式，只改結論。</b></para>
+/// <para>
+/// 每一支 detour 都先<b>原封不動呼叫 <c>Original</c></b>（參數照傳），再覆寫回傳值。
+/// 這樣原函式的副作用（不論我們有沒有稽核到）全部照跑，我們只改變它的結論——
+/// 「跳過原函式會不會漏掉什麼」這個問題因此根本不會發生。
+/// detour 本身<b>不解參考任何參數</b>，就算參數型別推斷錯了也不會產生 AccessViolation。
+/// </para>
+/// <para>
+/// <b>離線稽核結果</b>（用 <c>.pdata</c> 的 RUNTIME_FUNCTION 界定函式邊界後逐指令掃描；
+/// ⚠️ 線性掃描會衝過尾呼叫與冷區塊一路掃進 CRT，掃出來的「寫入」全是假的）：
+/// 七支目標的函式本體<b>全部零筆遊戲狀態寫入</b>。傳遞閉包裡出現的寫入全屬下列三類：
+/// 呼叫端自己的堆疊 out 參數（Vector3 座標、Excel 查表鍵）、
+/// MSVC CRT 的 <c>errno</c>／浮點控制字（<c>0x141CF1484</c> 寫 0x21／0x22 ＝ EDOM／ERANGE）、
+/// 以及 <c>__report_gsfailure</c>（只有堆疊 cookie 被破壞時才走得到）。
+/// ⚠️ <c>mov rax, rsp</c> 之後的 <c>[rax±N]</c> 也是堆疊存取，別誤判成物件欄位。
+/// </para>
+/// <para>
+/// 唯一真正的副作用是 <c>CheckTargetPosition</c>（<c>0x140B73680</c>）內部會送聊天錯誤訊息，
+/// 而它<b>受自己的第 5 個參數 <c>sendError</c> 控制</b>（<c>0x140B7389A</c> 的
+/// <c>cmp byte ptr [rsp+0xB0], 0 / je</c>）。所以那一支呼叫 <c>Original</c> 時把
+/// <c>sendError</c> 傳 0——遊戲自己就有呼叫端傳 0，這不是我們發明出來的狀態。
+/// 其餘六支的閉包都走不到訊息輸出函式（訊息由呼叫端依回傳值決定要不要印，
+/// 我們回傳「通過」自然就不會印）。
+/// </para>
+/// <para>特徵碼掛不上時只記一行 Warning 並跳過該項，模組與外掛照常運作。</para>
 ///
 /// <para><b>限制</b>：這些全部是<b>客端</b>檢查。伺服器有自己的一套判定，
 /// 客端放行不代表伺服器會接受——可能出現「按了沒反應」而不是真的能互動。</para>
@@ -78,14 +100,14 @@ public sealed class OptimizedInteraction : TcModule
 
     public override string Description =>
         "把遊戲阻擋互動的客端檢查逐項關掉（視野外／被遮擋／位置過高過低／距離過遠／跳躍中／騎乘飛行中）。" +
-        "只 hook 判定函式並回傳「通過」，不寫記憶體、不改封包。" +
+        "作法是讓原本的判定照常執行、只覆寫它的結論，不寫記憶體、不改封包。" +
         "注意這些都是客端檢查，伺服器仍有自己的判定，放行不等於一定互動得到。";
 
     public override bool HasConfigUI => true;
 
     // ── 原生委派 ───────────────────────────────────────────────────────────────
     // 回傳布林的一律宣告成 byte：原生端只讀 al，用 byte 就不必去猜 bool 的封送寬度。
-    // 所有 detour 都不碰參數，參數只為了文件性而列出。
+    // detour 不解參考參數，只是原樣轉交給 Original。
 
     private delegate byte IsObjectInViewRangeDelegate(nint targetSystem, nint gameObject);
 
@@ -181,14 +203,16 @@ public sealed class OptimizedInteraction : TcModule
         Sync(Config.IgnoreDistance, ref targetDistanceHook, TargetDistanceSignature,
              "目標距離過遠", (CheckTargetDistanceDelegate)TargetDistanceDetour);
 
+        // 三支共用同一個「回傳 false」語意，但各自要呼叫自己那一支的 Original，
+        // 所以不能共用一個 detour method group
         Sync(Config.IgnoreJumping, ref jumping0Hook, Jumping0Signature,
-             "跳躍狀態判定 A", (StateCheckDelegate)FalseDetour);
+             "跳躍狀態判定 A", (StateCheckDelegate)Jumping0Detour);
 
         Sync(Config.IgnoreJumping, ref jumping1Hook, Jumping1Signature,
-             "跳躍狀態判定 B", (StateCheckDelegate)FalseDetour);
+             "跳躍狀態判定 B", (StateCheckDelegate)Jumping1Detour);
 
         Sync(Config.IgnoreMountFlight, ref mountFlightHook, MountFlightSignature,
-             "騎乘／低空飛行狀態判定", (StateCheckDelegate)FalseDetour);
+             "騎乘／低空飛行狀態判定", (StateCheckDelegate)MountFlightDetour);
     }
 
     private void Sync<T>(bool wanted, ref Hook<T>? hook, string signature, string label, T detour)
@@ -215,8 +239,11 @@ public sealed class OptimizedInteraction : TcModule
             }
 
             created = Svc.Hooks.HookFromAddress(address, detour);
-            created.Enable();
+
+            // 先指派再 Enable：detour 要透過這個欄位呼叫 Original，
+            // 若先 Enable，遊戲在指派完成前呼叫進來就會讀到 null
             hook = created;
+            created.Enable();
             Svc.Log.Debug($"[{InternalName}] 已掛上「{label}」@ 0x{address:X}");
         }
         catch (Exception ex)
@@ -229,23 +256,63 @@ public sealed class OptimizedInteraction : TcModule
         }
     }
 
-    // ── Detour：一律回傳常數，完全不碰參數，所以不可能產生 AccessViolation ──────
+    // ── Detour ────────────────────────────────────────────────────────────────
+    // 一律「先原樣呼叫 Original，再覆寫回傳值」。原函式的副作用照跑，我們只改結論。
+    // detour 不解參考任何參數，所以參數型別推斷錯了也不會產生 AccessViolation。
+    // Original 為 null 只可能發生在掛載競態的極短窗口，那時直接回傳強制值即可。
 
     /// <summary>1 ＝ 在視野範圍內。</summary>
-    private static byte ViewRangeDetour(nint targetSystem, nint gameObject) => 1;
+    private byte ViewRangeDetour(nint targetSystem, nint gameObject)
+    {
+        viewRangeHook?.Original(targetSystem, gameObject);
+        return 1;
+    }
 
     /// <summary>1 ＝ 鏡頭看得到、沒被擋住。</summary>
-    private static byte CameraBlockedDetour(nint targetSystem, nint camera, nint gameObject) => 1;
+    private byte CameraBlockedDetour(nint targetSystem, nint camera, nint gameObject)
+    {
+        cameraBlockedHook?.Original(targetSystem, camera, gameObject);
+        return 1;
+    }
 
-    /// <summary>1 ＝ 位置沒問題。</summary>
-    private static byte TargetPositionDetour(
-        nint eventFramework, nint source, nint target, ushort interactType, byte sendError) => 1;
+    /// <summary>
+    /// 1 ＝ 位置沒問題。這一支是七支裡唯一自己會送聊天錯誤訊息的，
+    /// 所以呼叫 Original 時把 <c>sendError</c> 傳 0——其餘工作照做，只是不印那行字。
+    /// </summary>
+    private byte TargetPositionDetour(
+        nint eventFramework, nint source, nint target, ushort interactType, byte sendError)
+    {
+        targetPositionHook?.Original(eventFramework, source, target, interactType, 0);
+        return 1;
+    }
 
     /// <summary>0 公尺 ＝ 永遠在範圍內。</summary>
-    private static float TargetDistanceDetour(nint localPlayer, nint target) => 0f;
+    private float TargetDistanceDetour(nint localPlayer, nint target)
+    {
+        targetDistanceHook?.Original(localPlayer, target);
+        return 0f;
+    }
 
-    /// <summary>0 ＝ 沒有處於該狀態（跳躍／騎乘飛行）。</summary>
-    private static byte FalseDetour(nint self) => 0;
+    /// <summary>0 ＝ 沒在跳躍。</summary>
+    private byte Jumping0Detour(nint self)
+    {
+        jumping0Hook?.Original(self);
+        return 0;
+    }
+
+    /// <summary>0 ＝ 沒在跳躍。</summary>
+    private byte Jumping1Detour(nint self)
+    {
+        jumping1Hook?.Original(self);
+        return 0;
+    }
+
+    /// <summary>0 ＝ 沒在騎乘／低空飛行。</summary>
+    private byte MountFlightDetour(nint self)
+    {
+        mountFlightHook?.Original(self);
+        return 0;
+    }
 
     // ── 設定 UI ───────────────────────────────────────────────────────────────
 
