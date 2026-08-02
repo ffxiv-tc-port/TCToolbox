@@ -54,6 +54,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new OptimizedFreeShop());
         Modules.Add(new AutoRefreshPartyFinder());
         Modules.Add(new AutoClaimPVPRewards());
+        Modules.Add(new PFPageSizeCustomize());
 
         foreach (var module in Modules)
         {

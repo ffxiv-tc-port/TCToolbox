@@ -27,8 +27,15 @@ public sealed class Configuration : IPluginConfiguration
     public OptimizedFreeShopConfig FreeShop { get; set; } = new();
     public AutoRefreshPartyFinderConfig RefreshPartyFinder { get; set; } = new();
     public AutoClaimPVPRewardsConfig ClaimPvpRewards { get; set; } = new();
+    public PFPageSizeCustomizeConfig PfPageSize { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
+}
+
+public sealed class PFPageSizeCustomizeConfig
+{
+    /// <summary>招募板單頁筆數（1–100）；預設維持遊戲自己的 50。</summary>
+    public int PageSize = 50;
 }
 
 public sealed class AutoClaimPVPRewardsConfig
