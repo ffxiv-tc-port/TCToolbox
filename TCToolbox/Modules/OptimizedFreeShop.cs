@@ -81,6 +81,8 @@ public sealed unsafe class OptimizedFreeShop : TcModule
 
     private void OnFreeShopClosed(AddonEvent type, AddonArgs args)
     {
+        InvalidateCache();
+
         if (!queue.IsBusy) return;
         queue.Abort();
         Svc.Chat.Print("[TC Toolbox] 報酬視窗已關閉，停止批次領取。");
@@ -100,7 +102,50 @@ public sealed unsafe class OptimizedFreeShop : TcModule
 
     private sealed record ShopEntry(int Index, uint ItemId);
 
-    private sealed record JobGroup(uint CategoryRowId, string Name, uint IconId, List<ShopEntry> Entries);
+    private sealed class JobGroup(uint categoryRowId, string name, uint iconId)
+    {
+        public uint CategoryRowId { get; } = categoryRowId;
+        public string Name { get; } = name;
+        public uint IconId { get; } = iconId;
+        public List<ShopEntry> Entries { get; } = [];
+
+        /// <summary>尚未入手的件數（快取值，由 <see cref="RefreshCache"/> 更新）。</summary>
+        public int Remaining;
+    }
+
+    private List<JobGroup> cachedGroups = [];
+    private DateTime cacheValidUntil = DateTime.MinValue;
+
+    /// <summary>
+    /// 疊圖每幀都會畫，但清單解析與「還缺幾件」的背包查詢都是原生呼叫，
+    /// 每幀對數十件道具各查一次背包會實打實地吃 frame time——所以節流成每 500ms 一次。
+    /// </summary>
+    private List<JobGroup> GetGroups(AtkUnitBase* addon)
+    {
+        if (DateTime.UtcNow < cacheValidUntil) return cachedGroups;
+
+        cacheValidUntil = DateTime.UtcNow.AddMilliseconds(500);
+        cachedGroups = ReadGroups(addon);
+
+        foreach (var group in cachedGroups)
+        {
+            var remaining = 0;
+            foreach (var entry in group.Entries)
+            {
+                if (GetItemCount(entry.ItemId) == 0) remaining++;
+            }
+
+            group.Remaining = remaining;
+        }
+
+        return cachedGroups;
+    }
+
+    private void InvalidateCache()
+    {
+        cachedGroups = [];
+        cacheValidUntil = DateTime.MinValue;
+    }
 
     /// <summary>
     /// 讀出目前報酬清單並依「職業分類」分組。
@@ -137,7 +182,7 @@ public sealed unsafe class OptimizedFreeShop : TcModule
                 var categoryName = item.Value.ClassJobCategory.ValueNullable?.Name.ExtractText() ?? string.Empty;
                 if (categoryName.Length == 0) categoryName = $"分類 #{categoryId}";
 
-                group = new JobGroup(categoryId, categoryName, ResolveJobIcon(jobSheet, categoryName), []);
+                group = new JobGroup(categoryId, categoryName, ResolveJobIcon(jobSheet, categoryName));
                 byCategory[categoryId] = group;
                 groups.Add(group);
             }
@@ -187,7 +232,7 @@ public sealed unsafe class OptimizedFreeShop : TcModule
             ImGui.AlignTextToFramePadding();
             ImGui.TextColored(new Vector4(1f, 0.85f, 0.35f, 1f), "一鍵領取");
 
-            var groups = ReadGroups(addon);
+            var groups = GetGroups(addon);
             if (groups.Count == 0)
             {
                 ImGui.SameLine();
@@ -199,23 +244,17 @@ public sealed unsafe class OptimizedFreeShop : TcModule
                 using var id = ImRaii.PushId((int)group.CategoryRowId);
                 ImGui.SameLine();
 
-                var remaining = 0;
-                foreach (var entry in group.Entries)
-                {
-                    if (GetItemCount(entry.ItemId) == 0) remaining++;
-                }
-
-                using (ImRaii.Disabled(queue.IsBusy || remaining == 0))
+                using (ImRaii.Disabled(queue.IsBusy || group.Remaining == 0))
                 {
                     var clicked = group.IconId != 0
-                                      ? GameIcons.IconButton(group.IconId, group.Name, 30f, remaining == 0)
+                                      ? GameIcons.IconButton(group.IconId, group.Name, 30f, group.Remaining == 0)
                                       : ImGui.Button(group.Name, new Vector2(0, 30f));
 
                     if (clicked) StartBatch(group);
                 }
 
                 if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip($"批次領取：{group.Name}（尚未領取 {remaining} / {group.Entries.Count} 件）");
+                    ImGui.SetTooltip($"批次領取：{group.Name}（尚未領取 {group.Remaining} / {group.Entries.Count} 件）");
             }
 
             if (queue.IsBusy)
