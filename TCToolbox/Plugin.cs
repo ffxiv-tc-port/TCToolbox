@@ -56,6 +56,11 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoClaimPVPRewards());
         Modules.Add(new PFPageSizeCustomize());
         Modules.Add(new OptimizedInteraction());
+        Modules.Add(new AutoRefocus());
+        Modules.Add(new AutoQuestAccept());
+        Modules.Add(new AutoCustomDeliveryResult());
+        Modules.Add(new CopyItemNameContextMenu());
+        Modules.Add(new AutoIgnoreLoginLock());
 
         foreach (var module in Modules)
         {

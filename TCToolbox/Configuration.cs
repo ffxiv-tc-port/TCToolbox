@@ -29,8 +29,39 @@ public sealed class Configuration : IPluginConfiguration
     public AutoClaimPVPRewardsConfig ClaimPvpRewards { get; set; } = new();
     public PFPageSizeCustomizeConfig PfPageSize { get; set; } = new();
     public OptimizedInteractionConfig OptimizedInteraction { get; set; } = new();
+    public AutoRefocusConfig Refocus { get; set; } = new();
+    public AutoQuestAcceptConfig QuestAccept { get; set; } = new();
+    public AutoCustomDeliveryResultConfig CustomDeliveryResult { get; set; } = new();
+    public CopyItemNameContextMenuConfig CopyItemName { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
+}
+
+public sealed class CopyItemNameContextMenuConfig
+{
+    /// <summary>複製後在聊天欄顯示訊息。</summary>
+    public bool NotifyOnCopy = true;
+}
+
+public sealed class AutoCustomDeliveryResultConfig
+{
+    /// <summary>送出確認的最短間隔（毫秒），同時也是視窗沒關掉時的重送間隔。</summary>
+    public int DelayMs = 500;
+}
+
+public sealed class AutoQuestAcceptConfig
+{
+    /// <summary>任務受理視窗出現後，等這麼久（毫秒）才按下「接受」。</summary>
+    public int DelayMs = 500;
+}
+
+public sealed class AutoRefocusConfig
+{
+    /// <summary>只在副本內生效。</summary>
+    public bool OnlyInDuty = true;
+
+    /// <summary>恢復焦點時寫一筆 Information 記錄（已節流）。</summary>
+    public bool NotifyOnRestore;
 }
 
 /// <summary>
