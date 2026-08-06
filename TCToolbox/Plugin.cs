@@ -65,6 +65,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new HuijiWikiContextMenu());
         Modules.Add(new AutoRequestItemSubmit());
         Modules.Add(new OptimizedFreeCompanyChest());
+        Modules.Add(new WeeklyBingoClickToOpen());
 
         foreach (var module in Modules)
         {

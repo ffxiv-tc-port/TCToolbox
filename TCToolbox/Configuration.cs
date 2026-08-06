@@ -37,6 +37,7 @@ public sealed class Configuration : IPluginConfiguration
     public HuijiWikiContextMenuConfig HuijiWiki { get; set; } = new();
     public AutoRequestItemSubmitConfig RequestItemSubmit { get; set; } = new();
     public OptimizedFreeCompanyChestConfig FreeCompanyChest { get; set; } = new();
+    public WeeklyBingoClickToOpenConfig WeeklyBingoClickToOpen { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
 }
@@ -65,6 +66,15 @@ public sealed class HuijiWikiContextMenuConfig
 {
     /// <summary>開啟瀏覽器後在聊天欄顯示訊息。</summary>
     public bool NotifyOnOpen;
+}
+
+public sealed class WeeklyBingoClickToOpenConfig
+{
+    /// <summary>成功開啟副本時在聊天欄顯示一行。</summary>
+    public bool NotifyOnOpen = true;
+
+    /// <summary>格子對不到副本時在聊天欄說明原因（關掉的話點下去就完全沒反應，只有 log 有記錄）。</summary>
+    public bool NotifyWhenUnresolved = true;
 }
 
 public sealed class CopyItemNameContextMenuConfig
