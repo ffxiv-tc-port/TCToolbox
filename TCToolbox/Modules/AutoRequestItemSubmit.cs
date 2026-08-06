@@ -5,6 +5,7 @@ using Dalamud.Game.Addon.Lifecycle;
 using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Memory;
+using Dalamud.Utility;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using FFXIVClientStructs.FFXIV.Client.UI;
@@ -60,6 +61,13 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
     /// （台服 102434 實際是「確定要交易優質道具嗎<b>？</b>」，全形問號——這正是不該寫死字串的理由）。
     /// </summary>
     private static readonly uint[] HighQualityPromptRows = [5450, 11514, 102434];
+
+    /// <summary>
+    /// 品質偏好下拉選單的標籤。⚠️ 順序必須對齊 <see cref="HandInQualityPreference"/> 的列舉值
+    /// （索引直接當列舉值用）。
+    /// </summary>
+    private static readonly string[] QualityPreferenceLabels =
+        ["無偏好（交遊戲列的第一個）", "偏好優質品（HQ）", "偏好普通品（NQ）"];
 
     /// <summary>解析好的確認框字串。<see cref="OnEnable"/> 時建一次，空字串（台服未開放的列）不收。</summary>
     private readonly HashSet<string> highQualityPrompts = new(StringComparer.Ordinal);
@@ -215,13 +223,72 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
                 return;
             }
 
-            // 選單開著 → 挑第一個候選（遊戲已經照要求篩過，含 HQ／收藏品條件）
-            var option = agent->SelectedTurnInSlotItemOptionValues[0].Value;
-            if (option == null || option->ItemId == 0) return;
+            // 選單開著 → 從候選裡挑一份（遊戲已經照要求篩過，含 HQ／收藏品條件）
+            var itemId = PickTurnInItemId(agent);
+            if (itemId == 0) return;
 
-            UiHelper.SendAgentEvent(AgentId.NpcTrade, 1, 0, 0, option->GetItemId(), 0u, 0);
+            UiHelper.SendAgentEvent(AgentId.NpcTrade, 1, 0, 0, itemId, 0u, 0);
             return;
         }
+    }
+
+    /// <summary>
+    /// 從遊戲給的候選清單裡挑一份要交出去的道具，回傳可直接送進事件的「帶旗標道具 ID」（0＝挑不到）。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>這是偏好不是限定</b>：偏好的那一種挑不到時退回第一個候選，不會卡住不交。
+    /// <para>
+    /// 🔴 候選數以 <c>SelectedTurnInSlotItemOptions</c> 為上界並夾在內嵌陣列長度內，
+    /// <b>超出候選數的格子一律不解參考</b>——那裡可能還留著上一次交易的舊指標，
+    /// 而解到失效指標是 AccessViolation，外面那圈 <c>try/catch</c> 攔不到。
+    /// </para>
+    /// <para>
+    /// ⚠️ 候選數 ≤ 1 或偏好為「無」時走的是<b>與本設定加入之前完全相同</b>的路徑
+    /// （只看第 0 格），所以預設值不會改變任何既有行為。
+    /// </para>
+    /// </remarks>
+    private uint PickTurnInItemId(AgentNpcTrade* agent)
+    {
+        var options = agent->SelectedTurnInSlotItemOptionValues;
+        var preference = Config.QualityPreference;
+
+        // 🔑 品質判定與要送出去的值同源：GetItemId() 回的是「帶旗標」的 ID，
+        // HQ ＝本體 ID + 1000000（Dalamud 的 ItemUtil.IsHighQuality 就是這個判準），
+        // 所以不必另外去讀 InventoryItem 的旗標欄位，也不會兩邊對不起來。
+        static uint IdOf(InventoryItem* item) =>
+            item == null || item->ItemId == 0 ? 0u : item->GetItemId();
+
+        // ⚠️ 候選數是遊戲填的欄位，回 0 時（含「這個欄位其實不是候選數」的情況）
+        // 就退回舊行為，不去猜清單有多長。
+        var count = Math.Clamp((int)agent->SelectedTurnInSlotItemOptions, 0, options.Length);
+        if (count <= 1 || preference == HandInQualityPreference.None) return IdOf(options[0].Value);
+
+        var wantHighQuality = preference == HandInQualityPreference.PreferHighQuality;
+        uint fallback = 0;
+
+        for (var i = 0; i < count; i++)
+        {
+            var rawId = IdOf(options[i].Value);
+            if (rawId == 0) break; // 清單提前結束，後面不是有效候選
+
+            if (ItemUtil.IsHighQuality(rawId) == wantHighQuality)
+            {
+                if (Throttle.Pass("AutoRequestItemSubmit-Quality", 10_000))
+                    Svc.Log.Information(
+                        $"[{InternalName}] 候選 {count} 份，偏好{(wantHighQuality ? "優質" : "普通")}品；" +
+                        $"挑中第 {i} 個候選（道具 ID {rawId}）。");
+                return rawId;
+            }
+
+            if (fallback == 0) fallback = rawId;
+        }
+
+        if (fallback != 0 && Throttle.Pass("AutoRequestItemSubmit-Quality", 10_000))
+            Svc.Log.Information(
+                $"[{InternalName}] 候選 {count} 份都不是偏好的{(wantHighQuality ? "優質" : "普通")}品，" +
+                $"退回第一個候選（道具 ID {fallback}）照樣交出。");
+
+        return fallback;
     }
 
     /// <summary>
@@ -259,6 +326,28 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
 
         using (ImRaii.PushIndent())
             ImGui.TextDisabled("每填一格／按一次鈕之間的最短間隔，同時也是最短反應時間。");
+
+        ImGui.SetNextItemWidth(240f);
+        var preferenceIndex = (int)Config.QualityPreference;
+        if (ImGui.Combo("品質偏好", ref preferenceIndex, QualityPreferenceLabels, QualityPreferenceLabels.Length))
+        {
+            Config.QualityPreference = (HandInQualityPreference)preferenceIndex;
+            Plugin.Instance.Config.Save();
+        }
+
+        using (ImRaii.PushIndent())
+        {
+            ImGui.TextDisabled(Config.QualityPreference switch
+            {
+                HandInQualityPreference.PreferHighQuality =>
+                    "同一款道具有普通品與優質品都能交時，優先交出優質品。",
+                HandInQualityPreference.PreferNormalQuality =>
+                    "同一款道具有普通品與優質品都能交時，優先交出普通品（把優質品留著）。",
+                _ => "不挑，交出遊戲列在最前面的那一份——可能是普通品也可能是優質品。",
+            });
+            ImGui.TextDisabled("這是偏好不是限定：偏好的那一種沒有時會退回另一種照樣交出，不會卡住。");
+            ImGui.TextDisabled("繳交本身就要求優質品時，遊戲只會列出優質品，此設定無從發揮。");
+        }
 
         var confirmHq = Config.ConfirmHighQuality;
         if (ImGui.Checkbox("自動確認優質道具的交易確認框", ref confirmHq))
