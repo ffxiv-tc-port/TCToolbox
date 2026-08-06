@@ -1,0 +1,279 @@
+using System;
+using System.Collections.Generic;
+using Dalamud.Bindings.ImGui;
+using Dalamud.Game.Addon.Lifecycle;
+using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
+using Dalamud.Interface.Utility.Raii;
+using Dalamud.Memory;
+using FFXIVClientStructs.FFXIV.Client.Game;
+using FFXIVClientStructs.FFXIV.Client.Game.UI;
+using FFXIVClientStructs.FFXIV.Client.UI;
+using FFXIVClientStructs.FFXIV.Client.UI.Agent;
+using FFXIVClientStructs.FFXIV.Component.GUI;
+using Lumina.Excel.Sheets;
+using TCToolbox.Core;
+
+namespace TCToolbox.Modules;
+
+/// <summary>
+/// 交易視窗（<c>Request</c>）自動繳交道具：自動把要求的道具填進格子，填滿後自動按下「交出」。
+/// 機制：<c>AddonLifecycle</c> ＋ 對 <c>AgentNpcTrade</c> 送合成事件，
+/// 交出鈕走既有的 <see cref="UiHelper.ClickButton"/>。零 hook、零特徵碼、不寫記憶體。
+/// </summary>
+/// <remarks>
+/// 📌 <b>取代 DailyRoutines 的 <c>AutoRequestItemSubmit</c></b>。使用者裁決不走 TextAdvance 的
+/// 主開關——那會連帶啟用對話跳過／過場 ESC／自動接任務，行為擴散不可接受。
+/// <para>
+/// 🔴 與 DR 的形狀差異（DR 是每幀無節流）：這裡照本 repo 既有樣板
+/// （<see cref="AutoCustomDeliveryResult"/>）走 PostSetup ＋ PostDraw ＋
+/// <see cref="Throttle"/>，每 <c>DelayMs</c> 才動一步。填格子本來就是一步一等的流程
+/// （送出事件 → 遊戲開 <c>ContextIconMenu</c> → 選道具 → 下一格），無節流地灌事件只會
+/// 讓同一格重送十幾次。
+/// </para>
+/// <para>
+/// 🔴 <b>HQ 確認框用資料驅動判定，不寫死字串。</b>三個判準都是 <c>Addon</c> 表的列，
+/// 台服 7.20 EXD 已核對（5450「繳交優質道具」、11514「遞交優質道具」、
+/// 102434「確定要交易優質道具嗎？」）。⚠️ 而且**只有 <c>Request</c> 視窗開著時**才會去看
+/// <c>SelectYesno</c>——沒有這個前置條件的話，任何長得像的確認框都會被按掉。
+/// </para>
+/// <para>
+/// ⚠️ 這個模組會對<b>所有</b>交易視窗生效（任務繳交、部隊合建、雜項 NPC 交易），
+/// 不分辨要交的是什麼。預設關閉。
+/// </para>
+/// </remarks>
+public sealed unsafe class AutoRequestItemSubmit : TcModule
+{
+    public override string InternalName => "AutoRequestItemSubmit";
+    public override string DisplayName => "自動繳交道具";
+
+    public override string Description =>
+        "NPC 交易／繳交視窗開啟時，自動把要求的道具填進格子並按下交出（含優質道具的確認框）。" +
+        "⚠️ 對所有交易視窗一律生效，不分辨要交的是什麼道具，請自行確認要交的東西再開啟。";
+
+    public override bool HasConfigUI => true;
+
+    private const string AddonName = "Request";
+
+    /// <summary>
+    /// 判定「這個 SelectYesno 是不是優質道具確認框」用的 <c>Addon</c> 列。
+    /// 🔑 用列號查客戶端自己的字串，所以跟語言無關，也不會因為台服用全形「？」而失效
+    /// （台服 102434 實際是「確定要交易優質道具嗎<b>？</b>」，全形問號——這正是不該寫死字串的理由）。
+    /// </summary>
+    private static readonly uint[] HighQualityPromptRows = [5450, 11514, 102434];
+
+    /// <summary>解析好的確認框字串。<see cref="OnEnable"/> 時建一次，空字串（台服未開放的列）不收。</summary>
+    private readonly HashSet<string> highQualityPrompts = new(StringComparer.Ordinal);
+
+    private AutoRequestItemSubmitConfig Config => Plugin.Instance.Config.RequestItemSubmit;
+
+    protected override void OnEnable()
+    {
+        highQualityPrompts.Clear();
+        foreach (var row in HighQualityPromptRows)
+        {
+            var text = Svc.Data.GetExcelSheet<Addon>().GetRowOrDefault(row)?.Text.ExtractText().Trim();
+            if (!string.IsNullOrWhiteSpace(text)) highQualityPrompts.Add(text);
+        }
+
+        Svc.Log.Information(
+            $"[{InternalName}] 優質道具確認框判準 {highQualityPrompts.Count}/{HighQualityPromptRows.Length} 條：" +
+            $"{string.Join(" | ", highQualityPrompts)}");
+
+        // PostSetup 有可能在視窗還沒真的可以互動時就送出，PostDraw 當重試——
+        // 兩者共用同一個節流器，所以最多每 DelayMs 動一步，不會變成每幀灌事件。
+        Svc.AddonLifecycle.RegisterListener(AddonEvent.PostSetup, AddonName, OnRequest);
+        Svc.AddonLifecycle.RegisterListener(AddonEvent.PostDraw, AddonName, OnRequest);
+
+        // ⚠️ 這兩條刻意常駐註冊（DR 是在 Request 開關時動態註冊／解除）。
+        // 常駐比較不會留下懸空的監聽器，安全性改由處理常式裡的「Request 必須開著」前置條件保證，
+        // 那個條件比 DR 的註冊時機更嚴格（DR 只保證「Request 曾經開過」）。
+        // PostDraw 是必要的重試：PostSetup 那一刻確認框不一定已經可以互動，
+        // 而只掛 PostSetup 的話錯過就沒有第二次機會。
+        Svc.AddonLifecycle.RegisterListener(AddonEvent.PostSetup, "SelectYesno", OnSelectYesno);
+        Svc.AddonLifecycle.RegisterListener(AddonEvent.PostDraw, "SelectYesno", OnSelectYesno);
+    }
+
+    protected override void OnDisable()
+    {
+        Svc.AddonLifecycle.UnregisterListener(OnRequest);
+        Svc.AddonLifecycle.UnregisterListener(OnSelectYesno);
+        highQualityPrompts.Clear();
+    }
+
+    /// <summary>
+    /// 優質道具確認框。三個條件全部成立才按「是」：
+    /// 模組設定允許、<c>Request</c> 視窗正開著、提示文字命中 <see cref="HighQualityPromptRows"/>。
+    /// 任何一條不成立就完全不動作（fail-closed）。
+    /// </summary>
+    private void OnSelectYesno(AddonEvent type, AddonArgs args)
+    {
+        if (!Config.ConfirmHighQuality) return;
+
+        // PostDraw 每幀都會進來，所以節流放最前面——後面每一步都要取 addon、讀字串。
+        if (!Throttle.Pass("AutoRequestItemSubmit-Yesno", Math.Max(200, Config.DelayMs))) return;
+
+        // 🔴 沒有這個前置條件的話，任何長得像的確認框都會被按掉。
+        if (!UiHelper.IsAddonReady(AddonName)) return;
+
+        var addon = (AddonSelectYesno*)args.Addon.Address;
+        if (!UiHelper.IsReady((AtkUnitBase*)addon)) return;
+        if (addon->PromptText == null) return;
+
+        // 用 MemoryHelper 解 SeString 再取 TextValue：兩邊（這裡與 Addon 表的 ExtractText）
+        // 都是「拿掉 payload 之後的純文字」，比對基準才一致。
+        var prompt = MemoryHelper.ReadSeString(&addon->PromptText->NodeText).TextValue.Trim();
+        if (string.IsNullOrEmpty(prompt)) return;
+
+        if (!highQualityPrompts.Contains(prompt))
+        {
+            // ⚠️ 這行是「完全比對」這個假設失效時唯一的徵兆（否則只會表現成「確認框不會自己按」）。
+            if (Throttle.Pass("AutoRequestItemSubmit-PromptMiss", 10_000))
+                Svc.Log.Information(
+                    $"[{InternalName}] 交易中出現未認得的確認框，不動作：「{prompt}」" +
+                    $"（目前判準：{string.Join(" | ", highQualityPrompts)}）");
+            return;
+        }
+
+        UiHelper.FireCallback((AtkUnitBase*)addon, true, 0);
+        Svc.Log.Information($"[{InternalName}] 已確認優質道具交易：「{prompt}」");
+    }
+
+    private void OnRequest(AddonEvent type, AddonArgs args)
+    {
+        try
+        {
+            if (!Throttle.Pass("AutoRequestItemSubmit-Step", Math.Max(200, Config.DelayMs))) return;
+            if (ShouldYieldToFcwsDeliver()) return;
+
+            var addon = (AddonRequest*)args.Addon.Address;
+            if (!UiHelper.IsReady((AtkUnitBase*)addon)) return;
+
+            // 交出鈕能按就按——遊戲只在所有欄位都填滿時才啟用它，所以「按得動」同時就是「填完了」的判準。
+            //
+            // 🔴 判斷「能不能按」一律交給 UiHelper.ClickButton，**不要自己先讀 IsEnabled**：
+            // CS 的 AtkComponentButton.IsEnabled 是
+            // `AtkComponentBase.OwnerNode->AtkResNode.NodeFlags.HasFlag(...)`，
+            // 它對 OwnerNode **沒有任何 null 檢查**，先讀它等於自己開一個存取違規的口子
+            // （而 AVE 是 .NET Core 的 corrupted-state exception，外面那圈 try/catch 攔不到）。
+            // ClickButton 內部依序驗 addon／button／OwnerNode／IsEnabled／可見性／事件非 null，
+            // 全部通過才送事件，回 false 就代表「現在按不動」——正好是我們要的分支條件。
+            if (UiHelper.ClickButton((AtkUnitBase*)addon, addon->HandOverButton))
+            {
+                Svc.Log.Information($"[{InternalName}] 已按下交出鈕（欄位數 {addon->EntryCount}）。");
+                return;
+            }
+
+            FillNextSlot();
+        }
+        catch (Exception ex)
+        {
+            Svc.Log.Error(ex, $"[{InternalName}] 處理交易視窗時發生例外");
+        }
+    }
+
+    /// <summary>
+    /// 把還沒填的第一格填上。一次只處理一格：送出事件之後遊戲要開
+    /// <c>ContextIconMenu</c> 讓人選同款道具的哪一份（NQ／HQ），選完才輪得到下一格。
+    /// </summary>
+    private void FillNextSlot()
+    {
+        var agent = AgentNpcTrade.Instance();
+        if (agent == null) return;
+
+        var manager = InventoryManager.Instance();
+        if (manager == null) return;
+
+        // HandIn 是交易視窗自己的暫存容器：已經填進格子的道具會出現在這裡。
+        var container = manager->GetInventoryContainer(InventoryType.HandIn);
+        if (container == null) return;
+
+        var uiState = UIState.Instance();
+        if (uiState == null) return;
+
+        var requests = uiState->NpcTrade.Requests;
+
+        // 🔴 Count 是遊戲填的 byte，不能直接拿來當迴圈上界：Items 是固定 5 格的內嵌陣列，
+        // Count 若大於 5 就會讀到 ItemRequests 結構後面的記憶體。兩軸都收斂。
+        var count = Math.Min((int)requests.Count, requests.Items.Length);
+        if (count <= 0) return;
+
+        for (var i = 0; i < count; i++)
+        {
+            // 容器大小同樣是遊戲說了算，不能假設它一定 ≥ count。
+            if (i >= container->Size) break;
+
+            var slot = container->GetInventorySlot(i);
+            var wanted = requests.Items[i];
+
+            // 這一格已經填好了 → 換下一格
+            if (slot != null && slot->ItemId == wanted.ItemId) continue;
+
+            // 道具選單還沒開 → 請遊戲替第 i 格開出可選道具清單
+            if (!UiHelper.IsAddonReady("ContextIconMenu"))
+            {
+                UiHelper.SendAgentEvent(AgentId.NpcTrade, 0, 2, i, 0, 0);
+                return;
+            }
+
+            // 選單開著 → 挑第一個候選（遊戲已經照要求篩過，含 HQ／收藏品條件）
+            var option = agent->SelectedTurnInSlotItemOptionValues[0].Value;
+            if (option == null || option->ItemId == 0) return;
+
+            UiHelper.SendAgentEvent(AgentId.NpcTrade, 1, 0, 0, option->GetItemId(), 0u, 0);
+            return;
+        }
+    }
+
+    /// <summary>
+    /// 部隊合建的交納視窗也是 <c>Request</c>，而 <see cref="AutoFCWSDeliver"/> 有自己的一整套
+    /// 填格＋交出流程。兩個模組同時驅動同一扇視窗沒有好處，所以合建視窗開著、
+    /// 而且那個模組是啟用狀態時，這裡讓路。
+    /// <para>⚠️ 只在「那個模組真的開著」時讓路——否則合建視窗就變成完全沒人處理。</para>
+    /// </summary>
+    private bool ShouldYieldToFcwsDeliver()
+    {
+        if (!UiHelper.IsAddonReady("SubmarinePartsMenu")) return false;
+
+        foreach (var module in Plugin.Instance.Modules)
+        {
+            if (module is not AutoFCWSDeliver) continue;
+            if (!module.IsEnabled) return false;
+
+            if (Throttle.Pass("AutoRequestItemSubmit-YieldFcws", 10_000))
+                Svc.Log.Information($"[{InternalName}] 合建交納視窗開著，交由「合建素材一鍵全交」處理，本模組不動作。");
+            return true;
+        }
+
+        return false;
+    }
+
+    public override void DrawConfig()
+    {
+        ImGui.SetNextItemWidth(180f);
+        var delay = Config.DelayMs;
+        if (ImGui.SliderInt("動作間隔（毫秒）", ref delay, 200, 3_000))
+        {
+            Config.DelayMs = delay;
+            Plugin.Instance.Config.Save();
+        }
+
+        using (ImRaii.PushIndent())
+            ImGui.TextDisabled("每填一格／按一次鈕之間的最短間隔，同時也是最短反應時間。");
+
+        var confirmHq = Config.ConfirmHighQuality;
+        if (ImGui.Checkbox("自動確認優質道具的交易確認框", ref confirmHq))
+        {
+            Config.ConfirmHighQuality = confirmHq;
+            Plugin.Instance.Config.Save();
+        }
+
+        using (ImRaii.PushIndent())
+        {
+            ImGui.TextDisabled("關閉時交易照樣自動填格與交出，只有「確定要交易優質道具嗎？」");
+            ImGui.TextDisabled("這扇確認框留給你自己按。判準取自遊戲介面用語，不是寫死的字串。");
+            ImGui.TextDisabled(highQualityPrompts.Count == 0
+                ? "⚠️ 目前一條判準都沒解析到，確認框不會自動按。"
+                : $"目前判準（{highQualityPrompts.Count} 條）：{string.Join(" / ", highQualityPrompts)}");
+        }
+    }
+}

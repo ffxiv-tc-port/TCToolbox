@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using Dalamud.Configuration;
+using FFXIVClientStructs.FFXIV.Client.Game;
 
 namespace TCToolbox;
 
@@ -33,8 +34,37 @@ public sealed class Configuration : IPluginConfiguration
     public AutoQuestAcceptConfig QuestAccept { get; set; } = new();
     public AutoCustomDeliveryResultConfig CustomDeliveryResult { get; set; } = new();
     public CopyItemNameContextMenuConfig CopyItemName { get; set; } = new();
+    public HuijiWikiContextMenuConfig HuijiWiki { get; set; } = new();
+    public AutoRequestItemSubmitConfig RequestItemSubmit { get; set; } = new();
+    public OptimizedFreeCompanyChestConfig FreeCompanyChest { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
+}
+
+public sealed class OptimizedFreeCompanyChestConfig
+{
+    /// <summary>
+    /// 開啟部隊置物櫃時要切到的頁面。
+    /// ⚠️ 預設 <see cref="InventoryType.Invalid"/>＝不切換，也就是<b>維持遊戲原本的行為</b>。
+    /// 舊設定檔沒有這個欄位，反序列化不會覆寫欄位初始值，所以升級不會讓人突然被換頁。
+    /// ⚠️ 水晶頁是 <c>FreeCompanyCrystals</c>(22001)，不是「20000＋5」——不要用頁序去算。
+    /// </summary>
+    public InventoryType DefaultPage = InventoryType.Invalid;
+}
+
+public sealed class AutoRequestItemSubmitConfig
+{
+    /// <summary>每一步（填一格／按一次鈕）之間的最短間隔（毫秒）。</summary>
+    public int DelayMs = 500;
+
+    /// <summary>自動確認「確定要交易優質道具嗎？」這扇確認框。</summary>
+    public bool ConfirmHighQuality = true;
+}
+
+public sealed class HuijiWikiContextMenuConfig
+{
+    /// <summary>開啟瀏覽器後在聊天欄顯示訊息。</summary>
+    public bool NotifyOnOpen;
 }
 
 public sealed class CopyItemNameContextMenuConfig

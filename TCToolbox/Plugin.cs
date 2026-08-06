@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Dalamud.Game.Command;
 using Dalamud.Interface.Windowing;
@@ -61,12 +62,17 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoCustomDeliveryResult());
         Modules.Add(new CopyItemNameContextMenu());
         Modules.Add(new AutoIgnoreLoginLock());
+        Modules.Add(new HuijiWikiContextMenu());
+        Modules.Add(new AutoRequestItemSubmit());
+        Modules.Add(new OptimizedFreeCompanyChest());
 
         foreach (var module in Modules)
         {
             if (Config.EnabledModules.Contains(module.InternalName))
                 module.Enable();
         }
+
+        LogModuleState();
 
         gardeningIpc = new GardeningIpc();
 
@@ -81,6 +87,74 @@ public sealed class Plugin : IDalamudPlugin
         {
             HelpMessage = "開啟 TC Toolbox 模組設定視窗",
         });
+    }
+
+    /// <summary>
+    /// 啟動時把模組狀態寫進記錄。
+    /// 🔴 **一律 <c>Information</c> 級**：使用者跑 LogLevel 2，Debug／Verbose 完全收不到，
+    /// 而「哪些模組是開的」是事後看實機記錄時唯一無法從別處推得的資訊
+    /// （模組啟用時本來一行都不寫，2026-08-06 的調查就是卡在這裡）。
+    /// <para>
+    /// 每一行都帶「已啟用模組」這個關鍵字，所以 <c>grep "已啟用模組"</c> 一次就能把整份清單撈出來，
+    /// 不必先找到開頭那行再往下數。
+    /// </para>
+    /// <para>
+    /// ⚠️ 順便報告兩種靜默狀況，它們都不會有別的徵兆：
+    /// <list type="bullet">
+    /// <item>設定裡開著、但 <see cref="TcModule.Enable"/> 失敗的（例外本身是 Error 級，
+    /// 但「所以最後到底幾個是開的」只有這裡看得到）。</item>
+    /// <item>設定裡有、這一版卻已經不存在的模組名（改名／移除的殘留）。
+    /// **只報告不清除** —— 使用者在版本之間來回時清掉就回不來了。</item>
+    /// </list>
+    /// </para>
+    /// </summary>
+    private void LogModuleState()
+    {
+        var known = new HashSet<string>();
+        var enabled = new List<string>();
+        var failed = new List<string>();
+
+        foreach (var module in Modules)
+        {
+            known.Add(module.InternalName);
+            if (!Config.EnabledModules.Contains(module.InternalName)) continue;
+
+            // Enable() 內部把例外吃掉並改寫 IsEnabled，所以「設定裡開著」≠「真的開起來了」。
+            (module.IsEnabled ? enabled : failed).Add(module.InternalName);
+        }
+
+        var unknown = new List<string>();
+        foreach (var name in Config.EnabledModules)
+        {
+            if (!known.Contains(name)) unknown.Add(name);
+        }
+
+        Svc.Log.Information(
+            $"[TCToolbox] 已啟用模組 {enabled.Count}/{Modules.Count}"
+            + (failed.Count > 0 ? $"，啟用失敗 {failed.Count}" : string.Empty)
+            + (unknown.Count > 0 ? $"，設定檔中有 {unknown.Count} 個不存在的模組名" : string.Empty));
+
+        if (enabled.Count == 0)
+        {
+            Svc.Log.Information("[TCToolbox] 已啟用模組 （無）—— 目前所有模組都是關閉狀態。");
+        }
+        else
+        {
+            // 二十幾個名字擠成一行會長到難讀，切成每行 6 個；行首的序號範圍讓人一眼看出有沒有漏行。
+            const int perLine = 6;
+            for (var i = 0; i < enabled.Count; i += perLine)
+            {
+                var slice = enabled.GetRange(i, Math.Min(perLine, enabled.Count - i));
+                Svc.Log.Information(
+                    $"[TCToolbox] 已啟用模組 [{i + 1}-{i + slice.Count}/{enabled.Count}] {string.Join("、", slice)}");
+            }
+        }
+
+        if (failed.Count > 0)
+            Svc.Log.Information($"[TCToolbox] 啟用失敗模組 {failed.Count}：{string.Join("、", failed)}（例外內容見上方 Error 記錄）");
+
+        if (unknown.Count > 0)
+            Svc.Log.Information($"[TCToolbox] 設定檔中不存在的模組名 {unknown.Count}：{string.Join("、", unknown)}（保留不動）");
     }
 
     public void SetModuleEnabled(TcModule module, bool enabled)
