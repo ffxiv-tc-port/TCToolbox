@@ -18,6 +18,7 @@ public sealed class Svc
     [PluginService] public static ICondition Condition { get; private set; } = null!;
     [PluginService] public static IDataManager Data { get; private set; } = null!;
     [PluginService] public static IAddonLifecycle AddonLifecycle { get; private set; } = null!;
+    [PluginService] public static IAddonEventManager AddonEvent { get; private set; } = null!;
     [PluginService] public static IDtrBar DtrBar { get; private set; } = null!;
     [PluginService] public static IGameGui GameGui { get; private set; } = null!;
     [PluginService] public static ITargetManager Targets { get; private set; } = null!;

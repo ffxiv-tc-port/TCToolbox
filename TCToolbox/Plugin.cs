@@ -61,6 +61,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoCustomDeliveryResult());
         Modules.Add(new CopyItemNameContextMenu());
         Modules.Add(new AutoIgnoreLoginLock());
+        Modules.Add(new WeeklyBingoClickToOpen());
 
         foreach (var module in Modules)
         {
