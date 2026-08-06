@@ -70,8 +70,14 @@ public sealed unsafe class AutoQuestAccept : TcModule
         if (DateTime.UtcNow - visibleSince.Value < TimeSpan.FromMilliseconds(Config.DelayMs)) return;
 
         var button = addon->GetComponentButtonById(AcceptButtonId);
-        if (button == null || !button->IsEnabled) return;
+        if (button == null) return;
 
+        // 🔴 不要在這裡先讀 button->IsEnabled。CS 的 AtkComponentButton.IsEnabled 是
+        // `AtkComponentBase.OwnerNode->AtkResNode.NodeFlags.HasFlag(...)`——它解的是 +0xA8 的
+        // OwnerNode（不是 +0xA0 的 AtkResNode），而且對它**零 null 檢查**，先讀等於自己開一個
+        // 存取違規的口子（AVE 是 .NET Core 的 corrupted-state exception，try/catch 攔不到）。
+        // 「能不能按」一律交給 UiHelper.ClickButton：它先驗 addon／button／OwnerNode 才讀
+        // IsEnabled，回 false 就代表「現在按不動」，正好是我們原本要的分支條件。
         if (!UiHelper.ClickButton(addon, button)) return;
 
         // 按下去之後視窗就會關掉；萬一沒關（按鈕被遊戲重新啟用）也不要每幀重按。
