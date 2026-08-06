@@ -233,18 +233,90 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
     }
 
     /// <summary>
+    /// 候選道具可能待在哪些自有容器裡。<see cref="IsLiveInventorySlot"/> 用它來確認一個候選指標
+    /// 真的指向現在活著的道具格。
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ 這份清單<b>寧可多列不要少列</b>：漏列一個容器只會讓品質偏好對那種道具不生效
+    /// （退回既有行為，而且 log 會留下一行），多列一個容器則完全沒有壞處。
+    /// </remarks>
+    private static readonly InventoryType[] CandidateSourceContainers =
+    [
+        InventoryType.Inventory1, InventoryType.Inventory2,
+        InventoryType.Inventory3, InventoryType.Inventory4,
+        InventoryType.Crystals, InventoryType.KeyItems,
+        InventoryType.EquippedItems,
+        InventoryType.ArmoryMainHand, InventoryType.ArmoryOffHand,
+        InventoryType.ArmoryHead, InventoryType.ArmoryBody, InventoryType.ArmoryHands,
+        InventoryType.ArmoryWaist, InventoryType.ArmoryLegs, InventoryType.ArmoryFeets,
+        InventoryType.ArmoryEar, InventoryType.ArmoryNeck, InventoryType.ArmoryWrist,
+        InventoryType.ArmoryRings, InventoryType.ArmorySoulCrystal,
+    ];
+
+    /// <summary>
+    /// 這個候選指標是不是「現在活著的自有道具格」。
+    /// <b>只比對指標值，完全不解參考 <paramref name="candidate"/>。</b>
+    /// </summary>
+    /// <remarks>
+    /// 🔴 這是 <see cref="PickTurnInItemId"/> 能安全走訪候選清單的<b>唯一理由</b>。
+    /// 候選陣列有幾格有效是遊戲填的欄位說了算，而那個欄位在台服<b>沒有被離線驗證過</b>
+    /// （<c>AgentNpcTrade</c> 在 FFXIVClientStructs 裡完全沒有特徵碼／虛擬表可以當定位錨點，
+    /// 離線探測工具的校準閘門因此無從滿足）。如果它其實不是「候選數」，
+    /// 多出來的格子可能留著上一次交易的舊指標，而解到失效指標是 AccessViolation——
+    /// .NET Core 的 corrupted-state exception，<c>try/catch</c> 攔不到，遊戲當場關閉。
+    /// <para>
+    /// 🔑 所以這裡<b>反過來問</b>：不去相信清單長度，而是拿候選指標比對
+    /// 「遊戲現在自己承認的每一個道具格位址」。比對只用指標值、不碰它指到的記憶體，
+    /// 所以指標再爛都不會出事；比不中就當那一格不存在。
+    /// </para>
+    /// <para>
+    /// 🔑 而且這裡<b>沒有引入任何新的原生層假設</b>：<c>InventoryManager.Instance()</c>、
+    /// <c>GetInventoryContainer</c>、<c>Size</c>、<c>GetInventorySlot</c>
+    /// 全都是 <see cref="FillNextSlot"/> 出貨前就在用的東西。
+    /// </para>
+    /// <para>
+    /// 📌 成本：最壞情況約一千次指標比對，而呼叫端有 <see cref="Throttle"/> 擋著
+    /// （最快每 <c>DelayMs</c> ≥200ms 一次），不是每幀。
+    /// </para>
+    /// </remarks>
+    private static bool IsLiveInventorySlot(InventoryItem* candidate)
+    {
+        if (candidate == null) return false;
+
+        var manager = InventoryManager.Instance();
+        if (manager == null) return false;
+
+        foreach (var type in CandidateSourceContainers)
+        {
+            var container = manager->GetInventoryContainer(type);
+            if (container == null) continue;
+
+            // 容器大小同樣是遊戲說了算；上界另外夾一次，免得壞掉的 Size 讓迴圈跑到天荒地老。
+            var size = container->Size;
+            if (size <= 0 || size > 1_000) continue;
+
+            for (var i = 0; i < size; i++)
+                if (container->GetInventorySlot(i) == candidate) return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// 從遊戲給的候選清單裡挑一份要交出去的道具，回傳可直接送進事件的「帶旗標道具 ID」（0＝挑不到）。
     /// </summary>
     /// <remarks>
     /// 🔴 <b>這是偏好不是限定</b>：偏好的那一種挑不到時退回第一個候選，不會卡住不交。
     /// <para>
-    /// 🔴 候選數以 <c>SelectedTurnInSlotItemOptions</c> 為上界並夾在內嵌陣列長度內，
-    /// <b>超出候選數的格子一律不解參考</b>——那裡可能還留著上一次交易的舊指標，
-    /// 而解到失效指標是 AccessViolation，外面那圈 <c>try/catch</c> 攔不到。
+    /// 🔴 <b>第 0 格以外的候選一律先過 <see cref="IsLiveInventorySlot"/> 才解參考。</b>
+    /// 第 0 格維持本設定加入之前的做法（直接解參考），所以既有行為與既有風險原封不動；
+    /// 新增的走訪範圍則完全不倚賴「<c>SelectedTurnInSlotItemOptions</c> 真的是候選數」
+    /// 這個未經台服驗證的假設——它現在只是個便宜的上界，就算它是錯的，
+    /// 最壞結果也只是<b>挑不到偏好的品質而退回既有行為</b>，不會是存取違規。
     /// </para>
     /// <para>
-    /// ⚠️ 候選數 ≤ 1 或偏好為「無」時走的是<b>與本設定加入之前完全相同</b>的路徑
-    /// （只看第 0 格），所以預設值不會改變任何既有行為。
+    /// ⚠️ 候選上界 ≤ 1 或偏好為「無」（預設）時完全不進走訪迴圈，走的是<b>與本設定加入之前
+    /// 逐字相同</b>的路徑。
     /// </para>
     /// </remarks>
     private uint PickTurnInItemId(AgentNpcTrade* agent)
@@ -258,37 +330,47 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
         static uint IdOf(InventoryItem* item) =>
             item == null || item->ItemId == 0 ? 0u : item->GetItemId();
 
-        // ⚠️ 候選數是遊戲填的欄位，回 0 時（含「這個欄位其實不是候選數」的情況）
-        // 就退回舊行為，不去猜清單有多長。
+        // 第 0 格：與本設定加入之前逐字相同的取法。
+        var first = IdOf(options[0].Value);
+
+        // ⚠️ 這個欄位只當上界用；它是不是真的「候選數」不影響安全性（見 IsLiveInventorySlot）。
         var count = Math.Clamp((int)agent->SelectedTurnInSlotItemOptions, 0, options.Length);
-        if (count <= 1 || preference == HandInQualityPreference.None) return IdOf(options[0].Value);
+        if (count <= 1 || preference == HandInQualityPreference.None) return first;
 
         var wantHighQuality = preference == HandInQualityPreference.PreferHighQuality;
-        uint fallback = 0;
+        if (first != 0 && ItemUtil.IsHighQuality(first) == wantHighQuality) return first;
 
-        for (var i = 0; i < count; i++)
+        var rejected = 0;
+        for (var i = 1; i < count; i++)
         {
-            var rawId = IdOf(options[i].Value);
-            if (rawId == 0) break; // 清單提前結束，後面不是有效候選
+            var candidate = options[i].Value;
+
+            // 🔴 沒通過驗證就完全不碰它——連它的 ItemId 都不讀。
+            if (!IsLiveInventorySlot(candidate)) { rejected++; continue; }
+
+            var rawId = IdOf(candidate);
+            if (rawId == 0) continue;
 
             if (ItemUtil.IsHighQuality(rawId) == wantHighQuality)
             {
                 if (Throttle.Pass("AutoRequestItemSubmit-Quality", 10_000))
                     Svc.Log.Information(
-                        $"[{InternalName}] 候選 {count} 份，偏好{(wantHighQuality ? "優質" : "普通")}品；" +
+                        $"[{InternalName}] 候選上界 {count}，偏好{(wantHighQuality ? "優質" : "普通")}品；" +
                         $"挑中第 {i} 個候選（道具 ID {rawId}）。");
                 return rawId;
             }
-
-            if (fallback == 0) fallback = rawId;
         }
 
-        if (fallback != 0 && Throttle.Pass("AutoRequestItemSubmit-Quality", 10_000))
+        // ⚠️ rejected 是「這個欄位到底是不是候選數」在實機上唯一的證據來源：
+        // 它若長期是 0，代表上界與實際候選一致；若總是很大，代表那個欄位不是候選數
+        // （而且因為有 IsLiveInventorySlot 擋著，這件事只會表現成偏好失效，不會是崩潰）。
+        if (Throttle.Pass("AutoRequestItemSubmit-Quality", 10_000))
             Svc.Log.Information(
-                $"[{InternalName}] 候選 {count} 份都不是偏好的{(wantHighQuality ? "優質" : "普通")}品，" +
-                $"退回第一個候選（道具 ID {fallback}）照樣交出。");
+                $"[{InternalName}] 候選上界 {count}（其中 {rejected} 個不是現存的道具格，已略過），" +
+                $"沒有偏好的{(wantHighQuality ? "優質" : "普通")}品；" +
+                $"退回第一個候選（道具 ID {first}）照樣交出。");
 
-        return fallback;
+        return first;
     }
 
     /// <summary>
