@@ -70,6 +70,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new GlamourDuplicateCleanup());
         Modules.Add(new GlamourArmoireCleanup());
         Modules.Add(new MoveGearsNotInSet());
+        Modules.Add(new AutoMateriaRetrieveAll());
 
         foreach (var module in Modules)
         {
