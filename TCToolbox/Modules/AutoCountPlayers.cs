@@ -28,10 +28,28 @@ public sealed class AutoCountPlayers : TcModule
 
     public override bool HasConfigUI => true;
 
-    private sealed record PlayerInfo(uint EntityId, string Name, string World, string Job, float Distance);
+    /// <summary><c>Job</c> 是職業全名（台服 ClassJob 表自帶繁中），不是縮寫。</summary>
+    private sealed record PlayerInfo(
+        uint EntityId, string Name, string World, uint JobIconId, string Job, float Distance);
 
     private readonly List<PlayerInfo> players = [];
     private IDtrBarEntry? dtrEntry;
+
+    /// <summary>
+    /// 職業圖示 ID ＝ <c>62100 + ClassJob 列號</c>。
+    /// <para>
+    /// 依據：①艦隊裡四處已出貨的先例一致（ECommons <c>ExcelJobHelper.GetIcon</c>、
+    /// AutoRetainer <c>RetainerTable</c>、WrathCombo <c>Icons.GetJobIcon</c>、Splatoon）
+    /// ②2026-08-06 離線直讀台服 <c>060000.win32.index</c> 求證：
+    /// <c>ui/icon/062000/062100.tex</c>～<c>062146.tex</c> 全部存在，062099 與 062147 都不存在——
+    /// 區塊邊界剛好對齊台服 ClassJob 表的 46 列（0～45），所以本式對整張表都落在有效範圍內。
+    /// </para>
+    /// <para>⚠️ ClassJob 表**沒有** Icon 欄，這個對應關係只能靠慣例，不是資料驅動的。</para>
+    /// </summary>
+    private const uint JobIconBase = 62100;
+
+    /// <summary>圖示區塊的最後一列（62146 是區塊最後一張圖）。</summary>
+    private const uint JobIconMaxRow = 46;
 
     /// <summary>DTR 提示裡最多預覽幾個玩家（超過的以「…等共 N 人」帶過）。</summary>
     private const int DtrPreviewCount = 5;
@@ -110,11 +128,18 @@ public sealed class AutoCountPlayers : TcModule
             if (obj is not IPlayerCharacter pc) continue;
             if (pc.EntityId == localPlayer.EntityId) continue;
 
+            var classJob = pc.ClassJob.ValueNullable;
+            // 全名取自 ClassJob.Name（台服 Lumina 讀出來就是繁中），不自建對照表。
+            var jobName = classJob?.Name.ExtractText() ?? string.Empty;
+            var jobRow = classJob?.RowId ?? 0;
+
             players.Add(new PlayerInfo(
                 pc.EntityId,
                 pc.Name.TextValue,
                 pc.HomeWorld.ValueNullable?.Name.ExtractText() ?? string.Empty,
-                pc.ClassJob.ValueNullable?.Abbreviation.ExtractText() ?? "?",
+                jobRow is >= 1 and <= JobIconMaxRow ? JobIconBase + jobRow : 0,
+                // ClassJob 讀不到（或台服該列沒有名稱，例如列 0）才顯示「?」
+                string.IsNullOrEmpty(jobName) ? "?" : jobName,
                 Vector3.Distance(localPlayer.Position, pc.Position)));
         }
 
@@ -297,7 +322,12 @@ public sealed class AutoCountPlayers : TcModule
                     ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.ScrollY))
             {
                 ImGui.TableSetupScrollFreeze(0, 1);
-                ImGui.TableSetupColumn("職業", ImGuiTableColumnFlags.WidthFixed, 48f);
+                // 職業欄只放圖示（行高大小），全名走列的 tooltip；圖示載不到才退回全名文字。
+                // 欄寬取「圖示 + 邊距」與欄名寬度的較大者，免得欄名被切掉。
+                var jobIconSize = ImGui.GetTextLineHeight();
+                ImGui.TableSetupColumn("職業", ImGuiTableColumnFlags.WidthFixed,
+                                       Math.Max(jobIconSize + ImGui.GetStyle().CellPadding.X * 2f,
+                                                ImGui.CalcTextSize("職業").X));
                 ImGui.TableSetupColumn("名稱", ImGuiTableColumnFlags.WidthStretch);
                 ImGui.TableSetupColumn("伺服器", ImGuiTableColumnFlags.WidthFixed, 80f);
                 ImGui.TableSetupColumn("距離", ImGuiTableColumnFlags.WidthFixed, 56f);
@@ -310,7 +340,12 @@ public sealed class AutoCountPlayers : TcModule
 
                     ImGui.TableNextRow();
                     ImGui.TableNextColumn();
-                    ImGui.TextUnformatted(p.Job);
+                    // 🔴 wrap 只在當幀有效，絕不保存跨幀（跨幀共享即時 wrap ＝崩潰）。
+                    var jobIcon = GameIcons.TryGet(p.JobIconId);
+                    if (jobIcon != null)
+                        ImGui.Image(jobIcon.Handle, new Vector2(jobIconSize, jobIconSize));
+                    else
+                        ImGui.TextUnformatted(p.Job);
 
                     ImGui.TableNextColumn();
                     var watched = matchedEntityIds.Contains(p.EntityId);
@@ -324,8 +359,11 @@ public sealed class AutoCountPlayers : TcModule
                     }
                     if (watched)
                         ImGui.PopStyleColor();
+                    // Selectable 是 SpanAllColumns，所以停在職業圖示上也會走這條——
+                    // 職業全名放在第一行，圖示看不懂時滑過去就有答案。
                     if (ImGui.IsItemHovered())
-                        ImGui.SetTooltip(watched ? "偵測規則命中｜點擊選取為目標" : "點擊選取為目標");
+                        ImGui.SetTooltip(p.Job + "\n" +
+                                         (watched ? "偵測規則命中｜點擊選取為目標" : "點擊選取為目標"));
 
                     ImGui.TableNextColumn();
                     ImGui.TextUnformatted(p.World);
@@ -358,7 +396,7 @@ public sealed class AutoCountPlayers : TcModule
             ImGui.SetTooltip(
                 "命中的玩家「出現」時觸發（進入視野；離開後再出現需超過冷卻時間才會再次觸發）。\n" +
                 "指令欄每行一個斜線指令，可呼叫其他外掛（例如 /snd run 巨集名）。\n" +
-                "支援佔位符：{name}＝玩家名、{world}＝伺服器、{job}＝職業縮寫。\n" +
+                "支援佔位符：{name}＝玩家名、{world}＝伺服器、{job}＝職業全名。\n" +
                 "正規表達式不分大小寫、部分符合即命中（要整名相符請用 ^…$）。");
 
         var rules = Config.WatchRules;
