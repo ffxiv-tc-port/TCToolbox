@@ -176,8 +176,15 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
             var addon = (AddonRequest*)args.Addon.Address;
             if (!UiHelper.IsReady((AtkUnitBase*)addon)) return;
 
-            // 交出鈕能按就按——遊戲只在所有欄位都填滿時才啟用它，所以「按得動」同時就是「填完了」的判準。
+            // 🔴 先確認「真的填滿了」再按。
             //
+            // 「按得動 ⇒ 填完了」這個假設是錯的：2026-08-07 實機直證，理符繳交視窗開啟後
+            // 43 毫秒（約 2 幀）ClickButton 就回 true，而當時一格都還沒填，空手交出被遊戲
+            // 當成取消。因為這裡是「先試按、按不動才填」，那一按就 return，
+            // FillNextSlot() 從頭到尾沒被呼叫過 —— 十次繳交十次失敗。
+            // 上面的白名單只是把這個錯誤假設關進較小的籠子裡，並沒有修正它本身。
+            if (!AreAllRequestedItemsHandedIn()) { FillNextSlot(); return; }
+
             // 🔴 判斷「能不能按」一律交給 UiHelper.ClickButton，**不要自己先讀 IsEnabled**：
             // CS 的 AtkComponentButton.IsEnabled 是
             // `AtkComponentBase.OwnerNode->AtkResNode.NodeFlags.HasFlag(...)`，
@@ -197,6 +204,100 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
         {
             Svc.Log.Error(ex, $"[{InternalName}] 處理交易視窗時發生例外");
         }
+    }
+
+    /// <summary>
+    /// 交易視窗要求的每一項，是不是都已經真的躺在 <c>HandIn</c> 暫存容器裡（含數量）。
+    /// 這是按下交出鈕的<b>前置條件</b>。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 <b>為什麼需要這道守衛</b>：本模組原本拿「交出鈕按得動」當「格子填滿了」的判準。
+    /// 那個假設是錯的 —— 2026-08-07 實機 log 直證，理符繳交視窗開啟後 43 毫秒
+    /// <see cref="UiHelper.ClickButton"/> 就回 true（代表該鈕的 <c>NodeFlags.Enabled</c>
+    /// 真的是設起來的），而當時一格都還沒填；空手交出被遊戲判成取消，
+    /// NPC 隨即回「你怎麼了？做好的東西忘記拿了？」。
+    /// </para>
+    /// <para>
+    /// 🔑 <b>這道守衛對「現在會成功的路徑」是 no-op</b>：交出成功的那一刻，
+    /// 依定義每一格都已經填好了，所以這裡必然全部通過、必然照按。
+    /// 它唯一擋掉的是「還沒填完就按」——也就是現在唯一會失敗的那條路徑。
+    /// </para>
+    /// <para>
+    /// 🔴 <b>讀不到就別按</b>：容器／要求清單任何一項取不到、或數量對不上，一律回
+    /// <c>false</c>，交給 <see cref="FillNextSlot"/> 去補，下一輪再試。
+    /// 失敗形式是「多等一輪」，不是「空手交出」。
+    /// </para>
+    /// <para>
+    /// ⚠️ 這裡<b>沒有引入任何新的原生層假設</b>：<c>InventoryManager.Instance()</c>、
+    /// <c>GetInventoryContainer(HandIn)</c>、<c>Size</c>、<c>GetInventorySlot</c>、
+    /// <c>UIState.NpcTrade.Requests</c> 全都是 <see cref="FillNextSlot"/> 出貨前就在用的東西，
+    /// 邊界收斂也照抄它的形狀。
+    /// </para>
+    /// </remarks>
+    private bool AreAllRequestedItemsHandedIn()
+    {
+        var manager = InventoryManager.Instance();
+        if (manager == null) return false;
+
+        // HandIn 是交易視窗自己的暫存容器：已經填進格子的道具會出現在這裡。
+        var container = manager->GetInventoryContainer(InventoryType.HandIn);
+        if (container == null) return false;
+
+        var uiState = UIState.Instance();
+        if (uiState == null) return false;
+
+        var requests = uiState->NpcTrade.Requests;
+
+        // 🔴 與 FillNextSlot 同一組收斂：Count 是遊戲填的 byte，Items 是固定 5 格的內嵌陣列，
+        // Count 若大於 5 就會讀到 ItemRequests 結構後面的記憶體。兩軸都收斂。
+        var count = Math.Min((int)requests.Count, requests.Items.Length);
+
+        // 要求清單還沒讀到 ⇒ 無從確認填滿了沒 ⇒ 不按。
+        if (count <= 0)
+        {
+            if (Throttle.Pass("AutoRequestItemSubmit-NotFilled", 10_000))
+                Svc.Log.Information(
+                    $"[{InternalName}] 交易要求清單還讀不到（Count={requests.Count}），先不按交出鈕。");
+            return false;
+        }
+
+        for (var i = 0; i < count; i++)
+        {
+            var wanted = requests.Items[i];
+
+            // 容器大小同樣是遊戲說了算，不能假設它一定 ≥ count。
+            if (i >= container->Size)
+            {
+                if (Throttle.Pass("AutoRequestItemSubmit-NotFilled", 10_000))
+                    Svc.Log.Information(
+                        $"[{InternalName}] 第 {i + 1} 項（道具 {wanted.ItemId}）超出暫存容器大小 " +
+                        $"{container->Size}，先不按交出鈕。");
+                return false;
+            }
+
+            var slot = container->GetInventorySlot(i);
+            if (slot == null || slot->ItemId != wanted.ItemId)
+            {
+                if (Throttle.Pass("AutoRequestItemSubmit-NotFilled", 10_000))
+                    Svc.Log.Information(
+                        $"[{InternalName}] 第 {i + 1} 項還沒填：要的是道具 {wanted.ItemId}，" +
+                        $"格子裡是 {(slot == null ? "空的" : slot->ItemId.ToString())}，先不按交出鈕。");
+                return false;
+            }
+
+            if (slot->Quantity < wanted.RequiredQuantity)
+            {
+                if (Throttle.Pass("AutoRequestItemSubmit-NotFilled", 10_000))
+                    Svc.Log.Information(
+                        $"[{InternalName}] 第 {i + 1} 項（道具 {wanted.ItemId}）數量不足：" +
+                        $"已放 {slot->Quantity}／需要 {wanted.RequiredQuantity}，" +
+                        $"還差 {wanted.RequiredQuantity - slot->Quantity}，先不按交出鈕。");
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>
