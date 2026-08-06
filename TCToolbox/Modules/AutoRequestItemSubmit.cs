@@ -7,6 +7,7 @@ using Dalamud.Interface.Utility.Raii;
 using Dalamud.Memory;
 using Dalamud.Utility;
 using FFXIVClientStructs.FFXIV.Client.Game;
+using FFXIVClientStructs.FFXIV.Client.Game.Event;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
@@ -38,8 +39,18 @@ namespace TCToolbox.Modules;
 /// <c>SelectYesno</c>——沒有這個前置條件的話，任何長得像的確認框都會被按掉。
 /// </para>
 /// <para>
-/// ⚠️ 這個模組會對<b>所有</b>交易視窗生效（任務繳交、部隊合建、雜項 NPC 交易），
-/// 不分辨要交的是什麼。預設關閉。
+/// ⚠️ 預設關閉。開啟後也只在<b>任務交付</b>時接手 —— 早期版本是對所有交易視窗一律生效，
+/// 那個行為已經在 2026-08-07 因為誤觸理符繳交與以物易物而收掉（見下）。
+/// </para>
+/// <para>
+/// 🔴 <b>只在「確定是任務交付」時才動作</b>（見 <see cref="IsQuestTurnIn"/>）。
+/// <c>Request</c> 這扇視窗被遊戲重複使用在任務交付、理符繳交、部隊合建交納、
+/// 以物易物……等好幾種情境上，而視窗本身看不出自己是誰開的。
+/// 2026-08-07 實機 log 直證兩件事：①理符繳交視窗一開，本模組在 43 毫秒內就按下了交出鈕
+/// （<c>ClickButton</c> 回 true，代表那顆鈕在<b>一格都還沒填</b>時就是「可按」的），
+/// 空手交出被遊戲當成取消，NPC 隨即回「你怎麼了？做好的東西忘記拿了？」，十次皆然；
+/// ②以物易物視窗開著時，本模組按下了三次【交換】——<b>那是不可逆的資產損失</b>。
+/// 因此判準改成白名單：認得出是任務交付才接手，認不出就完全不動作。
 /// </para>
 /// </remarks>
 public sealed unsafe class AutoRequestItemSubmit : TcModule
@@ -48,8 +59,9 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
     public override string DisplayName => "自動繳交道具";
 
     public override string Description =>
-        "NPC 交易／繳交視窗開啟時，自動把要求的道具填進格子並按下交出（含優質道具的確認框）。" +
-        "⚠️ 對所有交易視窗一律生效，不分辨要交的是什麼道具，請自行確認要交的東西再開啟。";
+        "任務交付視窗開啟時，自動把要求的道具填進格子並按下交出（含優質道具的確認框）。" +
+        "🔴 只在確認得出是「任務交付」時才動作：理符繳交、以物易物、代幣／收藏品兌換、" +
+        "部隊合建交納一律不碰（那些按下去可能換掉不該換的東西）。判斷不出來時也不動作。";
 
     public override bool HasConfigUI => true;
 
@@ -123,6 +135,10 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
         // 🔴 沒有這個前置條件的話，任何長得像的確認框都會被按掉。
         if (!UiHelper.IsAddonReady(AddonName)) return;
 
+        // 🔴 確認框也吃同一張白名單：不是任務交付就完全不碰。
+        // 只做一半（不填格卻幫忙按確認）會把別人的流程按到錯的地方，比完全不動作更糟。
+        if (!IsQuestTurnIn()) return;
+
         var addon = (AddonSelectYesno*)args.Addon.Address;
         if (!UiHelper.IsReady((AtkUnitBase*)addon)) return;
         if (addon->PromptText == null) return;
@@ -152,6 +168,10 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
         {
             if (!Throttle.Pass("AutoRequestItemSubmit-Step", Math.Max(200, Config.DelayMs))) return;
             if (ShouldYieldToFcwsDeliver()) return;
+
+            // 🔴 白名單必須排在按鈕之前 —— 這扇視窗的交出鈕在一格都沒填時就是可按的，
+            // 慢一步判定等於已經把別人的交易按下去了。
+            if (!IsQuestTurnIn()) return;
 
             var addon = (AddonRequest*)args.Addon.Address;
             if (!UiHelper.IsReady((AtkUnitBase*)addon)) return;
@@ -396,6 +416,129 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
         return false;
     }
 
+    /// <summary>
+    /// 已知會共用 <c>Request</c> 視窗、而且「按下去就回不來」的視窗。開著就一律不動作。
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ 這只是<b>保險</b>，不是主判準 —— 主判準是 <see cref="IsQuestTurnIn"/> 的白名單。
+    /// 黑名單永遠列不完（理符、以物易物，之後還會有別的），而每漏一個的代價都是使用者的道具，
+    /// 所以真正擋住風險的是「非任務交付就不動作」，這張表只負責在白名單萬一誤判時再擋一層。
+    /// </remarks>
+    private static readonly string[] NeverActWhileOpen =
+    [
+        "ShopExchangeItem",   // 以物易物（潛水艇零件等）：按下的是【交換】，換錯不可逆
+        "ShopExchangeCoin",   // 代幣兌換
+        "InclusionShop",      // 道具交易（羅薇娜商會等）
+        "CollectablesShop",   // 收藏品交易
+    ];
+
+    /// <summary>
+    /// 🔴 <b>白名單：只有「確定是任務（Quest）交付」時才接手，其餘一律不動作。</b>
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 <b>為什麼是白名單而不是逐個排除</b>：<c>Request</c> 這扇視窗被遊戲重複使用在
+    /// 任務交付、理符繳交、部隊合建交納、以物易物……等好幾種情境上，而
+    /// <see cref="AddonRequest"/> 本身完全看不出自己是誰開的。逐個排除的黑名單永遠列不完，
+    /// 而漏掉一個的代價是<b>不可逆的資產損失</b>（2026-08-07 實機：以物易物視窗被按了三次
+    /// 【交換】）。所以改成「認得出是任務交付才動作」，認不出就讓使用者自己按。
+    /// </para>
+    /// <para>
+    /// 🔴 <b>失敗形式一律是「不動作」</b>：任何一個環節取不到資料、或事件對不上已接的任務，
+    /// 都回 <c>false</c>。少做一次自動化的代價是多按一下；做錯一次的代價是道具沒了。
+    /// </para>
+    /// <para>
+    /// 🔑 <b>判準本身是自我驗證的</b>：不只要求「目前的事件是任務事件」
+    /// （<see cref="EventHandlerContent.Quest"/>），還要求那個事件的
+    /// <c>EntryId</c> 真的等於玩家<b>現在接著</b>的某個任務編號。
+    /// 任務事件的 ID 就是 <c>0x10000 | 任務編號</c>——這條規則在
+    /// <c>EventFramework.GetEventHandlerById(ushort)</c> 的多載裡寫得很明白
+    /// （<c>id | 0x10000</c>），而 <see cref="EventHandlerContent.Quest"/> 正好是 <c>0x0001</c>。
+    /// 兩段都吻合才算數，所以就算 <c>EventState</c> 的語意跟預期不同，
+    /// 也幾乎不可能湊巧命中——<b>對不上就是不動作</b>，倒向安全的那一邊。
+    /// </para>
+    /// <para>
+    /// ⚠️ <b>已知的縮減</b>：理符繳交、部隊合建交納、以物易物、代幣／收藏品兌換，
+    /// 從此一律不再自動處理（那些本來就不該由本模組接手）。
+    /// </para>
+    /// </remarks>
+    private bool IsQuestTurnIn()
+    {
+        // 保險：已知不可逆的視窗開著就直接放棄，連白名單都不必看。
+        foreach (var addonName in NeverActWhileOpen)
+        {
+            if (!UiHelper.IsAddonReady(addonName)) continue;
+
+            if (Throttle.Pass("AutoRequestItemSubmit-NeverAct", 10_000))
+                Svc.Log.Information(
+                    $"[{InternalName}] 偵測到「{addonName}」開著（按下去不可逆），本模組不動作。");
+            return false;
+        }
+
+        var questManager = QuestManager.Instance();
+        var framework = EventFramework.Instance();
+        if (questManager == null || framework == null)
+        {
+            if (Throttle.Pass("AutoRequestItemSubmit-NotQuest", 30_000))
+                Svc.Log.Information($"[{InternalName}] 取不到任務／事件狀態，無法確認是任務交付，本模組不動作。");
+            return false;
+        }
+
+        var event1 = framework->EventState1.EventId;
+        var event2 = framework->EventState2.EventId;
+
+        if (TryMatchAcceptedQuest(questManager, event1, out var questId) ||
+            TryMatchAcceptedQuest(questManager, event2, out questId))
+        {
+            if (Throttle.Pass("AutoRequestItemSubmit-Quest", 30_000))
+                Svc.Log.Information(
+                    $"[{InternalName}] 判定為任務交付（任務編號 {questId}；" +
+                    $"事件 1={Describe(event1)}、事件 2={Describe(event2)}），接手處理。");
+            return true;
+        }
+
+        // 📌 這行是「白名單到底認不認得出任務交付」在實機上唯一的證據來源。
+        // 它若在真的交任務時還是印出來，代表 EventState 的語意跟這裡的假設不同，
+        // 到時候照著印出來的事件值改判準即可（而在那之前，模組是「不動作」而不是「亂動作」）。
+        if (Throttle.Pass("AutoRequestItemSubmit-NotQuest", 30_000))
+            Svc.Log.Information(
+                $"[{InternalName}] 交易視窗不是任務交付，本模組不動作。" +
+                $"（事件 1={Describe(event1)}、事件 2={Describe(event2)}；" +
+                $"目前接著 {questManager->NumAcceptedQuests} 個任務）");
+
+        return false;
+    }
+
+    /// <summary>
+    /// 這個事件是不是「玩家現在接著的某個任務」。<c>ContentId</c> 與
+    /// <c>EntryId</c> 兩段都要吻合才算。
+    /// </summary>
+    private static bool TryMatchAcceptedQuest(QuestManager* questManager, EventId eventId, out ushort questId)
+    {
+        questId = 0;
+        if (eventId.ContentId != EventHandlerContent.Quest) return false;
+
+        var entryId = eventId.EntryId;
+        if (entryId == 0) return false;
+
+        // 🔴 逐格比對 NormalQuests，不呼叫 QuestManager.IsQuestAccepted ——
+        // 後者是特徵碼定位的遊戲函式，台服的特徵碼一律先假設會失效，而且失效是靜默的。
+        // 這裡只讀欄位，沒有任何特徵碼相依。
+        var quests = questManager->NormalQuests;
+        for (var i = 0; i < quests.Length; i++)
+        {
+            if (quests[i].QuestId != entryId) continue;
+            questId = entryId;
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>把事件 ID 印成人看得懂的樣子（診斷用）。</summary>
+    private static string Describe(EventId eventId) =>
+        $"{eventId.ContentId}#{eventId.EntryId}(0x{eventId.Id:X})";
+
     public override void DrawConfig()
     {
         ImGui.SetNextItemWidth(180f);
@@ -445,6 +588,16 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
             ImGui.TextDisabled(highQualityPrompts.Count == 0
                 ? "⚠️ 目前一條判準都沒解析到，確認框不會自動按。"
                 : $"目前判準（{highQualityPrompts.Count} 條）：{string.Join(" / ", highQualityPrompts)}");
+        }
+
+        ImGui.Separator();
+        ImGui.TextDisabled("只在確認得出是「任務交付」時才動作，判斷不出來就完全不動作。");
+        using (ImRaii.PushIndent())
+        {
+            ImGui.TextDisabled("同一扇交易視窗，遊戲也拿來做理符繳交、以物易物、代幣兌換與");
+            ImGui.TextDisabled("部隊合建交納，而視窗本身看不出自己是誰開的。那些情境按錯的代價");
+            ImGui.TextDisabled("是換掉不該換的道具且無法還原，所以認不出來時一律讓你自己按。");
+            ImGui.TextDisabled("每次沒有接手時都會在記錄裡寫明原因（Information 等級）。");
         }
     }
 }
