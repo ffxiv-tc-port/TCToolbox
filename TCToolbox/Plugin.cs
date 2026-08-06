@@ -61,6 +61,10 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoCustomDeliveryResult());
         Modules.Add(new CopyItemNameContextMenu());
         Modules.Add(new AutoIgnoreLoginLock());
+        Modules.Add(new GlamourSetRetrieve());
+        Modules.Add(new GlamourDuplicateCleanup());
+        Modules.Add(new GlamourArmoireCleanup());
+        Modules.Add(new MoveGearsNotInSet());
 
         foreach (var module in Modules)
         {

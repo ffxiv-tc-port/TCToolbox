@@ -33,8 +33,40 @@ public sealed class Configuration : IPluginConfiguration
     public AutoQuestAcceptConfig QuestAccept { get; set; } = new();
     public AutoCustomDeliveryResultConfig CustomDeliveryResult { get; set; } = new();
     public CopyItemNameContextMenuConfig CopyItemName { get; set; } = new();
+    public GlamourSetRetrieveConfig GlamourSetRetrieve { get; set; } = new();
+    public GlamourDuplicateCleanupConfig GlamourDuplicateCleanup { get; set; } = new();
+    public MoveGearsNotInSetConfig MoveGearsNotInSet { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
+}
+
+public sealed class GlamourSetRetrieveConfig
+{
+    /// <summary>只取投影台裡湊得齊整組的裝備組合（關閉後會拆散不完整的組合）。</summary>
+    public bool OnlyCompleteSets = true;
+
+    /// <summary>跳過已染色的幻影（染過色的通常是特地調過的外觀）。</summary>
+    public bool SkipDyedItems = true;
+}
+
+public sealed class GlamourDuplicateCleanupConfig
+{
+    /// <summary>
+    /// 把「染色不同」的同款裝備視為不同幻影，不當成重複。
+    /// ⚠️ 預設 <c>true</c>，與 DailyRoutines 的行為不同（它只看道具編號）——
+    /// 同一件裝備染兩個顏色在投影台裡是兩種可用外觀，只看編號會把其中一種取走。
+    /// 要完全比照 DR 就關掉它。
+    /// </summary>
+    public bool DistinguishByDye = true;
+}
+
+public sealed class MoveGearsNotInSetConfig
+{
+    /// <summary>
+    /// 連套裝指定的「投影來源」裝備一起保護。預設開啟：搞錯的方向是「少搬幾件」，
+    /// 而反方向（搬走還在用的投影來源）要重新設定一輪外觀。
+    /// </summary>
+    public bool ProtectGlamourSources = true;
 }
 
 public sealed class CopyItemNameContextMenuConfig
