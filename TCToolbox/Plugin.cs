@@ -71,6 +71,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new GlamourArmoireCleanup());
         Modules.Add(new MoveGearsNotInSet());
         Modules.Add(new AutoMateriaRetrieveAll());
+        Modules.Add(new ShopDefaults());
 
         foreach (var module in Modules)
         {
