@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
@@ -30,7 +31,33 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
     private int fillSlotCursor;
     private int deliveredCount;
 
+    /// <summary>合建視窗最後一次 Finalize 的時刻；遊戲交納後會重建它，短暫消失不代表使用者關了視窗。</summary>
+    private DateTime? menuGoneSince;
+
+    /// <summary>視窗重建的容忍時間。超過就當作真的被關掉。</summary>
+    private const double MenuRebuildGraceSeconds = 3;
+
     private sealed record DeliverItem(uint Index, uint ItemId, uint Count);
+
+    /// <summary>
+    /// 取得工房領地，兩種失效都擋掉。
+    /// <c>HousingManager.Instance()</c> 是 <c>[StaticAddress(..., isPointer: true)]</c>：
+    /// 特徵碼失效時擲 <see cref="InvalidOperationException"/>，單例尚未建立時回 null——
+    /// 後者直接解參考就是 AccessViolation，try/catch 攔不到，所以兩道都要。
+    /// </summary>
+    private static WorkshopTerritory* GetWorkshopTerritory()
+    {
+        try
+        {
+            var housing = HousingManager.Instance();
+            return housing == null ? null : housing->WorkshopTerritory;
+        }
+        catch (Exception ex)
+        {
+            Svc.Log.Warning(ex, "[AutoFCWSDeliver] 取得工房領地失敗（多半是特徵碼失效）");
+            return null;
+        }
+    }
 
     protected override void OnEnable()
     {
@@ -53,12 +80,15 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
 
     private void OnMenuFinalize(AddonEvent type, AddonArgs args)
     {
-        // 合建視窗關閉（含階段完成後自動關閉）→ 停止流程
-        if (queue.IsBusy)
-        {
-            queue.Abort();
-            Svc.Chat.Print($"[TC Toolbox] 合建視窗已關閉，停止交納（本輪已交 {deliveredCount} 項）。");
-        }
+        // 交完一項之後遊戲會把這個 addon 整個重建，而重建的第一步就是 Finalize。
+        // 舊碼在這裡直接 Abort，於是每次交納都在跟重建賽跑——實機 log 顯示同一批素材
+        // 交到第 2、5、8、11、33 項都可能停，數字沒有規律，正是這種競態的樣子。
+        // 這裡只記錄時刻，真正的判斷交給下面的等待邏輯：回得來就繼續，回不來才算關閉。
+        if (!queue.IsBusy) return;
+
+        menuGoneSince ??= DateTime.UtcNow;
+        Svc.Log.Information(
+            $"[AutoFCWSDeliver] 合建視窗 Finalize，目前步驟「{queue.CurrentStep}」，本輪已交 {deliveredCount} 項，等待重建中");
     }
 
     private void DrawOverlay()
@@ -106,13 +136,14 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
     {
         if (queue.IsBusy) return;
 
-        if (HousingManager.Instance()->WorkshopTerritory == null)
+        if (GetWorkshopTerritory() == null)
         {
             Svc.Chat.PrintError("[TC Toolbox] 必須在部隊工房內才能使用合建交納。");
             return;
         }
 
         deliveredCount = 0;
+        menuGoneSince = null;
         EnqueueNextItem();
     }
 
@@ -121,8 +152,21 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
         queue.Enqueue("解析可交納素材", () =>
         {
             var addon = UiHelper.GetAddon("SubmarinePartsMenu");
-            if (!UiHelper.IsReady(addon)) return null; // PreFinalize 已處理訊息
+            if (!UiHelper.IsReady(addon))
+            {
+                // 視窗不在有兩種可能：遊戲正在重建它（交完一項後必然發生），或使用者真的關了。
+                // 前者只需要等幾幀，所以先給一段寬限；逾時保底仍在（本步 10 秒）。
+                menuGoneSince ??= DateTime.UtcNow;
+                if ((DateTime.UtcNow - menuGoneSince.Value).TotalSeconds < MenuRebuildGraceSeconds)
+                    return false;
 
+                Svc.Chat.Print($"[TC Toolbox] 合建視窗已關閉，停止交納（本輪已交 {deliveredCount} 項）。");
+                Svc.Log.Information(
+                    $"[AutoFCWSDeliver] 視窗消失超過 {MenuRebuildGraceSeconds} 秒未重建，判定為關閉");
+                return null;
+            }
+
+            menuGoneSince = null; // 回來了，重新計時
             var items = ParseDeliverables(addon);
             if (items.Count == 0)
             {
@@ -175,7 +219,7 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
     /// <summary>按下交納並等待視窗（含 HQ 確認）全部關閉。</summary>
     private bool? ConfirmRequest()
     {
-        if (HousingManager.Instance()->WorkshopTerritory == null) return null;
+        if (GetWorkshopTerritory() == null) return null;
 
         var yesno = UiHelper.GetAddon("SelectYesno");
         if (UiHelper.IsReady(yesno))
