@@ -28,6 +28,55 @@ public sealed unsafe class AutoHideBanners : TcModule
     /// <summary>遊戲的橫幅設圖函式（sig 已對台服 7.20 主程式離線驗證，唯一命中）。</summary>
     private const string SetImageSignature = "48 89 5C 24 ?? 57 48 83 EC 30 48 8B D9 89 91";
 
+    /// <summary>
+    /// SimpleTweaks 裡做同一件事的 tweak 鍵（完整識別是 <c>UiAdjustments@HideUnwantedBanner</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>不是「功能相似」，是同一支遊戲函式</b>：SimpleTweaks
+    /// <c>Tweaks/UiAdjustment/HideUnwantedBanner.cs</c> 用的特徵碼與上面的
+    /// <see cref="SetImageSignature"/> <b>逐字元相同</b>——2026-08-07 直接對使用者機器上安裝的
+    /// <c>SimpleTweaksPlugin.dll</c>（1.10.12.0）數字串命中數：UTF-8 恰好 1 次、UTF-16LE 0 次。
+    /// 兩邊要屏蔽的橫幅 id 清單也高度重疊。
+    /// <para>
+    /// ⚠️ 這裡刻意<b>只顯示提示、不自動關掉任何一邊</b>：兩個都開不會壞，
+    /// 而替使用者裁決「留哪一邊」不是這個模組該做的事。
+    /// </para>
+    /// </remarks>
+    private const string SimpleTweaksBannerTweak = "HideUnwantedBanner";
+
+    /// <summary>
+    /// 與 SimpleTweaks 重疊時，在模組列上直接顯示（不是藏在 tooltip）。
+    /// </summary>
+    /// <remarks>
+    /// 三種狀態各有各的顯示，其中「不知道」也一定看得見——把未知畫成「沒事」會直接誤導使用者。
+    /// SimpleTweaks 沒裝、或那個 tweak 確認是關的，就什麼都不顯示（列面保持乾淨）。
+    /// </remarks>
+    public override ModuleNotice? RowNotice => SimpleTweaksProbe.Query(SimpleTweaksBannerTweak) switch
+    {
+        ConflictState.Active => new ModuleNotice(
+            ModuleNoticeLevel.Warning,
+            "! 與 SimpleTweaks 重複",
+            "SimpleTweaks 也裝著，而且它的「隱藏不需要的橫幅」(UiAdjustments@HideUnwantedBanner) 是開著的。\n" +
+            "兩邊掛的是遊戲同一支橫幅設圖函式（特徵碼逐字元相同），要屏蔽的橫幅清單也高度重疊。\n" +
+            "\n" +
+            "同時開著通常不會壞，但實際被擋掉的是「兩份清單的聯集」：\n" +
+            "在這裡取消勾選某張橫幅，如果 SimpleTweaks 那邊還勾著，橫幅還是不會出現——\n" +
+            "而且遊戲裡看不出來是誰擋的。\n" +
+            "\n" +
+            "建議只留一邊：到 SimpleTweaks 把那個 tweak 關掉，或把這個模組關掉。"),
+
+        ConflictState.Unknown => new ModuleNotice(
+            ModuleNoticeLevel.Unknown,
+            "? SimpleTweaks 狀態未知",
+            "SimpleTweaks 裝著，但讀不到它的設定檔，無法判斷它的「隱藏不需要的橫幅」是不是也開著。\n" +
+            $"原因：{(string.IsNullOrEmpty(SimpleTweaksProbe.LastError) ? "（未記錄）" : SimpleTweaksProbe.LastError)}\n" +
+            $"設定檔：{(string.IsNullOrEmpty(SimpleTweaksProbe.ConfigPath) ? "（路徑取不到）" : SimpleTweaksProbe.ConfigPath)}\n" +
+            "\n" +
+            "如果那個 tweak 其實是開著的，兩邊會擋到同一批橫幅，改設定會出現「取消勾選了卻還是不出現」。"),
+
+        _ => null,
+    };
+
     private delegate void SetImageDelegate(nint addonImage, int bannerId, int iconSubFolder, int soundEffectId);
 
     private Hook<SetImageDelegate>? setImageHook;
