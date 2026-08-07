@@ -19,6 +19,8 @@ public sealed unsafe class AutoGysahlGreens : TcModule
     public override string DisplayName => "自動餵食陸行鳥";
     public override string Description => $"野外召喚中的陸行鳥剩餘時間低於門檻（預設 5 分鐘）時，自動使用{itemName}延長時間。戰鬥、騎乘、副本、過場中不動作。";
 
+    public override ModuleCategory Category => ModuleCategory.Company;
+
     private const uint GysahlGreensItemId = 4868;
 
     private static string itemName = "基沙爾野菜";

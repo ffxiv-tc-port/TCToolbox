@@ -43,6 +43,8 @@ public sealed unsafe class AutoClaimPVPRewards : TcModule
         "在「星裡路標」報酬視窗上加一顆開始鈕，按下後把所有待領取的系列賽階級獎勵一路領完。" +
         "只有你自己按下開始才會跑；戰利水晶快到上限時會自動停下。";
 
+    public override ModuleCategory Category => ModuleCategory.Combat;
+
     public override bool HasConfigUI => true;
 
     private const string AddonName = "PvpReward";

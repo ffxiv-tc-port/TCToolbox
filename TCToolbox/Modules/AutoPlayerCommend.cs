@@ -28,6 +28,8 @@ public sealed unsafe class AutoPlayerCommend : TcModule
         "副本完成時自動給予最優隊員推薦，優先挑同職業、其次同職能的隊友。" +
         "可在副本中右鍵隊員選「指定為最優隊員」手動覆蓋本局對象（指定自己＝本局不推薦）。";
 
+    public override ModuleCategory Category => ModuleCategory.Combat;
+
     public override bool HasConfigUI => true;
 
     private const string MipDisplayConfigKey = "MipDispType";

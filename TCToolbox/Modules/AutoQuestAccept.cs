@@ -31,6 +31,8 @@ public sealed unsafe class AutoQuestAccept : TcModule
         "任務受理視窗出現後自動按下「接受」。走按鈕元件本身的點擊事件，不解析任務資料、不送封包。" +
         "⚠️ 開啟後連你只是想先看一下的任務也會被接下；與 TextAdvance 的同名功能重疊，擇一開啟即可。";
 
+    public override ModuleCategory Category => ModuleCategory.Misc;
+
     public override bool HasConfigUI => true;
 
     private const string AddonName = "JournalAccept";

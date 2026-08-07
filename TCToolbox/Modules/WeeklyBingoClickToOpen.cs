@@ -47,6 +47,8 @@ public sealed unsafe class WeeklyBingoClickToOpen : TcModule
         "在天書（探險者筆記）的格子上點一下，就把任務搜尋器開到對應的副本或輪盤，不用自己去找。" +
         "對照表是從遊戲資料表即時比對出來的，比對不到的格子一律不開（會在聊天欄說明原因），不會賭一個「可能是」的副本。";
 
+    public override ModuleCategory Category => ModuleCategory.Combat;
+
     public override bool HasConfigUI => true;
 
     private const string AddonName = "WeeklyBingo";

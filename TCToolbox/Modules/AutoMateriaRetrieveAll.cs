@@ -66,6 +66,8 @@ public sealed unsafe class AutoMateriaRetrieveAll : TcModule
         "只會接續你自己開始的動作，不會主動去動任何裝備；" +
         "裝備被移動、背包沒空位、進入戰鬥或伺服器沒有回應時都會自動停止。";
 
+    public override ModuleCategory Category => ModuleCategory.Inventory;
+
     public override bool HasConfigUI => true;
 
     private AutoMateriaRetrieveAllConfig Config => Plugin.Instance.Config.MateriaRetrieveAll;

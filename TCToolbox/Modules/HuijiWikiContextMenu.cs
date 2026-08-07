@@ -42,6 +42,8 @@ public sealed class HuijiWikiContextMenu : TcModule
         "在道具的右鍵選單加上「在灰機 wiki 查看」，點下去直接用預設瀏覽器開該道具的灰機 wiki 頁面。" +
         "背包與其他視窗（製作手帳、聊天欄道具連結、商店、市場等）都支援，不必再繞 ItemWindow。";
 
+    public override ModuleCategory Category => ModuleCategory.Inventory;
+
     public override bool HasConfigUI => true;
 
     /// <summary>

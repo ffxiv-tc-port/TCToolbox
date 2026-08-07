@@ -20,6 +20,8 @@ public sealed unsafe class AutoBlockTitleMovie : TcModule
         "在標題畫面與角色選擇畫面持續把大廳閒置計時歸零，待機宣傳影片不會播放、也不會因閒置被踢回標題。" +
         "只寫入計時欄位，登入後自動停止動作。";
 
+    public override ModuleCategory Category => ModuleCategory.Misc;
+
     protected override void OnEnable()
     {
         Svc.Framework.Update += OnUpdate;

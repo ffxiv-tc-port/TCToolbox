@@ -63,6 +63,8 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
         "🔴 只在確認得出是「任務交付」時才動作：理符繳交、以物易物、代幣／收藏品兌換、" +
         "部隊合建交納一律不碰（那些按下去可能換掉不該換的東西）。判斷不出來時也不動作。";
 
+    public override ModuleCategory Category => ModuleCategory.Company;
+
     public override bool HasConfigUI => true;
 
     private const string AddonName = "Request";

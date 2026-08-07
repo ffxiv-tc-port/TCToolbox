@@ -41,6 +41,8 @@ public sealed unsafe class OptimizedFreeShop : TcModule
         "開啟「報酬」視窗時，上方會多出一排依職業分類的一鍵領取按鈕（該職業的裝備一次領完），" +
         "並可省掉每一件的領取確認對話框。只在這個視窗開著時作用。";
 
+    public override ModuleCategory Category => ModuleCategory.Inventory;
+
     public override bool HasConfigUI => true;
 
     private const string AddonName = "FreeShop";

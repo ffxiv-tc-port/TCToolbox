@@ -24,6 +24,8 @@ public sealed unsafe class AutoConstantlyClick : TcModule
         "長按任一快捷欄按鍵（滑鼠點住或鍵盤按住）時，自動以設定的間隔重複觸發該按鍵，不必連續手動點擊。" +
         "只在遊戲處理快捷欄輸入的期間生效，其他按鍵與介面操作完全不受影響。";
 
+    public override ModuleCategory Category => ModuleCategory.Misc;
+
     public override bool HasConfigUI => true;
 
     /// <summary>遊戲的快捷欄輸入處理函式（sig 已對台服 7.20 主程式離線驗證，唯一命中）。</summary>

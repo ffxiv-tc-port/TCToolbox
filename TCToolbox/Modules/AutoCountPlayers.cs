@@ -33,6 +33,8 @@ public sealed class AutoCountPlayers : TcModule
     public override string DisplayName => "周邊玩家統計";
     public override string Description => "在伺服器資訊列顯示周邊玩家數量，滑鼠移上顯示名單，點擊開啟可搜尋的清單視窗（點名單可選取目標）。可設定偵測規則：玩家出現且條件命中（名稱／線上狀態／部隊標籤／距離，可多選組合）時通知並執行指令。";
 
+    public override ModuleCategory Category => ModuleCategory.Misc;
+
     public override bool HasConfigUI => true;
 
     /// <summary>

@@ -25,6 +25,8 @@ public sealed class AutoRetarget : TcModule
         $"目前沒有選中目標時，自動選中範圍內最近的敵人。另可開啟「{ForlornDisplayName}優先」——" +
         "這兩種 FATE 稀有敵出現時即使已選中其他目標也會自動切過去。";
 
+    public override ModuleCategory Category => ModuleCategory.Combat;
+
     public override bool HasConfigUI => true;
 
     /// <summary>迷失少女 / 迷失者 的 BNpcName row（已對台服 7.20 EXD dump 驗證）。</summary>

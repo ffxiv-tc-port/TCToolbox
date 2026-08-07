@@ -67,6 +67,8 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         "按住指定鍵右鍵點物品，直接把它搬去對應頁面：背包⇄雇員、背包⇄部隊置物櫃、背包⇄陸行鳥鞍袋、" +
         "兵裝庫→背包。目的地沒有空位（或可疊的同款）時不動作並提示。預設「無」＝停用。";
 
+    public override ModuleCategory Category => ModuleCategory.Inventory;
+
     public override bool HasConfigUI => true;
 
     /// <summary>可選的修飾鍵（0＝停用）。</summary>

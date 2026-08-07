@@ -29,6 +29,8 @@ public sealed class CustomDeliveriesOverview : TcModule
     public override string DisplayName => "老主顧交易總覽";
     public override string Description => "唯讀總覽視窗：列出各老主顧的滿意度等級、當前等級進度、本週已交易次數與全體共用的週上限。資料只讀不寫，零 hook。";
 
+    public override ModuleCategory Category => ModuleCategory.Company;
+
     public override bool HasConfigUI => true;
 
     /// <summary>

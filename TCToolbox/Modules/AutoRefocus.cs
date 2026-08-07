@@ -35,6 +35,8 @@ public sealed class AutoRefocus : TcModule
         "在副本內，焦點目標消失時自動設回同一個對象（王離場再回來、目標被重新生成都算）。" +
         "只記住對象編號、每次都重新查表，不保存物件參考。";
 
+    public override ModuleCategory Category => ModuleCategory.Combat;
+
     public override bool HasConfigUI => true;
 
     /// <summary>輪詢間隔。焦點消失到恢復之間最多就是這個延遲。</summary>

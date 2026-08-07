@@ -26,6 +26,8 @@ public sealed class GlamourDuplicateCleanup : TcModule
         "手動按鈕：掃描投影台，把同一件裝備多出來的份數取回背包（保留索引最前面那一份）。" +
         "需要先開啟「投影台」視窗；背包滿了會停下並提示。不會自動執行。";
 
+    public override ModuleCategory Category => ModuleCategory.Inventory;
+
     public override bool HasConfigUI => true;
 
     private readonly PrismBoxRestoreRunner runner = new("投影台重複幻影取出");

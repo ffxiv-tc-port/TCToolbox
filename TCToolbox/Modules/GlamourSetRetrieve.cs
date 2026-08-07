@@ -33,6 +33,8 @@ public sealed class GlamourSetRetrieve : TcModule
         "手動按鈕：依遊戲「套裝幻影化」的裝備組合，把投影台裡湊得齊整組的幻影一次取回背包（一件一件送出）。" +
         "需要先開啟「投影台」視窗；背包滿了會停下並提示。不會自動執行，也不會去動「套裝幻影化」視窗。";
 
+    public override ModuleCategory Category => ModuleCategory.Inventory;
+
     public override bool HasConfigUI => true;
 
     /// <summary>一個可整組取出的裝備組合。</summary>

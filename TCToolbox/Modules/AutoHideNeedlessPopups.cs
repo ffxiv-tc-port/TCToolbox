@@ -32,6 +32,8 @@ public sealed unsafe class AutoHideNeedlessPopups : TcModule
         "勾選的系統彈窗一出現就自動關閉（推薦任務、資訊中心、同好會通知、成就資訊、新手指南、" +
         "操作指南、使用條款）。每一種各自獨立勾選。";
 
+    public override ModuleCategory Category => ModuleCategory.Misc;
+
     public override bool HasConfigUI => true;
 
     private sealed record PopupInfo(string AddonName, string Name, string Note, bool ManuallyOpenable);

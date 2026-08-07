@@ -25,6 +25,8 @@ public sealed unsafe class OptimizedDutyFinderSetting : TcModule
         "在任務搜索器／討伐殲滅戰搜索器視窗上方直接顯示各項設定的圖示按鈕（中途參戰、解除限制、等級同步、" +
         "最低品級、超越之力無效化、自由探索、練級隨機限制、分配方式），點一下即切換，不必再開二級設定視窗。";
 
+    public override ModuleCategory Category => ModuleCategory.Combat;
+
     public override bool HasConfigUI => true;
 
     /// <summary>遊戲的「套用搜索器設定」函式（sig 已對台服 7.20 主程式離線驗證，唯一命中）。</summary>

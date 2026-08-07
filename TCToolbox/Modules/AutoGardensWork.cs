@@ -33,6 +33,8 @@ public sealed unsafe class AutoGardensWork : TcModule
     public override string DisplayName => "自動園圃作業";
     public override string Description => "站在自家（或部隊）庭院的園圃、或房屋內的花盆旁，一鍵批次收穫／護理／施肥附近所有地壟與花盆；亦可選定種子與土壤後批次播種。距離太遠或狀態不符的會自動跳過。";
 
+    public override ModuleCategory Category => ModuleCategory.Company;
+
     public override bool HasConfigUI => true;
 
     /// <summary>庭院園圃地壟 EObj（EObjName 2003757「園圃」，CustomTalk 721047）。</summary>

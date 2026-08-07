@@ -20,6 +20,8 @@ public sealed unsafe class AutoAntiAfk : TcModule
         "定期把遊戲的閒置計時器歸零，避免長時間未操作被自動登出（含副本／PvP／無人島／新手頻道各自的閒置上限）。" +
         "只寫入計時欄位，不模擬按鍵、不修改遊戲程式碼。";
 
+    public override ModuleCategory Category => ModuleCategory.Misc;
+
     public override bool HasConfigUI => true;
 
     private AutoAntiAfkConfig Config => Plugin.Instance.Config.AntiAfk;

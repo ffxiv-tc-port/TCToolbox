@@ -26,6 +26,8 @@ public sealed unsafe class MarkerInPartyList : TcModule
         "把場上的目標標記（攻擊1／綁2／止3 等）同步顯示在小隊列表對應隊員的名字前，" +
         "不必回頭看場上光柱就知道誰被標了。可另外隱藏小隊列表原本的隊員序號避免重疊。";
 
+    public override ModuleCategory Category => ModuleCategory.Combat;
+
     public override bool HasConfigUI => true;
 
     private const int MaxPartyRows = 8;

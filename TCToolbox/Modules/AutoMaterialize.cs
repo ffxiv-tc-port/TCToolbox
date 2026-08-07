@@ -29,6 +29,8 @@ public sealed unsafe class AutoMaterialize : TcModule
         "開啟「精製魔晶石」視窗後會出現一鍵按鈕：自動把背包與兵裝庫裡精鍊度已滿的裝備逐件精製，" +
         "並自動確認精製對話框。背包滿、戰鬥中或視窗關閉時自動停止。";
 
+    public override ModuleCategory Category => ModuleCategory.Inventory;
+
     /// <summary>遊戲的魔晶石精製函式（sig 已對台服 7.20 主程式離線驗證，唯一命中）。</summary>
     private const string ExtractMateriaSignature =
         "48 89 5C 24 ?? 48 89 74 24 ?? 57 48 83 EC ?? 41 0F BF F8 8B DA 48 8B F1 45 33 C0";

@@ -31,6 +31,8 @@ public sealed unsafe class CopyItemNameContextMenu : TcModule
         "在製作手帳、聊天欄道具連結、任務報酬、成就、市場、商店等視窗的道具右鍵選單補上「複製道具名」。" +
         "背包本來就有這個選項，不重複加入；選單裡已經有同名項目時也會自動跳過。";
 
+    public override ModuleCategory Category => ModuleCategory.Inventory;
+
     public override bool HasConfigUI => true;
 
     /// <summary>選單文字所在的 <c>Addon</c> 列（台服＝「複製道具名」）。</summary>

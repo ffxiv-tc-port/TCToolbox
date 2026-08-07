@@ -31,6 +31,8 @@ public sealed unsafe class AutoCustomDeliveryResult : TcModule
         "老主顧交易完成後跳出的結果視窗自動確認關閉。只針對這一扇視窗，其他確認視窗不受影響。" +
         "（一般任務的「完成」視窗請用 YesAlready 的 JournalResultComplete，本模組不重複處理。）";
 
+    public override ModuleCategory Category => ModuleCategory.Company;
+
     public override bool HasConfigUI => true;
 
     private const string AddonName = "SatisfactionSupplyResult";

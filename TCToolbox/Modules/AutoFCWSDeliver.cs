@@ -26,6 +26,8 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
     public override string DisplayName => "合建素材一鍵全交";
     public override string Description => "開啟部隊工房「合建」素材交納視窗時，顯示一鍵全交按鈕：自動逐項交納所有數量足夠的素材（含自動填入交納視窗與確認），交完或按停止為止。";
 
+    public override ModuleCategory Category => ModuleCategory.Company;
+
     private readonly TaskQueue queue = new();
 
     private int fillSlotCursor;

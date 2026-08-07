@@ -23,6 +23,8 @@ public sealed unsafe class AutoHideBanners : TcModule
         "勾選要屏蔽的畫面橫幅後，該橫幅與其音效都不再彈出（理符任務、F.A.T.E.、尋寶、部隊探索、" +
         "友好部族、金碟 GATE、宇宙探索）。預設已勾好最常重複跳的幾張，可自行增減。";
 
+    public override ModuleCategory Category => ModuleCategory.Misc;
+
     public override bool HasConfigUI => true;
 
     /// <summary>遊戲的橫幅設圖函式（sig 已對台服 7.20 主程式離線驗證，唯一命中）。</summary>

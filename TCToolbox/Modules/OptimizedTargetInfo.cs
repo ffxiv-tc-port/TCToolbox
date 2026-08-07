@@ -25,6 +25,8 @@ public sealed unsafe class OptimizedTargetInfo : TcModule
         "在目標情報上顯示實際體力數值（可用萬／億簡寫）與百分比，以及目標正在詠唱技能的剩餘秒數；" +
         "焦點目標同樣支援，並可在焦點目標旁顯示一鍵清除按鈕。純顯示，不改變任何遊戲行為。";
 
+    public override ModuleCategory Category => ModuleCategory.Combat;
+
     public override bool HasConfigUI => true;
 
     /// <summary>分離模式與合併模式的主目標情報 addon（只有一個會是可見的）。</summary>

@@ -30,6 +30,8 @@ public sealed class GlamourArmoireCleanup : TcModule
         "手動按鈕：把投影台裡「可以收進收藏櫃」的裝備取回背包，空出投影台格數（收藏櫃本身就能當投影來源）。" +
         "需要先開啟「投影台」視窗。取出後請自行到收藏櫃收納。不會自動執行。";
 
+    public override ModuleCategory Category => ModuleCategory.Inventory;
+
     public override bool HasConfigUI => true;
 
     private readonly PrismBoxRestoreRunner runner = new("投影台收藏櫃裝備取出");

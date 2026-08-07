@@ -51,6 +51,8 @@ public sealed unsafe class OptimizedFreeCompanyChest : TcModule
         "開啟部隊／公會置物櫃時自動切換到你指定的那一頁（第 1～5 頁或水晶頁）。" +
         "走的是視窗上原生的分頁按鈕，跟自己動手點一樣。預設「不切換」＝維持遊戲原本的行為。";
 
+    public override ModuleCategory Category => ModuleCategory.Inventory;
+
     public override bool HasConfigUI => true;
 
     private const string AddonName = "FreeCompanyChest";

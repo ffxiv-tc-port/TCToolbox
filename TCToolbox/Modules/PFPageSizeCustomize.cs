@@ -61,6 +61,8 @@ public sealed unsafe class PFPageSizeCustomize : TcModule
         "把「隊員招募」一頁顯示的招募筆數從遊戲預設的 50 筆改成自訂值（上限 100，超過客端會直接拒收）。" +
         "只寫入遊戲自己的設定欄位，不掛 hook、不改控制流；停用模組時會還原成 50。";
 
+    public override ModuleCategory Category => ModuleCategory.Combat;
+
     public override bool HasConfigUI => true;
 
     /// <summary>遊戲自己的預設值（建構式 <c>0x140935D5B</c> 寫入的常數）。</summary>

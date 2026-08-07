@@ -33,45 +33,58 @@ public sealed class Plugin : IDalamudPlugin
 
         Config = Svc.PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
 
-        Modules.Add(new AutoFCWSDeliver());
-        Modules.Add(new AutoGysahlGreens());
-        Modules.Add(new AutoQTE());
-        Modules.Add(new AutoCountPlayers());
-        Modules.Add(new AutoGardensWork());
-        Modules.Add(new AutoAntiAfk());
-        Modules.Add(new AutoConstantlyClick());
-        Modules.Add(new AutoPlayerCommend());
-        Modules.Add(new OptimizedDutyFinderSetting());
-        Modules.Add(new AutoHideBanners());
-        Modules.Add(new AutoMaterialize());
-        Modules.Add(new AutoRetarget());
-        Modules.Add(new MarkerInPartyList());
-        Modules.Add(new AutoBlockTitleMovie());
-        Modules.Add(new OptimizedEnemyList());
+        // 🔴 這裡的順序就是主視窗上的顯示順序：分類分頁與「全部」分頁都直接照 Modules 的
+        //    順序畫，沒有第二份排序表。要調整某個模組在頁面上的位置就搬這裡的行，
+        //    但「分組」必須和該模組的 Category 一致，否則分類分頁裡會出現插隊的模組。
+        // 📌 註冊順序不影響行為：模組彼此獨立，唯一的跨模組互動
+        //    （AutoRequestItemSubmit 讓路給 AutoFCWSDeliver）是執行期查 IsEnabled，與註冊順序無關。
+
+        // ① 背包 · 裝備
         Modules.Add(new AutoInventoryTransfer());
-        Modules.Add(new OptimizedTargetInfo());
-        Modules.Add(new CustomDeliveriesOverview());
-        Modules.Add(new AutoHideNeedlessPopups());
-        Modules.Add(new OptimizedFreeShop());
-        Modules.Add(new AutoRefreshPartyFinder());
-        Modules.Add(new AutoClaimPVPRewards());
-        Modules.Add(new PFPageSizeCustomize());
-        Modules.Add(new OptimizedInteraction());
-        Modules.Add(new AutoRefocus());
-        Modules.Add(new AutoQuestAccept());
-        Modules.Add(new AutoCustomDeliveryResult());
-        Modules.Add(new CopyItemNameContextMenu());
-        Modules.Add(new AutoIgnoreLoginLock());
-        Modules.Add(new HuijiWikiContextMenu());
-        Modules.Add(new AutoRequestItemSubmit());
+        Modules.Add(new AutoMateriaRetrieveAll());
+        Modules.Add(new AutoMaterialize());
+        Modules.Add(new MoveGearsNotInSet());
         Modules.Add(new OptimizedFreeCompanyChest());
-        Modules.Add(new WeeklyBingoClickToOpen());
+        Modules.Add(new ShopDefaults());
+        Modules.Add(new OptimizedFreeShop());
+        Modules.Add(new CopyItemNameContextMenu());
+        Modules.Add(new HuijiWikiContextMenu());
         Modules.Add(new GlamourSetRetrieve());
         Modules.Add(new GlamourDuplicateCleanup());
         Modules.Add(new GlamourArmoireCleanup());
-        Modules.Add(new MoveGearsNotInSet());
-        Modules.Add(new AutoMateriaRetrieveAll());
-        Modules.Add(new ShopDefaults());
+
+        // ② 戰鬥 · 小隊
+        Modules.Add(new OptimizedEnemyList());
+        Modules.Add(new OptimizedTargetInfo());
+        Modules.Add(new AutoRetarget());
+        Modules.Add(new AutoRefocus());
+        Modules.Add(new MarkerInPartyList());
+        Modules.Add(new AutoPlayerCommend());
+        Modules.Add(new AutoClaimPVPRewards());
+        Modules.Add(new OptimizedDutyFinderSetting());
+        Modules.Add(new WeeklyBingoClickToOpen());
+        Modules.Add(new AutoRefreshPartyFinder());
+        Modules.Add(new PFPageSizeCustomize());
+
+        // ③ 部隊 · 生活
+        Modules.Add(new AutoFCWSDeliver());
+        Modules.Add(new AutoGardensWork());
+        Modules.Add(new AutoGysahlGreens());
+        Modules.Add(new CustomDeliveriesOverview());
+        Modules.Add(new AutoCustomDeliveryResult());
+        Modules.Add(new AutoRequestItemSubmit());
+
+        // ④ 介面 · 雜項
+        Modules.Add(new AutoHideBanners());
+        Modules.Add(new AutoHideNeedlessPopups());
+        Modules.Add(new AutoBlockTitleMovie());
+        Modules.Add(new OptimizedInteraction());
+        Modules.Add(new AutoQuestAccept());
+        Modules.Add(new AutoQTE());
+        Modules.Add(new AutoConstantlyClick());
+        Modules.Add(new AutoAntiAfk());
+        Modules.Add(new AutoIgnoreLoginLock());
+        Modules.Add(new AutoCountPlayers());
 
         foreach (var module in Modules)
         {

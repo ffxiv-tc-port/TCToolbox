@@ -18,6 +18,8 @@ public sealed unsafe class AutoQTE : TcModule
     public override string DisplayName => "自動 QTE";
     public override string Description => "副本／劇情中出現 QTE（連打、長按、按鈕）時自動連發空白鍵完成，不必手動狂按。";
 
+    public override ModuleCategory Category => ModuleCategory.Misc;
+
     private static readonly string[] QteAddonNames = ["_QTEKeep", "_QTEMash", "_QTEKeepTime", "_QTEButton"];
 
     private const uint WM_KEYDOWN = 0x0100;

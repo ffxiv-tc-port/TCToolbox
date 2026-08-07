@@ -33,6 +33,8 @@ public sealed unsafe class AutoIgnoreLoginLock : TcModule
         "🔴 有帳號風險：這個冷卻是客戶端在替你節流，拆掉之後伺服器端會看到密集的登入嘗試。" +
         "預設關閉，請自行判斷是否要開。";
 
+    public override ModuleCategory Category => ModuleCategory.Misc;
+
     public override bool HasConfigUI => true;
 
     /// <summary>冷卻提示訊息所在的 <c>LogMessage</c> 列（台服＝「請稍後再登錄。」）。</summary>

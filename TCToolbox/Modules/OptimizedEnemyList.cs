@@ -32,6 +32,8 @@ public sealed unsafe class OptimizedEnemyList : TcModule
         "技名交給遊戲原生的詠唱列（原生沒開時才自動補上），不會蓋住任何原生內容。" +
         "純顯示，不改變任何遊戲行為（DR 原版用記憶體 patch 實作的部分一律不抄）。";
 
+    public override ModuleCategory Category => ModuleCategory.Combat;
+
     public override bool HasConfigUI => true;
 
     private const int MaxRows = 8;

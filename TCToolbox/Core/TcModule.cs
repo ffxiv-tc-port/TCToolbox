@@ -37,6 +37,14 @@ public abstract class TcModule
 
     public bool IsEnabled { get; private set; }
 
+    /// <summary>模組在主視窗上歸屬的分頁分類。</summary>
+    /// <remarks>
+    /// 📌 <b>新增模組時請顯式寫出這個 override</b>，即使結論就是 <see cref="ModuleCategory.Misc"/>。
+    /// 大家新增模組都是複製一個既有模組改的，顯式寫著才會被一起帶上；
+    /// 靠預設值的話，新模組會默默掉進「介面 · 雜項」頁而沒有人發現。
+    /// </remarks>
+    public virtual ModuleCategory Category => ModuleCategory.Misc;
+
     /// <summary>模組是否有自己的設定／操作 UI。</summary>
     public virtual bool HasConfigUI => false;
 

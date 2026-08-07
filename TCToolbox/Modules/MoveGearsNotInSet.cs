@@ -37,6 +37,8 @@ public sealed unsafe class MoveGearsNotInSet : TcModule
         "手動按鈕：把兵裝庫裡沒有被任何一套套裝（裝備套組）用到的裝備搬回背包，方便一次賣掉或分解。" +
         "背包空位不足時會先停下並提示，不會搬到一半卡住。不會自動執行。";
 
+    public override ModuleCategory Category => ModuleCategory.Inventory;
+
     public override bool HasConfigUI => true;
 
     /// <summary>

@@ -103,6 +103,8 @@ public sealed class OptimizedInteraction : TcModule
         "作法是讓原本的判定照常執行、只覆寫它的結論，不寫記憶體、不改封包。" +
         "注意這些都是客端檢查，伺服器仍有自己的判定，放行不等於一定互動得到。";
 
+    public override ModuleCategory Category => ModuleCategory.Misc;
+
     public override bool HasConfigUI => true;
 
     // ── 原生委派 ───────────────────────────────────────────────────────────────

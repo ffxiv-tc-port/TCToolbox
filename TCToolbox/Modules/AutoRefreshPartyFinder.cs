@@ -37,6 +37,8 @@ public sealed unsafe class AutoRefreshPartyFinder : TcModule
         "「隊員招募」視窗開著時，每隔一段時間自動按一次更新（間隔可調，預設 30 秒）。" +
         "關掉視窗、開啟某則招募的詳細內容、或正在編輯招募條件時都會暫停。";
 
+    public override ModuleCategory Category => ModuleCategory.Combat;
+
     public override bool HasConfigUI => true;
 
     private const string PartyFinderAddon = "LookingForGroup";
