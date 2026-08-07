@@ -11,6 +11,24 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>已啟用模組的 InternalName 清單。</summary>
     public HashSet<string> EnabledModules { get; set; } = [];
 
+    /// <summary>
+    /// 釘選為「常用」的模組 InternalName 清單。
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ 預設是<b>空集合</b>——「常用」分頁是空的，其他分頁一模一樣，
+    /// 也就是升級上來的人在勾任何星號之前完全感覺不到差別。
+    /// <para>
+    /// 🔴 這裡存的是 <see cref="TCToolbox.Core.TcModule.InternalName"/>，跟
+    /// <see cref="EnabledModules"/> 同一組識別字。<b>模組改名時這兩份會一起失效</b>，
+    /// 所以顯示名可以改、InternalName 不能改。
+    /// </para>
+    /// <para>
+    /// 📌 清單裡出現這一版沒有的模組名時<b>只忽略、不清除</b>（與 <see cref="EnabledModules"/> 同樣的處理）：
+    /// 使用者在版本之間來回時清掉就回不來了。
+    /// </para>
+    /// </remarks>
+    public HashSet<string> FavoriteModules { get; set; } = [];
+
     public AutoGysahlGreensConfig GysahlGreens { get; set; } = new();
     public AutoCountPlayersConfig CountPlayers { get; set; } = new();
     public AutoGardensWorkConfig GardensWork { get; set; } = new();

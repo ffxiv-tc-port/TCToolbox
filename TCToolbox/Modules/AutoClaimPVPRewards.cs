@@ -12,8 +12,10 @@ using TCToolbox.Core;
 namespace TCToolbox.Modules;
 
 /// <summary>
-/// 自動領取戰利水晶：開著「星裡路標」的報酬視窗（<c>PvpReward</c>）並按下我們的開始鈕之後，
-/// 把目前賽季所有待領取的系列賽階級獎勵一路領完。
+/// 系列賽獎勵一鍵領取：開著「星里路標」的報酬視窗（<c>PvpReward</c>）並按下我們的開始鈕之後，
+/// 把目前賽季所有待領取的系列賽獎勵一路領完。
+/// ⚠️ 台服官方寫「星<b>里</b>路標」（<c>Addon</c> 第 14901 列），不是「星裡路標」——
+/// 舊字串那個「裡」在台服資料表裡零命中。
 /// 零 hook、零特徵碼、不寫記憶體，只重新觸發節點自己的事件（等同你親手點）。
 /// </summary>
 /// <remarks>
@@ -70,14 +72,29 @@ namespace TCToolbox.Modules;
 /// </remarks>
 public sealed unsafe class AutoClaimPVPRewards : TcModule
 {
+    /// <summary>
+    /// 🔴 <b>不要跟著顯示名改這一行。</b>這個字串是設定檔裡
+    /// <c>EnabledModules</c>／<c>FavoriteModules</c> 的鍵，改掉等於把既有使用者的
+    /// 啟用狀態與釘選狀態靜默重設成「沒開過」。
+    /// 名稱裡的 <c>Auto</c> 是歷史包袱（這個模組其實是手動按鈕），留著。
+    /// </summary>
     public override string InternalName => "AutoClaimPVPRewards";
-    public override string DisplayName => "自動領取戰利水晶";
+
+    /// <summary>
+    /// ⚠️ 舊名是「自動領取戰利水晶」，但這個模組<b>不會自動做任何事</b>——
+    /// 要在報酬視窗上按下開始鈕才跑。舊名讓人以為開著就會自己領，所以改掉。
+    /// 「系列賽獎勵」是台服自己的字串（<c>Addon</c> 第 13757 列），不是意譯。
+    /// </summary>
+    public override string DisplayName => "系列賽獎勵一鍵領取";
 
     public override string Description =>
-        "在「星裡路標」報酬視窗上加一顆開始鈕，按下後把目前賽季所有待領取的系列賽階級獎勵一路領完。" +
+        "在「星里路標」報酬視窗上加一顆開始鈕，按下後把目前賽季所有待領取的系列賽獎勵一路領完。" +
         "只有你自己按下開始才會跑；戰利水晶快到上限時會自動停下。";
 
     public override ModuleCategory Category => ModuleCategory.Combat;
+
+    /// <summary>報酬視窗上按了開始才跑；開著不按，什麼都不會被領走。</summary>
+    public override bool IsManualTrigger => true;
 
     public override bool HasConfigUI => true;
 
@@ -233,7 +250,9 @@ public sealed unsafe class AutoClaimPVPRewards : TcModule
             ImGui.SetWindowPos(new Vector2(addon->GetX() + 6, addon->GetY() - ImGui.GetWindowSize().Y - 4));
 
             ImGui.AlignTextToFramePadding();
-            ImGui.TextColored(new Vector4(1f, 0.85f, 0.35f, 1f), "自動領取戰利水晶");
+            // ⚠️ 這行是浮在報酬視窗上的標題，跟 DisplayName 是兩個各自寫死的字串。
+            //    改顯示名時這裡要一起改，不然使用者在遊戲裡看到的還是舊名字。
+            ImGui.TextColored(new Vector4(1f, 0.85f, 0.35f, 1f), "系列賽獎勵一鍵領取");
 
             var pending = GetPendingCount(addon);
             ImGui.SameLine();

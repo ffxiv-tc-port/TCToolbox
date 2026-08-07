@@ -68,6 +68,12 @@ public sealed unsafe class AutoMateriaRetrieveAll : TcModule
 
     public override ModuleCategory Category => ModuleCategory.Inventory;
 
+    // 🔴 這個模組刻意**沒有**標 IsManualTrigger。
+    //    描述裡的「手動」講的是使用者在遊戲裡自己點的那一下，不是我們的按鈕：
+    //    本模組是掛 MaterializeItem 的 hook，開著就會在你取出第一顆之後自己接手把剩下的取完，
+    //    面板上只有「立即停止」沒有「開始」。判準是「開著但不去按它，遊戲行為完全不變嗎」——
+    //    這裡是「會變」，所以它屬於自動介入型，不進「手動觸發」分頁。
+
     public override bool HasConfigUI => true;
 
     private AutoMateriaRetrieveAllConfig Config => Plugin.Instance.Config.MateriaRetrieveAll;

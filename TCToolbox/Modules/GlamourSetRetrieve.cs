@@ -35,6 +35,9 @@ public sealed class GlamourSetRetrieve : TcModule
 
     public override ModuleCategory Category => ModuleCategory.Inventory;
 
+    /// <summary>設定面板按下按鈕才跑一次；開著不按，投影台完全不會被動到。</summary>
+    public override bool IsManualTrigger => true;
+
     public override bool HasConfigUI => true;
 
     /// <summary>一個可整組取出的裝備組合。</summary>

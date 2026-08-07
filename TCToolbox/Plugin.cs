@@ -175,6 +175,21 @@ public sealed class Plugin : IDalamudPlugin
 
         if (unknown.Count > 0)
             Svc.Log.Information($"[TCToolbox] 設定檔中不存在的模組名 {unknown.Count}：{string.Join("、", unknown)}（保留不動）");
+
+        // 📌 只在有釘選時才寫，沒用這個功能的人不會多出一行雜訊。
+        // 「常用分頁是空的」有兩種成因（沒釘過／釘的模組名這一版不存在），這一行讓它們分得開。
+        if (Config.FavoriteModules.Count > 0)
+        {
+            var liveFavorites = 0;
+            foreach (var name in Config.FavoriteModules)
+            {
+                if (known.Contains(name)) liveFavorites++;
+            }
+
+            Svc.Log.Information(
+                $"[TCToolbox] 常用模組 {liveFavorites}/{Config.FavoriteModules.Count} 個在這一版存在："
+                + string.Join("、", Config.FavoriteModules));
+        }
     }
 
     public void SetModuleEnabled(TcModule module, bool enabled)
@@ -192,6 +207,26 @@ public sealed class Plugin : IDalamudPlugin
         }
 
         Config.Save();
+    }
+
+    /// <summary>這個模組有沒有被釘選成「常用」。</summary>
+    public bool IsFavorite(TcModule module) => Config.FavoriteModules.Contains(module.InternalName);
+
+    /// <summary>
+    /// 釘選／取消釘選一個模組。
+    /// </summary>
+    /// <remarks>
+    /// 📌 純顯示用途，<b>與模組的啟用狀態完全無關</b>——釘選不會啟用它，取消釘選也不會停用它。
+    /// 沒有實際變更就不寫檔（<c>HashSet.Add</c>／<c>Remove</c> 的回傳值就是判準），
+    /// 避免每幀被誤呼叫時整份設定一直重寫。
+    /// </remarks>
+    public void SetModuleFavorite(TcModule module, bool favorite)
+    {
+        var changed = favorite
+            ? Config.FavoriteModules.Add(module.InternalName)
+            : Config.FavoriteModules.Remove(module.InternalName);
+
+        if (changed) Config.Save();
     }
 
     /// <summary>開關主視窗。給模組用（例如 DTR 的右鍵動作）。</summary>

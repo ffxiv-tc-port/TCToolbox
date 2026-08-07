@@ -28,6 +28,9 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
 
     public override ModuleCategory Category => ModuleCategory.Company;
 
+    /// <summary>合建視窗上按了「開始」才跑；開著不按，一件素材都不會交出去。</summary>
+    public override bool IsManualTrigger => true;
+
     private readonly TaskQueue queue = new();
 
     private int fillSlotCursor;

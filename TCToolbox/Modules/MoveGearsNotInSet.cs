@@ -39,6 +39,9 @@ public sealed unsafe class MoveGearsNotInSet : TcModule
 
     public override ModuleCategory Category => ModuleCategory.Inventory;
 
+    /// <summary>設定面板按下按鈕才跑一次；開著不按，兵裝庫完全不會被動到。</summary>
+    public override bool IsManualTrigger => true;
+
     public override bool HasConfigUI => true;
 
     /// <summary>

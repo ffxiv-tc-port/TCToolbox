@@ -32,6 +32,9 @@ public sealed class GlamourArmoireCleanup : TcModule
 
     public override ModuleCategory Category => ModuleCategory.Inventory;
 
+    /// <summary>設定面板按下按鈕才跑一次；開著不按，投影台完全不會被動到。</summary>
+    public override bool IsManualTrigger => true;
+
     public override bool HasConfigUI => true;
 
     private readonly PrismBoxRestoreRunner runner = new("投影台收藏櫃裝備取出");

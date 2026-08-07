@@ -35,6 +35,9 @@ public sealed unsafe class AutoGardensWork : TcModule
 
     public override ModuleCategory Category => ModuleCategory.Company;
 
+    /// <summary>設定面板按下收穫／護理／施肥／播種才跑一次；開著不按，園圃完全不會被動到。</summary>
+    public override bool IsManualTrigger => true;
+
     public override bool HasConfigUI => true;
 
     /// <summary>庭院園圃地壟 EObj（EObjName 2003757「園圃」，CustomTalk 721047）。</summary>

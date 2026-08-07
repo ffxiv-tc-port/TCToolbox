@@ -10,6 +10,12 @@ namespace TCToolbox.Core;
 /// 兩者刻意脫鉤：要調整分頁左右順序時改那個陣列就好，不必動列舉值，
 /// 也就不會不小心破壞「<see cref="Misc"/> 是零值」這個前提。
 /// </para>
+/// <para>
+/// 🔴 <b>「手動觸發」與「常用」不在這個列舉裡，也不要加進來。</b>
+/// 那兩個分頁是<b>篩選</b>不是分類：一個看 <see cref="TcModule.IsManualTrigger"/>、
+/// 一個看設定檔裡的釘選清單，模組同時留在原本的分類分頁上。
+/// 把它們做成分類成員的話，模組會從原分頁上消失——習慣在原分頁找它的人只會覺得功能不見了。
+/// </para>
 /// </remarks>
 public enum ModuleCategory
 {

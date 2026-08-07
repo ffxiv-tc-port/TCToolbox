@@ -31,6 +31,13 @@ public sealed unsafe class AutoMaterialize : TcModule
 
     public override ModuleCategory Category => ModuleCategory.Inventory;
 
+    /// <summary>
+    /// 精製視窗上按了按鈕才跑；開著不按，一件裝備都不會被精製。
+    /// （確認對話框的自動確認只在流程跑著的時候才作用，見 <c>OnMaterializeDialog</c> 的
+    /// <c>queue.IsBusy</c> 閘門——所以「開著」本身不會去點任何東西。）
+    /// </summary>
+    public override bool IsManualTrigger => true;
+
     /// <summary>遊戲的魔晶石精製函式（sig 已對台服 7.20 主程式離線驗證，唯一命中）。</summary>
     private const string ExtractMateriaSignature =
         "48 89 5C 24 ?? 48 89 74 24 ?? 57 48 83 EC ?? 41 0F BF F8 8B DA 48 8B F1 45 33 C0";

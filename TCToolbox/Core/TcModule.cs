@@ -45,6 +45,26 @@ public abstract class TcModule
     /// </remarks>
     public virtual ModuleCategory Category => ModuleCategory.Misc;
 
+    /// <summary>
+    /// 這個模組的核心行為是不是「<b>使用者按了才動一次</b>」。
+    /// </summary>
+    /// <remarks>
+    /// 判準只有一條：<b>開著但不去按它，遊戲行為完全不變</b>＝<c>true</c>；
+    /// 開著就會自己介入（掛 hook 接手、盯著視窗自動點、每隔一段時間自己做事）＝<c>false</c>。
+    /// <para>
+    /// ⚠️ <b>不要看模組名字。</b>名字有「自動」兩個字的模組裡兩種都有
+    /// （<c>AutoMaterialize</c> 要按鈕才動、<c>AutoMateriaRetrieveAll</c> 是掛 hook 自己接手），
+    /// 而名字沒有「自動」的也不見得就是手動。
+    /// </para>
+    /// <para>
+    /// 📌 這是一個<b>與 <see cref="Category"/> 正交的標記，不是第五個分類</b>：
+    /// 標了 <c>true</c> 的模組仍然留在原本的分類分頁上，只是<b>額外</b>出現在「手動觸發」分頁。
+    /// 刻意不做成 <see cref="ModuleCategory"/> 的新成員——那會把模組從它原本的分頁上搬走，
+    /// 習慣去「背包 · 裝備」找投影台功能的人會找不到。
+    /// </para>
+    /// </remarks>
+    public virtual bool IsManualTrigger => false;
+
     /// <summary>模組是否有自己的設定／操作 UI。</summary>
     public virtual bool HasConfigUI => false;
 
