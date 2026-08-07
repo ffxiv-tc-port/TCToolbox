@@ -396,7 +396,40 @@ public sealed class AutoCountPlayersConfig
     public List<PlayerWatchRule> WatchRules { get; set; } = [];
 }
 
-/// <summary>周邊玩家偵測規則：玩家出現且名稱命中時通知並執行指令。</summary>
+/// <summary>
+/// 偵測規則裡多個條件之間的組合方式。
+/// </summary>
+/// <remarks>
+/// ⚠️ 一定要有零值：舊設定檔沒有這個鍵時反序列化會落在欄位初始值，
+/// 而新規則的 <c>default</c> 也是零值——沒有零值的列舉會讓兩者落在無效狀態上。
+/// </remarks>
+public enum WatchRuleMatchMode
+{
+    /// <summary>
+    /// 任一啟用中的條件命中就觸發。
+    /// <para>預設值，理由是「警報」的語意是寧可多響不可漏響。</para>
+    /// </summary>
+    Any = 0,
+
+    /// <summary>所有啟用中的條件都命中才觸發（用來收斂範圍，例如「特定伺服器的遊戲管理員」）。</summary>
+    All = 1,
+}
+
+/// <summary>
+/// 周邊玩家偵測規則：玩家出現且<b>條件命中</b>時通知並執行指令。
+/// </summary>
+/// <remarks>
+/// <para>
+/// 判定條件可以多選、可組合，名稱只是其中一種。目前支援四種條件，每種都有自己的啟用開關：
+/// 名稱（<see cref="MatchName"/>）、線上狀態（<see cref="MatchOnlineStatus"/>）、
+/// 部隊標籤（<see cref="MatchCompanyTag"/>）、距離（<see cref="MatchMaxDistance"/>）。
+/// </para>
+/// <para>
+/// 🔴 <b>所有新增欄位的預設值都等於「這個條件不啟用」</b>，唯一的例外是
+/// <see cref="MatchName"/>＝<c>true</c>——那正是多條件化之前的既有行為。
+/// 舊設定檔沒有這些鍵，反序列化不會覆寫欄位初始值，因此升級後行為逐字不變。
+/// </para>
+/// </remarks>
 public sealed class PlayerWatchRule
 {
     public bool Enabled = true;
@@ -418,6 +451,46 @@ public sealed class PlayerWatchRule
 
     /// <summary>同一位玩家再次觸發的冷卻（秒）。</summary>
     public int CooldownSeconds = 300;
+
+    // ── 以下為多條件判定（2026-08-07 新增；預設值一律等於既有行為）──────────────
+
+    /// <summary>條件之間的組合方式。預設 <see cref="WatchRuleMatchMode.Any"/>。</summary>
+    /// <remarks>只有一個條件啟用時，Any 與 All 完全等價，所以舊規則不受影響。</remarks>
+    public WatchRuleMatchMode MatchMode = WatchRuleMatchMode.Any;
+
+    /// <summary>
+    /// 啟用「名稱」條件（<see cref="Pattern"/>／<see cref="UseRegex"/>／<see cref="MatchWithWorld"/>）。
+    /// </summary>
+    /// <remarks>🔴 預設 <c>true</c>：這是多條件化之前唯一存在的條件，改成 false 會讓既有規則全部失效。</remarks>
+    public bool MatchName = true;
+
+    /// <summary>啟用「線上狀態」條件。</summary>
+    public bool MatchOnlineStatus;
+
+    /// <summary>
+    /// 要命中的 <c>OnlineStatus</c> 列號集合（空集合＝條件視為未啟用）。
+    /// </summary>
+    /// <remarks>
+    /// 台服 7.20 的 <c>OnlineStatus</c> 全表 48 列（0–47），其中
+    /// <b>列 2 與列 3 的名稱都是「遊戲管理員」</b>（離線比對 <c>exd-tc/7.20/OnlineStatus.csv</c>），
+    /// 所以偵測 GM 要兩個都收。
+    /// </remarks>
+    public HashSet<uint> OnlineStatuses { get; set; } = [];
+
+    /// <summary>啟用「部隊標籤」條件。</summary>
+    public bool MatchCompanyTag;
+
+    /// <summary>部隊標籤比對樣式（空字串＝條件視為未啟用）。</summary>
+    public string CompanyTagPattern = string.Empty;
+
+    /// <summary>部隊標籤以正規表達式比對。</summary>
+    public bool CompanyTagUseRegex = true;
+
+    /// <summary>啟用「距離」條件。</summary>
+    public bool MatchMaxDistance;
+
+    /// <summary>距離條件的上限（公尺）：玩家與自己的距離小於等於此值即命中。</summary>
+    public float MaxDistance = 30f;
 }
 
 public sealed class AutoGardensWorkConfig
