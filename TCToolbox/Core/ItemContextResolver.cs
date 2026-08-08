@@ -66,6 +66,50 @@ internal static unsafe class ItemContextResolver
     };
 
     /// <summary>
+    /// 依右鍵選單的型別分派，找出使用者按的是哪個道具。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>兩種選單的資料來源完全不同，不能共用一條路</b>：
+    /// <see cref="ContextMenuType.Inventory"/> 的 agent 是 <c>AgentInventoryContext</c>，
+    /// Dalamud 已經把「按到哪一格」包成 <see cref="MenuTargetInventory.TargetItem"/>；
+    /// <see cref="ContextMenuType.Default"/> 的 agent 是 <c>AgentContext</c>，得逐視窗讀具名欄位。
+    /// 背包那條<b>不能</b>改走 <see cref="TryResolveItem(string, out uint, out string)"/>——
+    /// 那支對背包沒有具名欄位，又不在 <see cref="HoveredItemAddons"/> 裡，只會回 false。
+    /// </remarks>
+    public static bool TryResolveFromMenu(IMenuOpenedArgs args, out uint itemId, out string itemName)
+    {
+        itemId = 0;
+        itemName = string.Empty;
+
+        switch (args.MenuType)
+        {
+            case ContextMenuType.Inventory:
+            {
+                if (args.Target is not MenuTargetInventory { TargetItem: { } item }) return false;
+
+                // GameInventoryItem.ItemId 走 InventoryItem::GetItemId()，帶 HQ／收藏品位移
+                // （Dalamud 自己的 ItemUtil.GetBaseId 也是減 1,000,000／500,000），
+                // 所以正規化與查名共用同一支。
+                return TryGetItemName(item.ItemId, out itemId, out itemName);
+            }
+
+            case ContextMenuType.Default:
+            {
+                var addonName = args.AddonName;
+                if (string.IsNullOrEmpty(addonName)) return false;
+
+                // 對玩家／NPC 按右鍵時不該出現道具選項
+                if (IsTargetingCharacter(args)) return false;
+
+                return TryResolveItem(addonName, out itemId, out itemName);
+            }
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
     /// 找出這個視窗右鍵時對應的道具。
     /// 一律走具名欄位；沒有具名欄位的視窗才退回 <c>HoveredItem</c>，而且限白名單。
     /// </summary>
@@ -206,12 +250,49 @@ internal static unsafe class ItemContextResolver
     }
 
     /// <summary>
+    /// 原生選單目前宣告了幾個項目。<c>-1</c>＝讀不到（agent 還沒起來，或頭格根本不是整數）。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>只對 <see cref="ContextMenuType.Default"/> 有意義。</b>讀的是 <c>AgentContext</c>，
+    /// 而背包選單的 agent 是 <c>AgentInventoryContext</c>——背包選單開著的時候，
+    /// <c>AgentContext</c> 裡留的是<b>上一次</b>非背包選單的殘值，拿來判斷會得到別的視窗的答案。
+    /// </remarks>
+    public static int NativeMenuItemCount()
+    {
+        var agent = AgentContext.Instance();
+        if (agent == null) return -1;
+
+        var menu = agent->CurrentContextMenu;
+        if (menu == null) return -1;
+
+        var entries = menu->EventParams;
+        if (entries.Length <= FirstEntryIndex) return -1;
+
+        // 🔴 頭格的型別<b>不能只認 <c>ValueType.Int</c></b>：Dalamud 自己組同一個陣列時
+        // 對「項目數」明寫 <c>ChangeType(ValueType.UInt)</c>（見 ContextMenu.CreateEmptySubmenuContextMenuArray），
+        // 讀的時候也一律走 <c>.UInt</c>。兩者在 AtkValue 裡是同一個聯合成員，差別只在型別標籤。
+        // 只認 Int 的話，遊戲填 UInt 就會被讀成 0 → 判定「原生選單是空的」→ 去重永遠不生效，
+        // 而且不報錯不崩潰，表現成「選單裡出現兩個一模一樣的項目」。
+        var head = entries[0];
+        return head.Type switch
+        {
+            ValueType.Int => head.Int,
+            ValueType.UInt => head.UInt > int.MaxValue ? -1 : (int)head.UInt,
+            _ => -1,
+        };
+    }
+
+    /// <summary>
     /// 掃一遍原生選單目前的項目，看看有沒有同名的。
     /// 🔴 值表的長度是遊戲填的，<b>不能拿它直接算迴圈上界</b>——<c>EventParams</c> 是固定 33 格，
     /// 遊戲填的筆數加上 7 格表頭有可能超出去。這裡以 Span 自己的長度收斂。
+    /// 🔴 同 <see cref="NativeMenuItemCount"/>：<b>只對 <see cref="ContextMenuType.Default"/> 有意義。</b>
     /// </summary>
     public static bool NativeMenuContains(string label)
     {
+        var declared = NativeMenuItemCount();
+        if (declared <= 0) return false;
+
         var agent = AgentContext.Instance();
         if (agent == null) return false;
 
@@ -220,9 +301,6 @@ internal static unsafe class ItemContextResolver
 
         var entries = menu->EventParams;
         if (entries.Length <= FirstEntryIndex) return false;
-
-        var declared = entries[0].Type == ValueType.Int ? entries[0].Int : 0;
-        if (declared <= 0) return false;
 
         var end = Math.Min(FirstEntryIndex + declared, entries.Length);
 

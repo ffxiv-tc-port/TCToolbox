@@ -26,11 +26,11 @@ namespace TCToolbox.Modules;
 /// Dalamud 那支會處理 <c>UseShellExecute</c> 與開完之後把視窗帶到前景，自己拼會少掉這些。
 /// </para>
 /// <para>
-/// 🔴 與 <see cref="CopyItemNameContextMenu"/> 的<b>涵蓋範圍刻意不同</b>：那個模組只做
-/// <see cref="ContextMenuType.Default"/>（因為背包本來就有「複製道具名」），而查 wiki
-/// 最常用的地方就是背包，所以這裡<b>兩種選單都做</b>。背包走 Dalamud 給的
-/// <see cref="MenuTargetInventory"/>（資訊最直接），其餘視窗共用
-/// <see cref="ItemContextResolver"/>。
+/// 📌 <b>涵蓋範圍與 <see cref="CopyItemNameContextMenu"/> 現在一致</b>：兩種選單都做，
+/// 都走 <see cref="ItemContextResolver.TryResolveFromMenu"/>（背包用 Dalamud 給的
+/// <see cref="MenuTargetInventory"/>，其餘視窗讀具名欄位）。
+/// 差別只剩「原生已有」的排除清單——那是複製道具名才需要的，灰機 wiki 這一項遊戲本身沒有，
+/// 所以這裡<b>不排除任何視窗</b>。
 /// </para>
 /// </remarks>
 public sealed class HuijiWikiContextMenu : TcModule
@@ -65,7 +65,7 @@ public sealed class HuijiWikiContextMenu : TcModule
     {
         try
         {
-            if (!TryResolveItem(args, out var itemId, out var itemName)) return;
+            if (!ItemContextResolver.TryResolveFromMenu(args, out var itemId, out var itemName)) return;
 
             args.AddMenuItem(new MenuItem
             {
@@ -79,42 +79,6 @@ public sealed class HuijiWikiContextMenu : TcModule
         catch (Exception ex)
         {
             Svc.Log.Error(ex, $"[{InternalName}] 建立右鍵選單項目時發生例外（addon: {args.AddonName}）");
-        }
-    }
-
-    /// <summary>
-    /// 兩種選單各走各的來源。
-    /// ⚠️ 背包那條不能改用 <see cref="ItemContextResolver"/>：那支對背包沒有具名欄位，
-    /// 又不在 <c>HoveredItem</c> 白名單裡，會回 false。
-    /// </summary>
-    private static bool TryResolveItem(IMenuOpenedArgs args, out uint itemId, out string itemName)
-    {
-        itemId = 0;
-        itemName = string.Empty;
-
-        switch (args.MenuType)
-        {
-            case ContextMenuType.Inventory:
-            {
-                if (args.Target is not MenuTargetInventory { TargetItem: { } item }) return false;
-
-                // GameInventoryItem.ItemId 帶 HQ／收藏品位移，正規化與查名共用同一支。
-                return ItemContextResolver.TryGetItemName(item.ItemId, out itemId, out itemName);
-            }
-
-            case ContextMenuType.Default:
-            {
-                var addonName = args.AddonName;
-                if (string.IsNullOrEmpty(addonName)) return false;
-
-                // 對玩家／NPC 按右鍵時不該出現道具選項
-                if (ItemContextResolver.IsTargetingCharacter(args)) return false;
-
-                return ItemContextResolver.TryResolveItem(addonName, out itemId, out itemName);
-            }
-
-            default:
-                return false;
         }
     }
 
