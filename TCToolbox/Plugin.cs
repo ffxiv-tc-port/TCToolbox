@@ -89,6 +89,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoIgnoreLoginLock());
         Modules.Add(new AutoCountPlayers());
         Modules.Add(new ClickToMove());
+        Modules.Add(new FlagCommands());
 
         foreach (var module in Modules)
         {

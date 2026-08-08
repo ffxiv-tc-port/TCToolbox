@@ -65,8 +65,22 @@ public sealed class Configuration : IPluginConfiguration
     public AutoMergeConfig Merge { get; set; } = new();
     public CurrencyCapAlertConfig CurrencyCapAlert { get; set; } = new();
     public ClickToMoveConfig ClickToMove { get; set; } = new();
+    public FlagCommandsConfig FlagCommands { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
+}
+
+/// <summary>旗標指令（/tpflag、/gotoflag）。</summary>
+public sealed class FlagCommandsConfig
+{
+    /// <summary>
+    /// <c>/gotoflag</c> 允許 vnavmesh 使用飛行路徑。
+    /// </summary>
+    /// <remarks>
+    /// 📌 預設 <c>false</c>，與其他導航呼叫端一致：在未解鎖飛行的區域開飛行會讓
+    /// vnavmesh 算不出路徑，而失敗的樣子是「指令下了沒反應」。
+    /// </remarks>
+    public bool AllowFly;
 }
 
 /// <summary>點擊移動。</summary>

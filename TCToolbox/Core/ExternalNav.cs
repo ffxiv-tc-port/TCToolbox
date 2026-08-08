@@ -40,6 +40,13 @@ internal static class ExternalNav
     private static readonly Lazy<ICallGateSubscriber<bool>> VnavPathfindInProgress =
         new(() => Svc.PluginInterface.GetIpcSubscriber<bool>("vnavmesh.SimpleMove.PathfindInProgress"));
 
+    // 📌 vnavmesh 端註冊成 RegisterFunc("Query.Mesh.PointOnFloor",
+    //    (Vector3 p, bool allowUnlandable, float halfExtentXZ) => ...FindPointOnFloor(p, halfExtentXZ))
+    //    （vnavmesh/IPCProvider.cs:32）。回傳是 Vector3?——查不到落點時是 null，不是 Vector3.Zero，
+    //    ⚠️ 拿 Zero 當「查不到」會把地圖原點附近的合法落點誤判成失敗。
+    private static readonly Lazy<ICallGateSubscriber<Vector3, bool, float, Vector3?>> VnavPointOnFloor =
+        new(() => Svc.PluginInterface.GetIpcSubscriber<Vector3, bool, float, Vector3?>("vnavmesh.Query.Mesh.PointOnFloor"));
+
     // 只拿來分辨「沒安裝」與「安裝了但網格沒好」。挑 Nav.BuildProgress 是因為它唯讀、
     // 零副作用，而且與網格狀態無關——它一定註冊得起來，所以擲例外＝真的沒這個外掛。
     private static readonly Lazy<ICallGateSubscriber<float>> VnavBuildProgress =
@@ -193,6 +200,45 @@ internal static class ExternalNav
         catch (IpcError ex)
         {
             Svc.Log.Warning(ex, "[ExternalNav] 呼叫 vnavmesh.Path.Stop 失敗");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 問 vnavmesh：從這個位置<b>垂直往下</b>找，地板在哪裡。
+    /// </summary>
+    /// <remarks>
+    /// 📌 用途是把「只有 X／Z 的座標」補成完整的三維座標。地圖旗標就是這種情況——
+    /// <c>FlagMapMarker</c> 只存 X 與 Z（世界座標），沒有高度。
+    /// vnavmesh 自己的 <c>MapUtils.FlagToPoint</c> 就是這樣做的：拿 Y=1024 當起點往下打。
+    /// <para>
+    /// ⚠️ <paramref name="probe"/> 的 Y 要給一個<b>高於地形</b>的值，否則會從地板底下往下找而落空。
+    /// </para>
+    /// </remarks>
+    /// <param name="probe">探測起點（Y 要夠高）。</param>
+    /// <param name="allowUnlandable">是否接受「站不住」的落點（例如水面）。</param>
+    /// <param name="halfExtentXZ">水平方向的搜尋半徑。</param>
+    /// <param name="point">找到的落點。</param>
+    /// <returns>是否找到落點（false＝vnavmesh 未安裝、網格沒好，或這個位置下面沒有地板）。</returns>
+    public static bool TryFindPointOnFloor(
+        Vector3 probe, bool allowUnlandable, float halfExtentXZ, out Vector3 point)
+    {
+        try
+        {
+            var result = VnavPointOnFloor.Value.InvokeFunc(probe, allowUnlandable, halfExtentXZ);
+            if (result == null)
+            {
+                point = default;
+                return false;
+            }
+
+            point = result.Value;
+            return true;
+        }
+        catch (IpcError ex)
+        {
+            Svc.Log.Warning(ex, "[ExternalNav] 呼叫 vnavmesh.Query.Mesh.PointOnFloor 失敗");
+            point = default;
             return false;
         }
     }
