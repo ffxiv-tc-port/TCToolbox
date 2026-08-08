@@ -239,6 +239,55 @@ public static class SimpleTweaksProbe
         return value.Trim();
     }
 
+    /// <summary>
+    /// 產生「本模組與 SimpleTweaks 某個 tweak 重疊」的標準提示，語氣與版面統一。
+    /// </summary>
+    /// <param name="tweakKey">
+    /// tweak 的鍵，不含提供者前綴（例如 <c>QuickSellItems</c>）。
+    /// 比對前會正規化，所以設定檔寫成 <c>UiAdjustments@X</c> 或裸鍵都吃得到。
+    /// </param>
+    /// <param name="tweakLabel">給人看的 tweak 名稱，含完整識別（例如 <c>UiAdjustments@ImprovedDutyFinderSettings</c>）。</param>
+    /// <param name="detail">這兩邊到底怎麼撞在一起——每個模組自己講，因為撞法都不一樣。</param>
+    /// <remarks>
+    /// <para>
+    /// 🔴 <b>只提示、不代決</b>：不自動關掉任何一邊，也不擋使用者啟用。
+    /// 替使用者裁決「留哪一邊」不是這裡該做的事。
+    /// </para>
+    /// <para>
+    /// 🔴 三種回傳只有兩種會顯示，而「不知道」<b>一定看得見</b>——
+    /// 把未知畫成「沒事」等於靜默宣稱沒有衝突，那正是使用者最不希望被騙的方向。
+    /// SimpleTweaks 沒裝、或那個 tweak 確認是關的，就回 <c>null</c>（列面保持乾淨）。
+    /// </para>
+    /// <para>
+    /// ⚠️ 這條路徑在 ImGui 的 Draw 上被呼叫，<see cref="Query"/> 內部所有 I/O 都已包 try，
+    /// 這裡只做字串組裝，不會擲例外。
+    /// </para>
+    /// </remarks>
+    public static ModuleNotice? BuildNotice(string tweakKey, string tweakLabel, string detail) =>
+        Query(tweakKey) switch
+        {
+            ConflictState.Active => new ModuleNotice(
+                ModuleNoticeLevel.Warning,
+                "! 與 SimpleTweaks 重複",
+                $"SimpleTweaks 也裝著，而且它的「{tweakLabel}」是開著的。\n" +
+                "\n" +
+                detail +
+                "\n\n" +
+                "建議只留一邊：到 SimpleTweaks 把那個 tweak 關掉，或把這個模組關掉。"),
+
+            ConflictState.Unknown => new ModuleNotice(
+                ModuleNoticeLevel.Unknown,
+                "? SimpleTweaks 狀態未知",
+                $"SimpleTweaks 裝著，但讀不到它的設定檔，無法判斷「{tweakLabel}」是不是也開著。\n" +
+                $"原因：{(string.IsNullOrEmpty(lastError) ? "（未記錄）" : lastError)}\n" +
+                $"設定檔：{(string.IsNullOrEmpty(ConfigPath) ? "（路徑取不到）" : ConfigPath)}\n" +
+                "\n" +
+                "如果那個 tweak 其實是開著的：\n" +
+                detail),
+
+            _ => null,
+        };
+
     private static void Fail(string reason)
     {
         enabledTweakKeys = null;

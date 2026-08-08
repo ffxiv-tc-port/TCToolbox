@@ -33,6 +33,39 @@ public sealed unsafe class OptimizedDutyFinderSetting : TcModule
     private const string SetContentsFinderSettingsSignature =
         "E8 ?? ?? ?? ?? 49 8B 06 45 33 FF 49 8B CE 45 89 7E 20 FF 50 28 B0 01";
 
+    /// <summary>
+    /// SimpleTweaks 裡做同一件事的 tweak 鍵（完整識別是 <c>UiAdjustments@ImprovedDutyFinderSettings</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>不是「功能相似」，是同一支遊戲函式</b>：2026-08-08 直接對使用者機器上安裝的
+    /// <c>SimpleTweaksPlugin.dll</c>（1.10.12.0）數字串命中數，上面的
+    /// <see cref="SetContentsFinderSettingsSignature"/> <b>逐字元出現在對方的組件裡</b>
+    /// （UTF-8 恰好 1 次、UTF-16LE 0 次）。
+    /// <para>
+    /// 對方那個 tweak 的型別是 <c>SimpleTweaksPlugin.Tweaks.UiAdjustment.ImprovedDutyFinderSettings</c>，
+    /// 方法有 <c>SetupAddon</c>／<c>UpdateIcons</c>／<c>ToggleSetting</c>／<c>GetCurrentSettingArray</c>
+    /// （離線讀對方組件的 TypeDef／MethodDef 表解出，不是猜的）——
+    /// 跟本模組一樣是「把二級設定攤成搜索器視窗上的一排開關」。
+    /// </para>
+    /// <para>
+    /// ⚠️ 差別只在畫法：對方注入原生節點、我們畫 ImGui 疊圖。所以兩邊會**同時出現兩排按鈕**，
+    /// 而且送出的是同一個 27 位元組陣列。
+    /// </para>
+    /// </remarks>
+    private const string SimpleTweaksDutyFinderTweak = "ImprovedDutyFinderSettings";
+
+    /// <inheritdoc/>
+    public override ModuleNotice? RowNotice => SimpleTweaksProbe.BuildNotice(
+        SimpleTweaksDutyFinderTweak,
+        "改良版任務搜索器設定 (UiAdjustments@ImprovedDutyFinderSettings)",
+        "兩邊都會在搜索器視窗上放一排設定開關，而且送出設定走的是遊戲同一支函式\n" +
+        "（特徵碼逐字元相同）。同時開著會看到兩排功能重複的按鈕：\n" +
+        "對方注入原生節點、我們畫在視窗上方的疊圖。\n" +
+        "\n" +
+        "設定值本身不會打架（兩邊都是讀當下的真值再送出），\n" +
+        "但從一邊切換之後，另一邊的圖示不一定會立刻跟著更新，\n" +
+        "看起來就像「按了沒反應」或「兩排顯示不一致」。");
+
     private delegate void SetContentsFinderSettingsDelegate(byte* data, UIModule* module);
 
     private SetContentsFinderSettingsDelegate? setContentsFinderSettings;

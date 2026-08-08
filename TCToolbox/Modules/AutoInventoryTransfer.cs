@@ -71,6 +71,41 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
 
     public override bool HasConfigUI => true;
 
+    /// <summary>
+    /// SimpleTweaks 裡掛在<b>同一支遊戲函式</b>上的 tweak 鍵（裸鍵，沒有提供者前綴）。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>不是「功能相似」，是同一個 hook 點</b>：對方的
+    /// <c>SimpleTweaksPlugin.Tweaks.QuickSellItems</c> 有一個叫
+    /// <c>OpenInventoryContextDetour</c> 的方法，掛的就是本模組
+    /// <see cref="OnEnable"/> 裡那支 <c>AgentInventoryContext::OpenForItemSlot</c>。
+    /// <para>
+    /// 證據（2026-08-08 離線讀使用者機器上安裝的 <c>SimpleTweaksPlugin.dll</c> 1.10.12.0）：
+    /// 組件裡有 <c>AgentInventoryContext, FFXIVClientStructs</c> ＋ <c>OpenForItemSlot</c>
+    /// ＋ <c>OpenInventoryContextDetour</c> 這組 hook 屬性資料；
+    /// 再走 TypeDef→MethodDef 表把那個方法歸屬回它的型別，落在 <c>QuickSellItems</c> 上
+    /// （同一套解法拿 <c>TryOpenWindow</c>→<c>AutoOpenCommendWindow</c> 對照過，
+    /// 與對方組件內嵌的原始檔路徑一致，所以歸屬邏輯本身是驗過的）。
+    /// </para>
+    /// <para>
+    /// 🔴 而且<b>互動方式一模一樣</b>：對方有 <c>HotkeyIsHeld</c>，也是「按住修飾鍵右鍵點物品」。
+    /// 兩邊的修飾鍵若設成同一顆，同一個右鍵動作會同時觸發賣出與轉移。
+    /// </para>
+    /// </remarks>
+    private const string SimpleTweaksQuickSellTweak = "QuickSellItems";
+
+    /// <inheritdoc/>
+    public override ModuleNotice? RowNotice => SimpleTweaksProbe.BuildNotice(
+        SimpleTweaksQuickSellTweak,
+        "快速賣出道具 (QuickSellItems)",
+        "兩邊掛的是遊戲同一支背包右鍵函式（AgentInventoryContext::OpenForItemSlot），\n" +
+        "而且觸發方式一樣是「按住修飾鍵 + 右鍵點物品」。\n" +
+        "\n" +
+        "🔴 如果兩邊的修飾鍵設成同一顆，同一個右鍵動作會同時被兩邊接手——\n" +
+        "對方把道具賣掉、我們把它搬去另一個頁面，而先發生哪一件並不保證。\n" +
+        "\n" +
+        "要兩個都留的話，請把修飾鍵設成不同的鍵（本模組的修飾鍵在下方設定裡）。");
+
     /// <summary>可選的修飾鍵（0＝停用）。</summary>
     private static readonly (int Code, string Label)[] SelectableKeys =
     [
