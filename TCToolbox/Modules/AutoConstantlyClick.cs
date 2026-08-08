@@ -81,7 +81,7 @@ public sealed unsafe class AutoConstantlyClick : TcModule
         inHotbarInputHandler = true;
         try
         {
-            checkHotbarClickedHook!.Original(a1, a2);
+            checkHotbarClickedHook!.OriginalDisposeSafe(a1, a2);
         }
         finally
         {
@@ -91,7 +91,7 @@ public sealed unsafe class AutoConstantlyClick : TcModule
 
     private bool IsInputIdPressedDetour(InputData* data, InputId id)
     {
-        var original = isInputIdPressedHook!.Original(data, id);
+        var original = isInputIdPressedHook!.OriginalDisposeSafe(data, id);
 
         try
         {

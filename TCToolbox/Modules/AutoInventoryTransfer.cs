@@ -848,7 +848,7 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
     private void OpenForItemSlotDetour(
         AgentInventoryContext* agent, InventoryType inventoryType, int slot, int a4, uint addonId)
     {
-        openForItemSlotHook!.Original(agent, inventoryType, slot, a4, addonId);
+        openForItemSlotHook!.OriginalDisposeSafe(agent, inventoryType, slot, a4, addonId);
 
         try
         {

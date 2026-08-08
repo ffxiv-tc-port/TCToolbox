@@ -209,7 +209,7 @@ public sealed unsafe class AutoHideBanners : TcModule
             Svc.Log.Error(ex, $"[{InternalName}] 橫幅過濾判定失敗，本次照常顯示");
         }
 
-        setImageHook!.Original(addonImage, bannerId, iconSubFolder, soundEffectId);
+        setImageHook!.OriginalDisposeSafe(addonImage, bannerId, iconSubFolder, soundEffectId);
     }
 
     public override void DrawConfig()

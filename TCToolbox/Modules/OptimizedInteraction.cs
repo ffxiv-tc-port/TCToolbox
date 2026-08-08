@@ -266,14 +266,14 @@ public sealed class OptimizedInteraction : TcModule
     /// <summary>1 ＝ 在視野範圍內。</summary>
     private byte ViewRangeDetour(nint targetSystem, nint gameObject)
     {
-        viewRangeHook?.Original(targetSystem, gameObject);
+        viewRangeHook?.OriginalDisposeSafe(targetSystem, gameObject);
         return 1;
     }
 
     /// <summary>1 ＝ 鏡頭看得到、沒被擋住。</summary>
     private byte CameraBlockedDetour(nint targetSystem, nint camera, nint gameObject)
     {
-        cameraBlockedHook?.Original(targetSystem, camera, gameObject);
+        cameraBlockedHook?.OriginalDisposeSafe(targetSystem, camera, gameObject);
         return 1;
     }
 
@@ -284,35 +284,35 @@ public sealed class OptimizedInteraction : TcModule
     private byte TargetPositionDetour(
         nint eventFramework, nint source, nint target, ushort interactType, byte sendError)
     {
-        targetPositionHook?.Original(eventFramework, source, target, interactType, 0);
+        targetPositionHook?.OriginalDisposeSafe(eventFramework, source, target, interactType, 0);
         return 1;
     }
 
     /// <summary>0 公尺 ＝ 永遠在範圍內。</summary>
     private float TargetDistanceDetour(nint localPlayer, nint target)
     {
-        targetDistanceHook?.Original(localPlayer, target);
+        targetDistanceHook?.OriginalDisposeSafe(localPlayer, target);
         return 0f;
     }
 
     /// <summary>0 ＝ 沒在跳躍。</summary>
     private byte Jumping0Detour(nint self)
     {
-        jumping0Hook?.Original(self);
+        jumping0Hook?.OriginalDisposeSafe(self);
         return 0;
     }
 
     /// <summary>0 ＝ 沒在跳躍。</summary>
     private byte Jumping1Detour(nint self)
     {
-        jumping1Hook?.Original(self);
+        jumping1Hook?.OriginalDisposeSafe(self);
         return 0;
     }
 
     /// <summary>0 ＝ 沒在騎乘／低空飛行。</summary>
     private byte MountFlightDetour(nint self)
     {
-        mountFlightHook?.Original(self);
+        mountFlightHook?.OriginalDisposeSafe(self);
         return 0;
     }
 

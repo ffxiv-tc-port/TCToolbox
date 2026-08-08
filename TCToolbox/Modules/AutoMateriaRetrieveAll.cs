@@ -165,7 +165,7 @@ public sealed unsafe class AutoMateriaRetrieveAll : TcModule
     private void MaterializeItemDetour(
         EventFramework* framework, EventId eventId, InventoryType container, short slot, int extraParam)
     {
-        materializeItemHook!.Original(framework, eventId, container, slot, extraParam);
+        materializeItemHook!.OriginalDisposeSafe(framework, eventId, container, slot, extraParam);
 
         try
         {
@@ -294,7 +294,7 @@ public sealed unsafe class AutoMateriaRetrieveAll : TcModule
             if (framework == null) return null;
 
             // 走 Original：這是我們自己送的，不需要也不應該再經過自己的 detour。
-            materializeItemHook.Original(
+            materializeItemHook.OriginalDisposeSafe(
                 framework, RetrieveEventId, watchedContainer, watchedSlot, 0);
 
             retrievedCount++;
