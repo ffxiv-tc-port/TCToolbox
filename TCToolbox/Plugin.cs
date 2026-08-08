@@ -77,6 +77,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new CustomDeliveriesOverview());
         Modules.Add(new AutoCustomDeliveryResult());
         Modules.Add(new AutoRequestItemSubmit());
+        Modules.Add(new ARSwitcher());
 
         // ④ 介面 · 雜項
         Modules.Add(new AutoHideBanners());

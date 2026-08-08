@@ -67,8 +67,23 @@ public sealed class Configuration : IPluginConfiguration
     public ClickToMoveConfig ClickToMove { get; set; } = new();
     public FlagCommandsConfig FlagCommands { get; set; } = new();
     public OpenAllCoffersConfig OpenAllCoffers { get; set; } = new();
+    public ARSwitcherConfig ArSwitcher { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
+}
+
+/// <summary>AutoRetainer 角色切換。</summary>
+public sealed class ARSwitcherConfig
+{
+    /// <summary>
+    /// 點擊伺服器資訊列的項目就切換角色（左鍵＝下一個、右鍵＝上一個）。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 預設 <c>false</c>，與上游 CBT 的行為<b>刻意不同</b>：
+    /// 切換角色等於<b>登出再登入</b>，而那顆圖示就在時鐘旁邊——手滑點到的代價是整個角色被登出。
+    /// 預設關閉時點擊只會開啟 TC Toolbox 設定視窗，切換一律走指令。
+    /// </remarks>
+    public bool SwitchOnDtrClick;
 }
 
 /// <summary>箱類「全部開啟」。</summary>
