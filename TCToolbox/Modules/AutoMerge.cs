@@ -92,6 +92,27 @@ public sealed unsafe class AutoMerge : TcModule
     private int stuckCount;
     private long runStartTick;
 
+    /// <summary>
+    /// 上一步搬移的那兩格（不分方向）。
+    /// </summary>
+    /// <remarks>
+    /// 🔑 用來證明「合併真的有發生」，依據是一條嚴格成立的不變式：
+    /// <b>一次真正的合併之後，這兩格至少有一格會離開候選集合</b>——
+    /// 不是目的地被填滿（滿堆不再是候選），就是來源被清空（空格不再是候選）。
+    /// 所以<b>同一組格子不可能連續被挑中兩次</b>。
+    /// <para>
+    /// ⚠️ 這道防線防的是 <c>MoveItemSlot</c> 對同款道具做的是<b>交換</b>而不是合併的情況。
+    /// 那種情況下兩格的數量每次都會變（所以 <see cref="stuckCount"/> 永遠不會累積），
+    /// 而挑選規則會在同一組格子之間無限來回，一路跑到
+    /// <see cref="MaxMovesPerRun"/> 才停——兩分鐘的無效搬移，而且看起來像在正常工作。
+    /// </para>
+    /// </remarks>
+    private (InventoryType Container, ushort Slot) lastPairA;
+
+    private (InventoryType Container, ushort Slot) lastPairB;
+
+    private bool hasLastPair;
+
     /// <summary>這一趟合併過程中被動過的道具名稱（去重後用於結束時的報告）。</summary>
     private readonly List<string> touchedItems = [];
 
@@ -117,6 +138,7 @@ public sealed unsafe class AutoMerge : TcModule
         movesDone = 0;
         stuckCount = 0;
         runStartTick = 0;
+        hasLastPair = false;
         touchedItems.Clear();
     }
 
@@ -197,6 +219,27 @@ public sealed unsafe class AutoMerge : TcModule
 
             return;
         }
+
+        // 🔑 同一組格子連續被挑中兩次＝這個「搬移」沒有在合併（見 lastPairA 的說明）。
+        // 數量有變所以 stuckCount 抓不到，只有這條不變式抓得到。
+        var src = (step.Source, step.SourceSlot);
+        var dst = (step.Destination, step.DestinationSlot);
+
+        if (hasLastPair &&
+            ((lastPairA == src && lastPairB == dst) || (lastPairA == dst && lastPairB == src)))
+        {
+            Svc.Log.Warning(
+                $"[{InternalName}] 同一組格子連續被挑中兩次：" +
+                $"{step.Source}#{step.SourceSlot} ↔ {step.Destination}#{step.DestinationSlot} " +
+                $"itemId={step.BaseItemId}——這代表搬移沒有把兩堆合併起來（可能是交換）。");
+
+            FinishRun("已中止：搬移沒有把堆疊合併起來（同一組格子重複來回）。");
+            return;
+        }
+
+        lastPairA = src;
+        lastPairB = dst;
+        hasLastPair = true;
 
         stuckCount = 0;
         movesDone++;
