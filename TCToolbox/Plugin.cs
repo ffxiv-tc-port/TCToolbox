@@ -43,6 +43,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoInventoryTransfer());
         Modules.Add(new AutoMerge());
         Modules.Add(new CurrencyCapAlert());
+        Modules.Add(new OpenAllCoffers());
         Modules.Add(new AutoMateriaRetrieveAll());
         Modules.Add(new AutoMaterialize());
         Modules.Add(new MoveGearsNotInSet());
