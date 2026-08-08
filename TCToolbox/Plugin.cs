@@ -65,6 +65,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new WeeklyBingoClickToOpen());
         Modules.Add(new AutoRefreshPartyFinder());
         Modules.Add(new PFPageSizeCustomize());
+        Modules.Add(new FateTracker());
 
         // ③ 部隊 · 生活
         Modules.Add(new AutoFCWSDeliver());
