@@ -24,7 +24,7 @@ namespace TCToolbox.Modules;
 /// <item>舊版的 <c>ClaimButtonNodeId = 124</c>（抄自 DailyRoutines 的 DLL，註解自己寫著「尚待實機確認」）
 /// 在台服 7.20 是<b>「關閉」鈕</b>。按下去就把使用者的視窗關掉，於是
 /// <c>PreFinalize</c> 把流程 abort 掉 —— 使用者回報的「無效＋他會把我界面關掉」就是這個。</item>
-/// <item>舊版的 <c>PendingCountValueIndex = 7</c> 讀到的是「本季已達成的系列賽等級」，不是待領取階數。</item>
+/// <item>舊版的 <c>PendingCountValueIndex = 7</c> 讀到的是「本季已達成的系列賽等級」，不是待領取的等級數。</item>
 /// </list>
 ///
 /// <para><b>台服 7.20 的真值（離線解出，證據見下）：</b></para>
@@ -38,18 +38,18 @@ namespace TCToolbox.Modules;
 ///   <item><b>param 0 → 節點 124</b>：<c>AddEvent(ButtonClick, param=0)</c> 在 <c>0x141224411</c>。
 ///   addon 的 <c>ReceiveEvent</c>(<c>0x141224470</c>) 收到 param 0 就呼叫 vfunc16
 ///   （<c>FireCallback([Int -1])</c> 然後 <c>Hide</c>）＝<b>關閉視窗</b>。</item>
-///   <item><b>param 1..31 → 31 顆獎勵格</b>：<c>FireCallback([Int 1, UInt 階數])</c>。</item>
+///   <item><b>param 1..31 → 31 顆獎勵格</b>：<c>FireCallback([Int 1, UInt 等級])</c>。</item>
 ///   <item><b>param 32 → 節點 8</b>：賽季切換鈕（ULD 靜態標籤 Addon 14885/14886
 ///   「查看上個／目前賽季系列賽獎勵」），<c>FireCallback([Int 2, UInt 32])</c>。</item>
 /// </list></item>
-/// <item>agent 的回呼處理（<c>0x140ED75A0</c>）：case 1 → <c>0x140ED9D40(this, 階數)</c>＝<b>領取入口</b>，
-/// 它會擋掉「階數 != 已領取階數+1」、檢查背包空間，然後跳出
+/// <item>agent 的回呼處理（<c>0x140ED75A0</c>）：case 1 → <c>0x140ED9D40(this, 等級)</c>＝<b>領取入口</b>，
+/// 它會擋掉「等級 != 已領取等級+1」、檢查背包空間，然後跳出
 /// <c>SelectYesno</c>「確定要領取獎勵嗎？」（Addon 14888／確定 14889／取消 14890）。</item>
-/// <item>階數 ↔ 節點編號（取自 <c>OnSetup</c> 0x141224267 的三層迴圈與 0x141224364 的第 31 格）：
+/// <item>等級 ↔ 節點編號（取自 <c>OnSetup</c> 0x141224267 的三層迴圈與 0x141224364 的第 31 格）：
 /// 1–10→22–31、11–20→33–42、21–30→44–53、31→54。</item>
 /// <item>AtkValue 版面（agent 的 <c>0x140ED9900</c> 逐格填、addon 逐格讀，兩邊互相對得起來）：
-/// <c>values[7]</c>＝本季<b>已達成</b>等級、<c>values[8]</c>＝本季<b>已領取到第幾階</b>。
-/// 待領取階數＝<c>values[7] - values[8]</c>。</item>
+/// <c>values[7]</c>＝本季<b>已達成</b>等級、<c>values[8]</c>＝本季<b>已領取到第幾級</b>。
+/// 待領取等級數＝<c>values[7] - values[8]</c>。</item>
 /// </list>
 ///
 /// <para><b>防護（驗不出來就不點）：</b>目標節點一律自己走 <c>UldManager.NodeList</c> 用
@@ -104,7 +104,7 @@ public sealed unsafe class AutoClaimPVPRewards : TcModule
     /// <summary>本季已達成的系列賽等級所在的 AtkValue 索引。</summary>
     private const int LevelValueIndex = 7;
 
-    /// <summary>本季已領取到第幾階所在的 AtkValue 索引。</summary>
+    /// <summary>本季已領取到第幾級所在的 AtkValue 索引。</summary>
     private const int ClaimedValueIndex = 8;
 
     /// <summary>視窗上實際存在的獎勵格數（第 31 格是最後一格，再上去沒有可點的格子）。</summary>
@@ -125,7 +125,7 @@ public sealed unsafe class AutoClaimPVPRewards : TcModule
     /// <summary>按下獎勵格之後等確認框出現的上限。</summary>
     private const int ConfirmWaitMs = 5_000;
 
-    /// <summary>按下「是」之後等 values 反映出新的已領取階數的上限。</summary>
+    /// <summary>按下「是」之後等 values 反映出新的已領取等級的上限。</summary>
     private const int ApplyWaitMs = 8_000;
 
     private readonly TaskQueue queue = new() { DefaultTimeoutMs = 15_000 };
@@ -188,7 +188,7 @@ public sealed unsafe class AutoClaimPVPRewards : TcModule
         return values.Length <= index ? -1 : (int)values[index].UInt;
     }
 
-    /// <summary>本季還沒領的階數；讀不到就回 -1。</summary>
+    /// <summary>本季還沒領的等級數；讀不到就回 -1。</summary>
     private static int GetPendingCount(AtkUnitBase* addon)
     {
         var level = ReadValue(addon, LevelValueIndex);
@@ -198,7 +198,7 @@ public sealed unsafe class AutoClaimPVPRewards : TcModule
         return Math.Max(0, Math.Min(level, MaxTier) - claimed);
     }
 
-    /// <summary>階數 → 該格在視窗上的節點 ID。超出 1..31 回 0。</summary>
+    /// <summary>等級 → 該格在視窗上的節點 ID。超出 1..31 回 0。</summary>
     /// <remarks>
     /// 取自 <c>AddonPvpReward::OnSetup</c>：三排各 10 格（節點 22-31／33-42／44-53），
     /// 第 31 格是節點 54。中間跳掉的 32／43 是那一排的容器 Res 節點。
@@ -267,7 +267,7 @@ public sealed unsafe class AutoClaimPVPRewards : TcModule
             }
             else
             {
-                ImGui.TextDisabled($"待領取 {pending} 階");
+                ImGui.TextDisabled($"待領取 {pending} 級");
             }
 
             ImGui.SameLine();
@@ -280,7 +280,7 @@ public sealed unsafe class AutoClaimPVPRewards : TcModule
             if (!queue.IsBusy && pending == 0)
             {
                 ImGui.SameLine();
-                ImGui.TextDisabled("（沒有待領取的階級）");
+                ImGui.TextDisabled("（沒有待領取的等級）");
             }
 
             ImGui.SameLine();
@@ -324,8 +324,8 @@ public sealed unsafe class AutoClaimPVPRewards : TcModule
 
         if (!wasBusy) return;
 
-        Svc.Log.Information($"[AutoClaimPVPRewards] {reason}（本輪已領取 {claimedCount} 階）。");
-        Svc.Chat.Print($"[TC Toolbox] {reason}（本輪已領取 {claimedCount} 階）。");
+        Svc.Log.Information($"[AutoClaimPVPRewards] {reason}（本輪已領取 {claimedCount} 級）。");
+        Svc.Chat.Print($"[TC Toolbox] {reason}（本輪已領取 {claimedCount} 級）。");
     }
 
     /// <summary>主迴圈。true=收工、false=下一 tick 再來、null=中止。</summary>
@@ -342,7 +342,7 @@ public sealed unsafe class AutoClaimPVPRewards : TcModule
 
         lastAddonSeenAt = DateTime.UtcNow;
 
-        // ── 階段三：按過「是」，等確認框收掉、等 values 反映出新的已領取階數 ──
+        // ── 階段三：按過「是」，等確認框收掉、等 values 反映出新的已領取等級 ──
         if (awaitingApplySince != null)
         {
             if ((DateTime.UtcNow - awaitingApplySince.Value).TotalMilliseconds > ApplyWaitMs)
@@ -363,7 +363,7 @@ public sealed unsafe class AutoClaimPVPRewards : TcModule
             {
                 claimedCount++;
                 awaitingApplySince = null;
-                statusText = $"已領取 {claimedCount} 階";
+                statusText = $"已領取 {claimedCount} 級";
                 return false;
             }
 
@@ -379,11 +379,11 @@ public sealed unsafe class AutoClaimPVPRewards : TcModule
             {
                 if (!Throttle.Pass("AutoClaimPVPRewards-Yesno", 300)) return false;
 
-                // 先取基準值再送事件：之後就是靠「已領取階數有沒有變大」來確認真的領到了。
+                // 先取基準值再送事件：之後就是靠「已領取等級有沒有變大」來確認真的領到了。
                 claimedValueBeforeConfirm = ReadValue(addon, ClaimedValueIndex);
                 if (claimedValueBeforeConfirm < 0)
                 {
-                    Stop("送出確認前讀不到已領取階數，停止");
+                    Stop("送出確認前讀不到已領取的系列賽等級，停止");
                     return null;
                 }
 
@@ -423,28 +423,28 @@ public sealed unsafe class AutoClaimPVPRewards : TcModule
         var claimed = ReadValue(addon, ClaimedValueIndex);
         if (level < 0 || claimed < 0)
         {
-            Stop($"讀不到系列賽等級／已領取階數（AtkValue 版面可能因改版變動：level={level} claimed={claimed}），停止");
+            Stop($"讀不到系列賽等級／已領取到第幾級（AtkValue 版面可能因改版變動：level={level} claimed={claimed}），停止");
             return null;
         }
 
         var tier = claimed + 1;
         if (tier > level || tier > MaxTier)
         {
-            Stop($"沒有待領取的階級了（已達成 {level} 階、已領取 {claimed} 階）");
+            Stop($"沒有待領取的等級了（已達成 {level} 級、已領取 {claimed} 級）");
             return null;
         }
 
         var nodeId = TierToNodeId(tier);
         if (nodeId == 0)
         {
-            Stop($"第 {tier} 階沒有對應的節點，停止");
+            Stop($"第 {tier} 級沒有對應的節點，停止");
             return null;
         }
 
         var node = FindNodeById(addon, nodeId);
         if (node == null)
         {
-            Stop($"找不到第 {tier} 階的節點 {nodeId}（節點編號可能因改版變動），停止");
+            Stop($"找不到第 {tier} 級的節點 {nodeId}（節點編號可能因改版變動），停止");
             return null;
         }
 
@@ -454,14 +454,14 @@ public sealed unsafe class AutoClaimPVPRewards : TcModule
         var actual = (uint)node->Type;
         if (actual != expected)
         {
-            Stop($"第 {tier} 階的節點 {nodeId} 型別是 {actual}、預期 {expected}，不敢點，停止");
+            Stop($"第 {tier} 級的節點 {nodeId} 型別是 {actual}、預期 {expected}，不敢點，停止");
             return null;
         }
 
         var button = ((AtkComponentNode*)node)->Component;
         if (button == null)
         {
-            Stop($"第 {tier} 階的節點 {nodeId} 沒有元件，停止");
+            Stop($"第 {tier} 級的節點 {nodeId} 沒有元件，停止");
             return null;
         }
 
@@ -470,12 +470,12 @@ public sealed unsafe class AutoClaimPVPRewards : TcModule
         // ClickButton 內部還會依序驗 OwnerNode／IsEnabled／可見性／事件非 null，全部通過才送事件。
         if (!UiHelper.ClickButton(addon, (AtkComponentButton*)button))
         {
-            Stop($"第 {tier} 階（節點 {nodeId}）現在不能按，停止");
+            Stop($"第 {tier} 級（節點 {nodeId}）現在不能按，停止");
             return null;
         }
 
         awaitingConfirmSince = DateTime.UtcNow;
-        statusText = $"領取第 {tier} 階…";
+        statusText = $"領取第 {tier} 級…";
         return false;
     }
 
