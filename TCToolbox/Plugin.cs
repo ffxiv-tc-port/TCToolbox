@@ -41,6 +41,7 @@ public sealed class Plugin : IDalamudPlugin
 
         // ① 背包 · 裝備
         Modules.Add(new AutoInventoryTransfer());
+        Modules.Add(new AutoMerge());
         Modules.Add(new AutoMateriaRetrieveAll());
         Modules.Add(new AutoMaterialize());
         Modules.Add(new MoveGearsNotInSet());
