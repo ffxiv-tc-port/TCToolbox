@@ -214,7 +214,8 @@ public sealed class CustomDeliveriesOverview : TcModule
         if (!windowOpen) return;
 
         ImGui.SetNextWindowSize(new Vector2(560, 380), ImGuiCond.FirstUseEver);
-        if (ImGui.Begin("老主顧交易總覽###TCToolboxCustomDeliveries", ref windowOpen))
+        // 標題引用 DisplayName；### 之後的 ID 保持原字面值，視窗位置／大小的存檔才不會被重置。
+        if (ImGui.Begin($"{DisplayName}###TCToolboxCustomDeliveries", ref windowOpen))
             DrawContent();
         ImGui.End();
     }

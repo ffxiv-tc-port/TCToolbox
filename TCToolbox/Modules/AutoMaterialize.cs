@@ -119,7 +119,7 @@ public sealed unsafe class AutoMaterialize : TcModule
             ImGui.SetWindowPos(new Vector2(addon->GetX() + 6, addon->GetY() - ImGui.GetWindowSize().Y - 4));
 
             ImGui.AlignTextToFramePadding();
-            ImGui.TextColored(new Vector4(1f, 0.85f, 0.35f, 1f), "自動精製魔晶石");
+            ImGui.TextColored(new Vector4(1f, 0.85f, 0.35f, 1f), DisplayName);
 
             ImGui.SameLine();
             using (ImRaii.Disabled(queue.IsBusy))

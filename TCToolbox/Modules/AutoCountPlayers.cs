@@ -546,7 +546,8 @@ public sealed class AutoCountPlayers : TcModule
         if (!windowOpen) return;
 
         ImGui.SetNextWindowSize(new Vector2(420, 340), ImGuiCond.FirstUseEver);
-        if (ImGui.Begin($"周邊玩家 ({players.Count})###TCToolboxCountPlayers", ref windowOpen))
+        // 標題引用 DisplayName；### 之後的 ID 保持原字面值，視窗位置／大小的存檔才不會被重置。
+        if (ImGui.Begin($"{DisplayName} ({players.Count})###TCToolboxCountPlayers", ref windowOpen))
         {
             ImGui.SetNextItemWidth(-1f);
             ImGui.InputTextWithHint("##search", "搜尋玩家名稱…", ref search, 64);

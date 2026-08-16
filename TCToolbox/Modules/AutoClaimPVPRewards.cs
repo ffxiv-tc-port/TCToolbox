@@ -250,9 +250,8 @@ public sealed unsafe class AutoClaimPVPRewards : TcModule
             ImGui.SetWindowPos(new Vector2(addon->GetX() + 6, addon->GetY() - ImGui.GetWindowSize().Y - 4));
 
             ImGui.AlignTextToFramePadding();
-            // ⚠️ 這行是浮在報酬視窗上的標題，跟 DisplayName 是兩個各自寫死的字串。
-            //    改顯示名時這裡要一起改，不然使用者在遊戲裡看到的還是舊名字。
-            ImGui.TextColored(new Vector4(1f, 0.85f, 0.35f, 1f), "系列賽獎勵一鍵領取");
+            // 浮在報酬視窗上的標題直接引用 DisplayName，不再各寫一份字面值。
+            ImGui.TextColored(new Vector4(1f, 0.85f, 0.35f, 1f), DisplayName);
 
             var pending = GetPendingCount(addon);
             ImGui.SameLine();
