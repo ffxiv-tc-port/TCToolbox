@@ -70,6 +70,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoRefreshPartyFinder());
         Modules.Add(new PFPageSizeCustomize());
         Modules.Add(new FateTracker());
+        Modules.Add(new FateLevelSync());
 
         // ③ 部隊 · 生活
         Modules.Add(new AutoFCWSDeliver());
