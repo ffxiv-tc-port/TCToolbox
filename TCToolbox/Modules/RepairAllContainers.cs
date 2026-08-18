@@ -170,15 +170,14 @@ public sealed unsafe class RepairAllContainers : TcModule
 
         // 裝備中的裝備。
         queue.Enqueue("修理裝備中的裝備", () => RunStep(isEquipped: true, category: 0));
-        queue.EnqueueWait("等待修理完成", NotBusyRepairing, 20_000);
+        EnqueueGap();
 
         // 下拉選單裡的其餘容器（類別值 0..5）。
         for (var category = 0; category < RepairCategoryCount; category++)
         {
             var captured = category;
-            queue.EnqueueDelay(Math.Max(0, Config.StepIntervalMs), "間隔");
             queue.Enqueue($"修理容器 {captured + 1}/{RepairCategoryCount}", () => RunStep(isEquipped: false, category: captured));
-            queue.EnqueueWait("等待修理完成", NotBusyRepairing, 20_000);
+            EnqueueGap();
         }
 
         queue.Enqueue("完成", () =>
@@ -191,9 +190,20 @@ public sealed unsafe class RepairAllContainers : TcModule
     }
 
     /// <summary>
-    /// 暗物質自行修理會把角色設成 <see cref="ConditionFlag.Occupied39"/>（與精製／分解同一格），
-    /// 所以每一步之間都等它退掉再送下一次；修理工修理不會設這格，這個等待會立刻通過。
+    /// 兩次修理要求之間的間隔：<b>先等固定時間，再等角色不忙</b>。
     /// </summary>
+    /// <remarks>
+    /// 🔴 順序不能反。暗物質自行修理會把角色設成 <see cref="ConditionFlag.Occupied39"/>
+    /// （與精製／分解同一格），但那一格<b>不是在送出的那一幀就立起來的</b>——
+    /// 送出後馬上檢查會看到「不忙」而直接通過，等於這道等待完全沒作用。
+    /// 先過一段固定延遲再檢查，才擋得到。修理工修理不會設這一格，兩道都會很快通過。
+    /// </remarks>
+    private void EnqueueGap()
+    {
+        queue.EnqueueDelay(Math.Max(0, Config.StepIntervalMs), "間隔");
+        queue.EnqueueWait("等待修理完成", NotBusyRepairing, 20_000);
+    }
+
     private static bool NotBusyRepairing() => !Svc.Condition[ConditionFlag.Occupied39];
 
     /// <summary>
@@ -214,6 +224,9 @@ public sealed unsafe class RepairAllContainers : TcModule
             Svc.Chat.PrintError("[TC Toolbox] 戰鬥中無法修理，已停止。");
             return null;
         }
+
+        // 上一次自行修理還在跑就等它，不要疊著送（回 false＝下一 tick 重試，不是失敗）。
+        if (Svc.Condition[ConditionFlag.Occupied39]) return false;
 
         var agent = AgentRepair.Instance();
         if (agent == null)
