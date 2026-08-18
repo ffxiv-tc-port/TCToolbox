@@ -37,6 +37,7 @@ public sealed unsafe class AutoGysahlGreens : TcModule
             itemName = row.Value.Name.ExtractText();
 
         Svc.Framework.Update += OnUpdate;
+        Svc.Log.Information($"[AutoGysahlGreens] 模組啟用：門檻 {Config.ThresholdMinutes} 分鐘");
     }
 
     protected override void OnDisable()
@@ -49,7 +50,8 @@ public sealed unsafe class AutoGysahlGreens : TcModule
         if (!Throttle.Pass("AutoGysahlGreens-Poll", 2_000)) return;
 
         if (Svc.Objects.LocalPlayer == null) return;
-        if (Svc.Condition[ConditionFlag.InCombat] ||
+
+        var blocked = Svc.Condition[ConditionFlag.InCombat] ||
             Svc.Condition[ConditionFlag.Mounted] ||
             Svc.Condition[ConditionFlag.Casting] ||
             Svc.Condition[ConditionFlag.BetweenAreas] ||
@@ -57,9 +59,20 @@ public sealed unsafe class AutoGysahlGreens : TcModule
             Svc.Condition[ConditionFlag.BoundByDuty] ||
             Svc.Condition[ConditionFlag.OccupiedInQuestEvent] ||
             Svc.Condition[ConditionFlag.OccupiedInCutSceneEvent] ||
-            Svc.Condition[ConditionFlag.WatchingCutscene]) return;
+            Svc.Condition[ConditionFlag.WatchingCutscene];
 
         var uiState = UIState.Instance();
+
+        // 診斷（Information 級，使用者 LogLevel 2 收得到）：TimeLeft 是這條鏈唯一的原生讀值，
+        // 讀到 0 或垃圾值都會走靜默返回 —— 週期性印出來，「沒效果」時 log 才有東西可查。
+        // 實機回報「沒效果」（2026-08-18）就是因為整條鏈沒有任何可見輸出，無從分辨死在哪段。
+        if (Throttle.Pass("AutoGysahlGreens-Diag", 120_000))
+        {
+            var tl = uiState != null ? $"{uiState->Buddy.CompanionInfo.TimeLeft:F1}s" : "uiState=null";
+            Svc.Log.Information($"[AutoGysahlGreens] 狀態：TimeLeft={tl} 門檻={Config.ThresholdMinutes * 60}s 條件擋下={blocked}");
+        }
+
+        if (blocked) return;
         if (uiState == null) return;
 
         var timeLeft = uiState->Buddy.CompanionInfo.TimeLeft;
@@ -78,8 +91,15 @@ public sealed unsafe class AutoGysahlGreens : TcModule
         // 使用嘗試本身另設節流，避免使用失敗時每 2 秒重複嘗試造成刷屏
         if (!Throttle.Pass("AutoGysahlGreens-Use", 10_000)) return;
 
-        if (ActionManager.Instance()->UseAction(ActionType.Item, GysahlGreensItemId, extraParam: 65535) && Config.NotifyOnFeed)
-            Svc.Chat.Print($"[TC Toolbox] 陸行鳥剩餘時間不足，已自動餵食{itemName}。");
+        if (ActionManager.Instance()->UseAction(ActionType.Item, GysahlGreensItemId, extraParam: 65535))
+        {
+            if (Config.NotifyOnFeed)
+                Svc.Chat.Print($"[TC Toolbox] 陸行鳥剩餘時間不足，已自動餵食{itemName}。");
+        }
+        else
+        {
+            Svc.Log.Information($"[AutoGysahlGreens] UseAction 回傳 false：遊戲拒絕使用道具（剩餘 {timeLeft:F0} 秒）。");
+        }
     }
 
     public override void DrawConfig()
