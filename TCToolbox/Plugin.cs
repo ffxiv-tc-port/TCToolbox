@@ -54,7 +54,10 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new HuijiWikiContextMenu());
         Modules.Add(new GlamourSetRetrieve());
         Modules.Add(new GlamourDuplicateCleanup());
+        Modules.Add(new GlamourStoreDuplicateGuard());
         Modules.Add(new GlamourArmoireCleanup());
+        Modules.Add(new TradeAllCollectables());
+        Modules.Add(new SaddlebagEntrustDuplicates());
 
         // ② 戰鬥 · 小隊
         Modules.Add(new OptimizedEnemyList());
@@ -67,6 +70,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new OptimizedDutyFinderSetting());
         Modules.Add(new WeeklyBingoClickToOpen());
         Modules.Add(new AutoRefreshPartyFinder());
+        Modules.Add(new AutoJoinPartyFinder());
         Modules.Add(new PFPageSizeCustomize());
         Modules.Add(new FateTracker());
 
