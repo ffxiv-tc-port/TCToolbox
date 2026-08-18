@@ -55,6 +55,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new GlamourSetRetrieve());
         Modules.Add(new GlamourDuplicateCleanup());
         Modules.Add(new GlamourArmoireCleanup());
+        Modules.Add(new TradeAllCollectables());
 
         // ② 戰鬥 · 小隊
         Modules.Add(new OptimizedEnemyList());
