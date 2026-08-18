@@ -94,6 +94,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new ClickToMove());
         Modules.Add(new FlagCommands());
         Modules.Add(new AchievementProgressTracker());
+        Modules.Add(new ChatCoordsOpenMap());
 
         foreach (var module in Modules)
         {
