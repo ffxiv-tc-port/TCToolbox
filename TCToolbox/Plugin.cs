@@ -63,6 +63,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoRefocus());
         Modules.Add(new MarkerInPartyList());
         Modules.Add(new AutoPlayerCommend());
+        Modules.Add(new DutyAnnounce());
         Modules.Add(new AutoClaimPVPRewards());
         Modules.Add(new OptimizedDutyFinderSetting());
         Modules.Add(new WeeklyBingoClickToOpen());
