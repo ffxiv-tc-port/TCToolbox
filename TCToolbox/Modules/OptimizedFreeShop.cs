@@ -154,10 +154,20 @@ public sealed unsafe class OptimizedFreeShop : TcModule
     /// AtkValues 一律走 <see cref="AtkUnitBase.AtkValuesSpan"/>（帶長度），不用裸索引——
     /// 原生陣列沒有邊界檢查，addon 版面一改就會變成任意記憶體讀取。
     /// </summary>
+    /// <remarks>
+    /// 🔴 <b>光是走 <c>AtkValuesSpan</c> 還不夠。</b>它的實作是
+    /// <c>new Span&lt;AtkValue&gt;(AtkValues, AtkValuesCount)</c>，<b>自己不判 <c>AtkValues</c> 欄位</b>，
+    /// 而 <c>Span</c> 的建構子也不驗指標。addon 拆解時 <c>AtkValues</c> 會先被釋放成 null、
+    /// <c>AtkValuesCount</c> 卻可能還留著殘值，這個組合會<b>合法建構出一個長度非零的 Span</b>，
+    /// 連 Span 自己的邊界檢查都會放行，一直到真的索引下去才對位址 0 解參考 ＝
+    /// AccessViolationException（corrupted-state exception，<c>try/catch</c> 攔不到）。
+    /// ⇒ <c>addon == null</c> 與 <c>Length</c> 都擋不住這條，必須自己判 <c>AtkValues</c> 欄位。
+    /// </remarks>
     private static List<JobGroup> ReadGroups(AtkUnitBase* addon)
     {
         var groups = new List<JobGroup>();
         if (addon == null) return groups;
+        if (addon->AtkValues == null) return groups;
 
         var values = addon->AtkValuesSpan;
         if (values.Length <= CountValueIndex) return groups;

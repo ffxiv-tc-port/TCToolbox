@@ -179,13 +179,26 @@ public sealed unsafe class AutoClaimPVPRewards : TcModule
         return manager == null ? 0 : manager->GetInventoryItemCount(TrophyCrystalItemId, false, true, true);
     }
 
-    /// <summary>讀一格 AtkValue 的無號整數；索引超界就回 -1。</summary>
+    /// <summary>讀一格 AtkValue 的無號整數；讀不到（含索引超界）就回 -1。</summary>
+    /// <remarks>
+    /// 🔴 <c>AtkUnitBase.AtkValuesSpan</c> 的實作是
+    /// <c>new Span&lt;AtkValue&gt;(AtkValues, AtkValuesCount)</c>：
+    /// <b>它自己不判 <c>AtkValues</c> 這個欄位</b>，而 <c>Span</c> 的建構子也不驗指標。
+    /// addon 拆解時 <c>AtkValues</c> 會先被釋放成 null、<c>AtkValuesCount</c> 卻可能還留著殘值，
+    /// 這個組合會<b>合法建構出一個長度非零的 Span</b>，連 Span 自己的邊界檢查都會放行，
+    /// 一直到真的索引下去才對位址 0 解參考 ＝ AccessViolationException
+    /// （corrupted-state exception，<c>try/catch</c> 攔不到，整個遊戲行程直接死）。
+    /// ⇒ 只判 <c>addon == null</c> 和 <c>Length</c> 都擋不住這條，必須另外自判 <c>AtkValues</c> 欄位。
+    /// </remarks>
     private static int ReadValue(AtkUnitBase* addon, int index)
     {
         if (addon == null) return -1;
+        if (addon->AtkValues == null) return -1;
 
         var values = addon->AtkValuesSpan;
-        return values.Length <= index ? -1 : (int)values[index].UInt;
+        if (index < 0 || index >= values.Length) return -1;
+
+        return (int)values[index].UInt;
     }
 
     /// <summary>本季還沒領的等級數；讀不到就回 -1。</summary>
@@ -260,9 +273,17 @@ public sealed unsafe class AutoClaimPVPRewards : TcModule
                 // 讀不到就不給按（fail-closed），而且要在 log 裡看得見為什麼。
                 ImGui.TextColored(new Vector4(1f, 0.55f, 0.35f, 1f), "待領取：讀不到");
                 if (Throttle.Pass("AutoClaimPVPRewards-ValueMissing", 60_000))
+                {
+                    // 「AtkValues 是 null」與「長度不夠」是兩種不同的故障，回報時要分得出來：
+                    // 前者是視窗正在拆解／還沒填值（等一下就好），後者才代表 AtkValue 版面改了。
+                    var detail = $"長度 {addon->AtkValuesCount}";
+                    if (addon->AtkValues == null)
+                        detail = "是 null（視窗正在拆解或還沒填值）";
+
                     Svc.Log.Information(
                         $"[AutoClaimPVPRewards] 讀不到 AtkValue[{LevelValueIndex}]／[{ClaimedValueIndex}]" +
-                        $"（AtkValues 長度 {addon->AtkValuesSpan.Length}），已停用開始鈕。");
+                        $"（AtkValues {detail}），已停用開始鈕。");
+                }
             }
             else
             {
