@@ -46,6 +46,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new OpenAllCoffers());
         Modules.Add(new AutoMateriaRetrieveAll());
         Modules.Add(new AutoMaterialize());
+        Modules.Add(new RepairAllContainers());
         Modules.Add(new MoveGearsNotInSet());
         Modules.Add(new OptimizedFreeCompanyChest());
         Modules.Add(new ShopDefaults());
