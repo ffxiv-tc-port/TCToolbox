@@ -201,9 +201,11 @@ public sealed unsafe class AutoMaterialize : TcModule
                 return true;
             }, 20_000);
 
-            // 等精製動作結束（含自動確認對話框）
+            // 等精製動作結束（含自動確認對話框）。
+            // 🔴 必須先延遲再檢查：Occupied39 不是送出那一幀立起來的，
+            // 「送出→立刻 EnqueueWait」會直接通過等於沒等（RepairAllContainers 同型缺陷，a23c7bc 修法）。
+            queue.EnqueueDelay(300, "等精製狀態立起");
             queue.EnqueueWait("等待精製完成", () => !Svc.Condition[ConditionFlag.Occupied39], 20_000);
-            queue.EnqueueDelay(300, "間隔");
             EnqueueNext();
             return true;
         }, 15_000);
