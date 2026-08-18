@@ -289,6 +289,7 @@ public sealed unsafe class SaddlebagEntrustDuplicates : TcModule
             var label = ItemNames.Get(target.BaseItemId, target.HighQuality);
             var quantityBefore = ReadQuantity(manager, target);
 
+            var menuOpened = false;
             queue.Enqueue($"開啟「{label}」的右鍵選單", () =>
             {
                 var agent = AgentInventoryContext.Instance();
@@ -304,6 +305,7 @@ public sealed unsafe class SaddlebagEntrustDuplicates : TcModule
                 }
 
                 agent->OpenForItemSlot(target.Container, target.Slot, 0, inventoryAddonId);
+                menuOpened = true;
                 return true;
             }, 5_000);
 
@@ -312,6 +314,27 @@ public sealed unsafe class SaddlebagEntrustDuplicates : TcModule
 
             queue.Enqueue($"點選「放入陸行鳥鞍囊」（{label}）", () =>
             {
+                // 🔴 上一步沒真的把選單開起來就絕對不能往下點：agent 的 EventParams 與 addon id
+                //    都可能是「上一次選單」的殘留，照著殘留去點等於對不知道是什麼的選單發序號。
+                if (!menuOpened)
+                {
+                    lastFireAccepted = false;
+                    return true;
+                }
+
+                // 🔴 開選單到現在隔了一整段延遲，那一格可能已經不是原來那件道具
+                //    （伺服器同步、使用者自己動了背包）。對不上就整件放棄，不冒險送出。
+                var liveManager = InventoryManager.Instance();
+                if (liveManager == null || ReadQuantity(liveManager, target) < 0)
+                {
+                    Svc.Log.Information(
+                        $"[{InternalName}] {target.Container}#{target.Slot} 已經不是「{label}」，跳過這一格。");
+                    rejected.Add(target);
+                    lastFireAccepted = false;
+                    CloseContextMenu();
+                    return true;
+                }
+
                 var agent = AgentInventoryContext.Instance();
                 lastFireAccepted = agent != null &&
                                    TryFireContextMenuEntry(agent, AddonRowDepositToSaddlebag, label);
