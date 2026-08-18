@@ -76,6 +76,9 @@ public sealed class Configuration : IPluginConfiguration
     public AchievementProgressTrackerConfig AchievementTracker { get; set; } = new();
     public ChatCoordsOpenMapConfig ChatCoordsOpenMap { get; set; } = new();
     public FateLevelSyncConfig FateLevelSync { get; set; } = new();
+    public LoginCommandsConfig LoginCommands { get; set; } = new();
+    public DutyAnnounceConfig DutyAnnounce { get; set; } = new();
+    public LetterCollectAllConfig LetterCollectAll { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
 }
@@ -819,8 +822,22 @@ public sealed class AutoPlayerCommendConfig
 
 public sealed class AutoConstantlyClickConfig
 {
-    /// <summary>按住期間的重複觸發間隔（毫秒）。</summary>
+    /// <summary>按住期間的重複觸發間隔（毫秒）。鍵盤／滑鼠與手把共用。</summary>
     public int RepeatIntervalMs = 200;
+
+    /// <summary>
+    /// 手把的十字熱鍵也套用連發。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 預設 <c>false</c>＝<b>與這個選項加入之前的行為完全一樣</b>。
+    /// 舊設定檔沒有這個鍵，反序列化不會覆寫欄位初始值，所以升級上來的人不會突然多出一種行為。
+    /// <para>
+    /// 📌 範圍只含十字熱鍵的動作格（<c>HOT_PAD_LL</c>–<c>HOT_PAD_RD_R</c>，194–218）。
+    /// L2／R2 扳機（191／192）與切換組（193）刻意排除：那三個連發會讓十字熱鍵
+    /// 在按住期間不停開關或跳組。
+    /// </para>
+    /// </remarks>
+    public bool IncludeGamepadHotbar;
 }
 
 public sealed class AutoAntiAfkConfig
@@ -954,4 +971,112 @@ public sealed class AutoGardensWorkConfig
 
     /// <summary>施肥用肥料 ItemId（預設 7767 魚粉）。</summary>
     public uint FertilizerItemId = 7767;
+}
+
+/// <summary>信箱一鍵收取。</summary>
+/// <remarks>
+/// 📌 這裡沒有「啟用」欄位是刻意的：模組本身預設就是關的，而且開著也要按按鈕才會動
+/// （<see cref="TCToolbox.Core.TcModule.IsManualTrigger"/>），不需要第二段開關。
+/// </remarks>
+public sealed class LetterCollectAllConfig
+{
+    /// <summary>
+    /// 每一步之間的最短間隔（毫秒）。
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ 每一步都是真的送到伺服器的操作。預設 500ms 是保守值：慢得看得出來，
+    /// 但也因此使用者來得及按「停止」。
+    /// </remarks>
+    public int StepIntervalMs = 500;
+
+    /// <summary>
+    /// 自動按掉收取途中出現的確認框。
+    /// </summary>
+    /// <remarks>
+    /// 📌 預設開啟，但作用範圍被壓到很窄：<b>只在本模組的佇列正在跑，而且信箱與信件視窗都開著時</b>
+    /// 才會按。也就是說時間窗只有使用者自己按下按鈕之後的那幾秒。
+    /// <para>
+    /// ⚠️ 關掉的話，真的跳出確認框時那一輪會停在原地直到逾時。
+    /// 無論按不按，確認框的文字一律寫進記錄——台服到底會不會跳、跳哪一句，離線查不出來。
+    /// </para>
+    /// </remarks>
+    public bool AutoConfirm = true;
+
+    /// <summary>結束時在聊天欄報告結果（記錄一律會寫，不受這格影響）。</summary>
+    public bool NotifyOnFinish = true;
+}
+
+/// <summary>副本開始／結束播報。</summary>
+public sealed class DutyAnnounceConfig
+{
+    /// <summary>副本開始時送出的訊息（空字串＝不送）。</summary>
+    /// <remarks>📌 預設空字串：這個模組唯一的行為就是送使用者寫的字，沒寫就什麼都不該送。</remarks>
+    public string StartMessage = string.Empty;
+
+    /// <summary>
+    /// 開始訊息要送到的頻道（<c>TextCommand</c> 表的列號）。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 預設是<b>默語</b>（116）而不是上游的小隊頻道：預設值送出的東西必須是
+    /// 「就算設錯也不會打擾任何人」的。要送給隊友的人自己改一格就好，
+    /// 反方向（預設就往公開頻道送）出錯的代價是每一場副本對整隊洗一次版。
+    /// </remarks>
+    public uint StartChannelRow = TCToolbox.Core.TextCommands.ChatChannelRows.Echo;
+
+    /// <summary>副本通關時送出的訊息（空字串＝不送）。</summary>
+    public string EndMessage = string.Empty;
+
+    /// <summary>結束訊息要送到的頻道（<c>TextCommand</c> 表的列號）。預設默語，理由同上。</summary>
+    public uint EndChannelRow = TCToolbox.Core.TextCommands.ChatChannelRows.Echo;
+
+    /// <summary>
+    /// 事件觸發之後先等這麼久（毫秒）才送出。
+    /// </summary>
+    /// <remarks>
+    /// 📌 預設 1000ms：通關那一瞬間畫面還在演出、系統訊息也正在刷，太早送出容易被淹掉。
+    /// ⚠️ 等待期間離開副本區域的話這次播報會被取消——否則那句話會送到副本外面去。
+    /// </remarks>
+    public int DelayMs = 1_000;
+}
+
+/// <summary>登入後執行自訂指令。</summary>
+public sealed class LoginCommandsConfig
+{
+    /// <summary>
+    /// 要執行的指令，一行一條。
+    /// </summary>
+    /// <remarks>
+    /// 📌 預設空字串＝<b>開了模組也什麼都不會做</b>。這是刻意的：這個模組唯一的行為就是
+    /// 執行使用者寫的東西，沒寫就沒有預設動作可言，任何「範例指令」放進預設值都會變成
+    /// 一條真的被送出去的指令。
+    /// </remarks>
+    public string Commands = string.Empty;
+
+    /// <summary>
+    /// 角色資料就緒之後再等這麼久（毫秒）才跑第一條。
+    /// </summary>
+    /// <remarks>
+    /// 📌 預設 5000ms。太短的話很多外掛的指令還沒註冊，送出去只會得到「查無此指令」，
+    /// 而那個失敗<b>不會重試</b>——寧可慢，不要靜默漏跑。
+    /// </remarks>
+    public int InitialDelayMs = 5_000;
+
+    /// <summary>每條指令之間的間隔（毫秒）。</summary>
+    public int IntervalMs = 1_000;
+
+    /// <summary>
+    /// AutoRetainer 正在作業時整輪略過。
+    /// </summary>
+    /// <remarks>
+    /// 📌 預設開啟：AutoRetainer 的多角色模式自己會反覆登入登出，那種登入不是「使用者要開始玩了」，
+    /// 此時插一輪指令進去多半只會打斷它。AutoRetainer 沒安裝時這格沒有作用。
+    /// </remarks>
+    public bool SkipWhenAutoRetainerBusy = true;
+
+    /// <summary>執行時在聊天欄顯示一行（記錄一律會寫，不受這格影響）。</summary>
+    /// <remarks>
+    /// 📌 預設 <c>true</c>：登入之後突然有一串指令自己跑起來，這一行是使用者唯一看得到的
+    /// 「這是我自己設定的」證據。
+    /// </remarks>
+    public bool NotifyInChat = true;
 }

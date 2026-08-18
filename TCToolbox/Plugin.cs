@@ -44,6 +44,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoMerge());
         Modules.Add(new CurrencyCapAlert());
         Modules.Add(new OpenAllCoffers());
+        Modules.Add(new LetterCollectAll());
         Modules.Add(new AutoMateriaRetrieveAll());
         Modules.Add(new AutoMaterialize());
         Modules.Add(new RepairAllContainers());
@@ -67,6 +68,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoRefocus());
         Modules.Add(new MarkerInPartyList());
         Modules.Add(new AutoPlayerCommend());
+        Modules.Add(new DutyAnnounce());
         Modules.Add(new AutoClaimPVPRewards());
         Modules.Add(new OptimizedDutyFinderSetting());
         Modules.Add(new WeeklyBingoClickToOpen());
@@ -100,6 +102,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new FlagCommands());
         Modules.Add(new AchievementProgressTracker());
         Modules.Add(new ChatCoordsOpenMap());
+        Modules.Add(new LoginCommands());
 
         foreach (var module in Modules)
         {
