@@ -337,11 +337,22 @@ public sealed unsafe class AutoGardensWork : TcModule
                 return null;
             }
 
-            AgentInventoryContext.Instance()->OpenForItemSlot(
+            // AgentModule.Instance() 走 UIModule，UI 尚未建立時回 null（CS 手寫實作）；
+            // AgentInventoryContext.Instance() 與 GetAgentByInternalId 也都可能回 null。
+            // 任何一個取不到就回 false ＝ 下個 tick 重試（真的取不到就由這一步的 8 秒逾時收），
+            // 不 return null——那會中止整條批次佇列。
+            var agentModule = AgentModule.Instance();
+            if (agentModule == null) return false;
+
+            var inventoryAgent = agentModule->GetAgentByInternalId(AgentId.Inventory);
+            var inventoryContext = AgentInventoryContext.Instance();
+            if (inventoryAgent == null || inventoryContext == null) return false;
+
+            inventoryContext->OpenForItemSlot(
                 fertilizer->Container,
                 fertilizer->Slot,
                 0,
-                AgentModule.Instance()->GetAgentByInternalId(AgentId.Inventory)->AddonId);
+                inventoryAgent->AddonId);
             return true;
         }, 8_000);
 

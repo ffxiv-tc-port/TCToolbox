@@ -57,7 +57,12 @@ public static unsafe class UiHelper
     /// <summary>對 Agent 發送事件（等同 OmenTools 的 AgentId.SendEvent）。</summary>
     public static void SendAgentEvent(AgentId agentId, ulong eventKind, params object[] values)
     {
-        var agent = AgentModule.Instance()->GetAgentByInternalId(agentId);
+        // AgentModule.Instance() 走 UIModule，UI 尚未建立時回 null（CS 手寫實作）。
+        // 取不到就不送事件——與下面 agent == null 完全相同的失敗形式。
+        var agentModule = AgentModule.Instance();
+        if (agentModule == null) return;
+
+        var agent = agentModule->GetAgentByInternalId(agentId);
         if (agent == null) return;
 
         var atkValues = stackalloc AtkValue[Math.Max(1, values.Length)];
