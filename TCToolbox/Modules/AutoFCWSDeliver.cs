@@ -252,6 +252,15 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
     {
         var result = new List<DeliverItem>();
 
+        // 🔴 光是判 addon 與長度還不夠。AtkValuesSpan 的實作是
+        // new Span<AtkValue>(AtkValues, AtkValuesCount)，它自己不判 AtkValues 這個欄位，
+        // 而 Span 的建構子也不驗指標。addon 拆解時 AtkValues 會先被釋放成 null、
+        // AtkValuesCount 卻可能還留著殘值，這個組合會合法建構出一個長度非零的 Span，
+        // 連 Span 自己的邊界檢查都會放行，一直到真的索引下去才對位址 0 解參考 ＝
+        // AccessViolationException（corrupted-state exception，try/catch 攔不到）。
+        // ⇒ 必須另外自判 AtkValues 欄位；讀不到就回空清單（與下面既有的長度不足同一條路）。
+        if (addon == null || addon->AtkValues == null) return result;
+
         var agent = AgentCompanyCraftMaterial.Instance();
         if (agent == null) return result;
 
@@ -263,18 +272,20 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
         }
 
         if (supplyCount == 0) return result;
-        if (addon->AtkValuesCount <= 132 + supplyCount) return result;
+
+        var values = addon->AtkValuesSpan;
+        if (values.Length <= 132 + supplyCount) return result;
 
         for (var i = 0; i < supplyCount; i++)
         {
-            var itemId = addon->AtkValues[12 + i].UInt;
+            var itemId = values[12 + i].UInt;
             if (itemId == 0) continue; // 此欄無道具
 
-            var completed = addon->AtkValues[132 + i].UInt;
+            var completed = values[132 + i].UInt;
             if (completed == 1) continue; // 已交滿
 
-            var required = addon->AtkValues[60 + i].UInt;
-            var owned = addon->AtkValues[72 + i].UInt;
+            var required = values[60 + i].UInt;
+            var owned = values[72 + i].UInt;
             if (owned < required) continue; // 持有數不足
 
             result.Add(new DeliverItem((uint)i, itemId, required));

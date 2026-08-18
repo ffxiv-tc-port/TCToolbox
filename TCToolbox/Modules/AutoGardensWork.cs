@@ -363,10 +363,30 @@ public sealed unsafe class AutoGardensWork : TcModule
             var context = UiHelper.GetAddon("ContextMenu");
             if (!UiHelper.IsReady(context)) return false;
 
-            var entryCount = (int)context->AtkValues[0].UInt;
+            // ContextMenu 版面：[0]＝項目筆數、[7+i]＝第 i 筆的文字。
+            const int firstEntryIndex = 7;
+
+            // 🔴 AtkValuesSpan 的實作是 new Span<AtkValue>(AtkValues, AtkValuesCount)：
+            // 它自己不判 AtkValues 這個欄位，而 Span 的建構子也不驗指標。addon 拆解時
+            // AtkValues 會先被釋放成 null、AtkValuesCount 卻可能還留著殘值，這個組合會
+            // 合法建構出一個長度非零的 Span，連 Span 自己的邊界檢查都會放行，一直到真的
+            // 索引下去才對位址 0 解參考 ＝ AccessViolationException（corrupted-state
+            // exception，try/catch 攔不到，整個遊戲行程直接死）。
+            // ⇒ IsReady() 與 Length 都擋不住這條，必須另外自判 AtkValues 欄位。
+            // 取不到就回 false ＝ 下個 tick 重試，真的一直取不到由這一步的 8 秒逾時收。
+            if (context->AtkValues == null) return false;
+
+            var values = context->AtkValuesSpan;
+            if (values.Length < firstEntryIndex) return false;
+
+            var entryCount = (int)values[0].UInt;
+            // 聲稱的筆數放不進實際陣列＝殘值或正在拆解（用減法寫，避免 firstEntryIndex + entryCount 溢位）。
+            // entryCount 為 0 時照舊往下走，讓「沒有施肥選項」那條路徑跳過此格。
+            if (entryCount < 0 || values.Length - firstEntryIndex < entryCount) return false;
+
             for (var i = 0; i < entryCount; i++)
             {
-                var value = context->AtkValues[7 + i];
+                var value = values[firstEntryIndex + i];
                 if (value.Type is not (ValueType.String or ValueType.ManagedString) || value.String.Value == null)
                     continue;
 

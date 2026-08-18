@@ -1229,17 +1229,29 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         {
             // 優先送到目前顯示的那一頁（AtkValues[1]!=0＝水晶頁，不接受一般道具）
             var chest = UiHelper.GetAddon("FreeCompanyChest");
-            if (chest != null && chest->AtkValuesCount > 2)
-            {
-                if (chest->AtkValues[1].UInt != 0)
-                {
-                    reason = "部隊置物櫃目前在水晶頁，請切到道具頁再轉移。";
-                    return false;
-                }
 
-                var pageIndex = (int)chest->AtkValues[2].UInt;
-                if (pageIndex >= 0 && pageIndex < FreeCompanyPages.Length)
-                    candidates.Add(FreeCompanyPages[pageIndex]);
+            // 🔴 光是判 chest 與長度還不夠。AtkValuesSpan 的實作是
+            // new Span<AtkValue>(AtkValues, AtkValuesCount)，它自己不判 AtkValues 這個欄位，
+            // 而 Span 的建構子也不驗指標。addon 拆解時 AtkValues 會先被釋放成 null、
+            // AtkValuesCount 卻可能還留著殘值，這個組合會合法建構出一個長度非零的 Span，
+            // 連 Span 自己的邊界檢查都會放行，一直到真的索引下去才對位址 0 解參考 ＝
+            // AccessViolationException（corrupted-state exception，try/catch 攔不到）。
+            // ⇒ 讀不到就跳過「優先目前分頁」這段，照下面的迴圈把所有分頁都列為候選。
+            if (chest != null && chest->AtkValues != null)
+            {
+                var values = chest->AtkValuesSpan;
+                if (values.Length > 2)
+                {
+                    if (values[1].UInt != 0)
+                    {
+                        reason = "部隊置物櫃目前在水晶頁，請切到道具頁再轉移。";
+                        return false;
+                    }
+
+                    var pageIndex = (int)values[2].UInt;
+                    if (pageIndex >= 0 && pageIndex < FreeCompanyPages.Length)
+                        candidates.Add(FreeCompanyPages[pageIndex]);
+                }
             }
 
             foreach (var page in FreeCompanyPages)

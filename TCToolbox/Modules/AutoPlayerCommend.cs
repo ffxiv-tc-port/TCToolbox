@@ -345,16 +345,27 @@ public sealed unsafe class AutoPlayerCommend : TcModule
         out int index)
     {
         index = -1;
-        if (voteMvp->AtkValuesCount < 24) return false;
 
-        var count = (int)voteMvp->AtkValues[1].UInt;
+        // 🔴 光是判 voteMvp 與長度還不夠。AtkValuesSpan 的實作是
+        // new Span<AtkValue>(AtkValues, AtkValuesCount)，它自己不判 AtkValues 這個欄位，
+        // 而 Span 的建構子也不驗指標。addon 拆解時 AtkValues 會先被釋放成 null、
+        // AtkValuesCount 卻可能還留著殘值，這個組合會合法建構出一個長度非零的 Span，
+        // 連 Span 自己的邊界檢查都會放行，一直到真的索引下去才對位址 0 解參考 ＝
+        // AccessViolationException（corrupted-state exception，try/catch 攔不到）。
+        // ⇒ 讀不到就回 false ＝ 這名候選人跳過，由呼叫端試下一位。
+        if (voteMvp == null || voteMvp->AtkValues == null) return false;
+
+        var values = voteMvp->AtkValuesSpan;
+        if (values.Length < 24) return false;
+
+        var count = (int)values[1].UInt;
         if (count is <= 0 or > 7) return false;
 
         for (var i = 0; i < count; i++)
         {
-            if (voteMvp->AtkValues[16 + i].UInt != 1) continue;
+            if (values[16 + i].UInt != 1) continue;
 
-            var nameValue = voteMvp->AtkValues[9 + i];
+            var nameValue = values[9 + i];
             if (nameValue.Type != FFXIVClientStructs.FFXIV.Component.GUI.ValueType.String ||
                 nameValue.String.Value == null) continue;
 
@@ -362,7 +373,7 @@ public sealed unsafe class AutoPlayerCommend : TcModule
                                .ReadSeStringNullTerminated((nint)nameValue.String.Value).TextValue;
             if (!string.Equals(name, playerName, StringComparison.Ordinal)) continue;
 
-            var iconId = voteMvp->AtkValues[2 + i].UInt;
+            var iconId = values[2 + i].UInt;
             if (iconId < 62100) continue;
             if (iconId - 62100 != classJobId) continue;
 
