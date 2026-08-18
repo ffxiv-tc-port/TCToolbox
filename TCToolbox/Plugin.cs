@@ -54,6 +54,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new HuijiWikiContextMenu());
         Modules.Add(new GlamourSetRetrieve());
         Modules.Add(new GlamourDuplicateCleanup());
+        Modules.Add(new GlamourStoreDuplicateGuard());
         Modules.Add(new GlamourArmoireCleanup());
         Modules.Add(new TradeAllCollectables());
         Modules.Add(new SaddlebagEntrustDuplicates());
