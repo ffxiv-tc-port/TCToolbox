@@ -72,6 +72,10 @@ public sealed class Configuration : IPluginConfiguration
     public SaddlebagEntrustDuplicatesConfig SaddlebagEntrust { get; set; } = new();
     public GlamourStoreDuplicateGuardConfig GlamourStoreGuard { get; set; } = new();
     public AutoJoinPartyFinderConfig AutoJoinPartyFinder { get; set; } = new();
+    public RepairAllContainersConfig RepairAll { get; set; } = new();
+    public AchievementProgressTrackerConfig AchievementTracker { get; set; } = new();
+    public ChatCoordsOpenMapConfig ChatCoordsOpenMap { get; set; } = new();
+    public FateLevelSyncConfig FateLevelSync { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
 }
@@ -218,6 +222,123 @@ public sealed class ARSwitcherConfig
     /// 預設關閉時點擊只會開啟 TC Toolbox 設定視窗，切換一律走指令。
     /// </remarks>
     public bool SwitchOnDtrClick;
+}
+
+/// <summary>一鍵全修（跨容器）。</summary>
+public sealed class RepairAllContainersConfig
+{
+    /// <summary>
+    /// 每個容器之間的最短間隔（毫秒）。
+    /// </summary>
+    /// <remarks>
+    /// 📌 預設 400ms。每一步都是真的送到伺服器的修理要求（遊戲自己是一次一個容器），
+    /// 一口氣連送七次既沒有好處，也讓人來不及按停止。
+    /// </remarks>
+    public int StepIntervalMs = 400;
+
+    /// <summary>
+    /// 使用暗物質自行修理時也接手。
+    /// </summary>
+    /// <remarks>
+    /// 📌 預設 <c>true</c>：呼叫的是遊戲自己在「全部修理」按鈕背後跑的同一支函式，
+    /// 自行修理與修理工只差在 <c>isNpc</c> 這個旗標，行為上沒有額外風險。
+    /// 每一次自行修理都會佔用角色（<c>Occupied39</c>），流程會等上一次結束才送下一次。
+    /// </remarks>
+    public bool IncludeSelfRepair = true;
+
+    /// <summary>結束時在聊天視窗回報（記錄一律會寫，不受這格影響）。</summary>
+    public bool AnnounceInChat = true;
+}
+
+/// <summary>成就進度追蹤：單筆追蹤項。</summary>
+public sealed class TrackedAchievementEntry
+{
+    /// <summary>成就編號（Lumina <c>Achievement</c> 表的列號）。</summary>
+    public uint Id { get; set; }
+
+    /// <summary>上次查回來的目前進度。</summary>
+    public uint Current { get; set; }
+
+    /// <summary>上次查回來的目標值。</summary>
+    public uint Max { get; set; }
+
+    /// <summary>
+    /// 上次成功查詢的 UTC 時間（<c>DateTime.Ticks</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <c>0</c>＝<b>從來沒有查過</b>，UI 必須據此畫成灰色的 <c>?</c>。
+    /// 沒有這個欄位的話，「還沒查」與「查過而進度真的是 0」在畫面上長得一模一樣。
+    /// </remarks>
+    public long UpdatedAtUtcTicks { get; set; }
+}
+
+/// <summary>成就進度追蹤。</summary>
+public sealed class AchievementProgressTrackerConfig
+{
+    /// <summary>追蹤清單。</summary>
+    public List<TrackedAchievementEntry> Tracked { get; set; } = [];
+
+    /// <summary>「全部重新整理」時略過已達成的項目。</summary>
+    public bool SkipCompletedOnRefresh { get; set; } = true;
+
+    /// <summary>
+    /// 每筆查詢之間的最短間隔（毫秒）。
+    /// </summary>
+    /// <remarks>
+    /// 📌 預設 1000ms。伺服器對成就進度查詢的速率限制<b>未知</b>，
+    /// 而遊戲本身只有一組進度欄位（一次只能有一筆在途），所以間隔留得保守。
+    /// </remarks>
+    public int RequestIntervalMs { get; set; } = 1000;
+
+    /// <summary>等待伺服器回應的逾時（毫秒）。逾時只是放棄這一筆，不會改動已記錄的進度。</summary>
+    public int ResponseTimeoutMs { get; set; } = 8000;
+}
+
+/// <summary>聊天座標自動開地圖。</summary>
+public sealed class ChatCoordsOpenMapConfig
+{
+    /// <summary>
+    /// 不處理的頻道（<see cref="Dalamud.Game.Text.XivChatType"/> 的數值）。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 刻意存<b>黑名單</b>而不是白名單：空集合＝全部頻道都處理，
+    /// 所以之後在模組裡多列一個頻道時，既有使用者會自動吃到它。
+    /// 反過來存白名單的話，新頻道對所有既有使用者都是靜默關閉的。
+    /// </remarks>
+    public HashSet<ushort> IgnoredChannels { get; set; } = [];
+
+    /// <summary>同一個座標在幾秒內不重複開啟。</summary>
+    public int DedupeSeconds { get; set; } = 5;
+
+    /// <summary>副本中不自動開地圖。</summary>
+    public bool SkipWhileBoundByDuty { get; set; } = true;
+
+    /// <summary>開啟後在聊天視窗留一行（記錄一律會寫，不受這格影響）。</summary>
+    public bool AnnounceInChat { get; set; }
+}
+
+/// <summary>F.A.T.E. 自動等級同步。</summary>
+public sealed class FateLevelSyncConfig
+{
+    /// <summary>戰鬥中不動作。</summary>
+    /// <remarks>📌 預設 <c>false</c>：F.A.T.E. 本來就是一進去就在打，等到脫離戰鬥往往已經打完了。</remarks>
+    public bool SkipInCombat { get; set; }
+
+    /// <summary>
+    /// 送出「開啟」之後仍未同步時，改用無參數的切換再試一次。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 這件事之所以安全，唯一的理由是<b>送出前剛確認過 <c>SyncedFateId != 目前的 F.A.T.E.</c></b>
+    /// （也就是現在確實是關的），所以切換的方向必然是「開」。
+    /// 拿掉那道確認的話，這個選項就會變成「有機會把已經同步的狀態解除掉」。
+    /// </remarks>
+    public bool RetryWithToggle { get; set; } = true;
+
+    /// <summary>送出指令後等多久再確認結果（毫秒）。</summary>
+    public int VerifyDelayMs { get; set; } = 2500;
+
+    /// <summary>同步成功時在聊天視窗留一行（記錄一律會寫，不受這格影響）。</summary>
+    public bool AnnounceInChat { get; set; } = true;
 }
 
 /// <summary>箱類「全部開啟」。</summary>

@@ -46,6 +46,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new OpenAllCoffers());
         Modules.Add(new AutoMateriaRetrieveAll());
         Modules.Add(new AutoMaterialize());
+        Modules.Add(new RepairAllContainers());
         Modules.Add(new MoveGearsNotInSet());
         Modules.Add(new OptimizedFreeCompanyChest());
         Modules.Add(new ShopDefaults());
@@ -73,6 +74,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoJoinPartyFinder());
         Modules.Add(new PFPageSizeCustomize());
         Modules.Add(new FateTracker());
+        Modules.Add(new FateLevelSync());
 
         // ③ 部隊 · 生活
         Modules.Add(new AutoFCWSDeliver());
@@ -96,6 +98,8 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoCountPlayers());
         Modules.Add(new ClickToMove());
         Modules.Add(new FlagCommands());
+        Modules.Add(new AchievementProgressTracker());
+        Modules.Add(new ChatCoordsOpenMap());
 
         foreach (var module in Modules)
         {
