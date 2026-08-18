@@ -199,6 +199,12 @@ public sealed unsafe class AutoHideBanners : TcModule
 
     private void SetImageDetour(nint addonImage, int bannerId, int iconSubFolder, int soundEffectId)
     {
+        // 🔴 OnDisable() 會把 hook 欄位設回 null，而 detour 可能還在執行中（in-flight 呼叫）。
+        //    `!.` 只是叫編譯器閉嘴，執行期照樣是裸解參考 —— 欄位一為 null 就把
+        //    NullReferenceException 擲回原生呼叫端，而且原始函式完全沒被呼叫。
+        //    快照一次到區域變數，之後只用區域變數，不要對欄位做第二次讀取。
+        var hook = setImageHook;
+
         try
         {
             if (bannerId > 0 && Config.HiddenBanners.Contains((uint)bannerId))
@@ -209,7 +215,14 @@ public sealed unsafe class AutoHideBanners : TcModule
             Svc.Log.Error(ex, $"[{InternalName}] 橫幅過濾判定失敗，本次照常顯示");
         }
 
-        setImageHook!.OriginalDisposeSafe(addonImage, bannerId, iconSubFolder, soundEffectId);
+        if (hook == null)
+        {
+            Svc.Log.Information(
+                $"[{InternalName}] 橫幅 hook 已在呼叫途中被卸載，略過本次原始呼叫。");
+            return;
+        }
+
+        hook.OriginalDisposeSafe(addonImage, bannerId, iconSubFolder, soundEffectId);
     }
 
     public override void DrawConfig()

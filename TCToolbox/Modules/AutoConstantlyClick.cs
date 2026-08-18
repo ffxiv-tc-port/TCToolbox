@@ -78,10 +78,22 @@ public sealed unsafe class AutoConstantlyClick : TcModule
 
     private void CheckHotbarClickedDetour(nint a1, byte a2)
     {
+        // 🔴 OnDisable() 會把 hook 欄位設回 null，而 detour 可能還在執行中（in-flight 呼叫）。
+        //    `!.` 只是叫編譯器閉嘴，執行期照樣是裸解參考 —— 欄位一為 null 就把
+        //    NullReferenceException 擲回原生呼叫端，而且原始函式完全沒被呼叫。
+        //    快照一次到區域變數，之後只用區域變數，不要對欄位做第二次讀取。
+        var hook = checkHotbarClickedHook;
+        if (hook == null)
+        {
+            Svc.Log.Information(
+                $"[{InternalName}] 快捷欄輸入 hook 已在呼叫途中被卸載，略過本次原始呼叫。");
+            return;
+        }
+
         inHotbarInputHandler = true;
         try
         {
-            checkHotbarClickedHook!.OriginalDisposeSafe(a1, a2);
+            hook.OriginalDisposeSafe(a1, a2);
         }
         finally
         {
@@ -91,7 +103,20 @@ public sealed unsafe class AutoConstantlyClick : TcModule
 
     private bool IsInputIdPressedDetour(InputData* data, InputId id)
     {
-        var original = isInputIdPressedHook!.OriginalDisposeSafe(data, id);
+        // 🔴 OnDisable() 會把 hook 欄位設回 null，而 detour 可能還在執行中（in-flight 呼叫）。
+        //    `!.` 只是叫編譯器閉嘴，執行期照樣是裸解參考 —— 欄位一為 null 就把
+        //    NullReferenceException 擲回原生呼叫端，而且原始函式完全沒被呼叫。
+        //    快照一次到區域變數，之後只用區域變數，不要對欄位做第二次讀取。
+        var hook = isInputIdPressedHook;
+        if (hook == null)
+        {
+            // 拿不到原始答案時一律回報「沒按下」—— 這是唯一不會憑空捏造出一次輸入的答案。
+            Svc.Log.Information(
+                $"[{InternalName}] 輸入查詢 hook 已在呼叫途中被卸載，本次回報「未按下」。");
+            return false;
+        }
+
+        var original = hook.OriginalDisposeSafe(data, id);
 
         try
         {

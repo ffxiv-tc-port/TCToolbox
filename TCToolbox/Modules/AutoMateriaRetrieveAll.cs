@@ -165,7 +165,19 @@ public sealed unsafe class AutoMateriaRetrieveAll : TcModule
     private void MaterializeItemDetour(
         EventFramework* framework, EventId eventId, InventoryType container, short slot, int extraParam)
     {
-        materializeItemHook!.OriginalDisposeSafe(framework, eventId, container, slot, extraParam);
+        // 🔴 OnDisable() 會把 hook 欄位設回 null，而 detour 可能還在執行中（in-flight 呼叫）。
+        //    `!.` 只是叫編譯器閉嘴，執行期照樣是裸解參考 —— 欄位一為 null 就把
+        //    NullReferenceException 擲回原生呼叫端，而且原始函式完全沒被呼叫。
+        //    快照一次到區域變數，之後只用區域變數，不要對欄位做第二次讀取。
+        var hook = materializeItemHook;
+        if (hook == null)
+        {
+            Svc.Log.Information(
+                $"[{InternalName}] 取出魔晶石 hook 已在呼叫途中被卸載，略過本次原始呼叫。");
+            return;
+        }
+
+        hook.OriginalDisposeSafe(framework, eventId, container, slot, extraParam);
 
         try
         {
@@ -276,7 +288,9 @@ public sealed unsafe class AutoMateriaRetrieveAll : TcModule
 
         queue.Enqueue("取出下一顆", () =>
         {
-            if (materializeItemHook == null) return null;
+            // 快照一次：下面還要用同一個欄位，分兩次讀會在中間被 OnDisable() 清空。
+            var hook = materializeItemHook;
+            if (hook == null) return null;
 
             // 動作還在進行中就等它結束再送。兩個旗標都擋是因為離線分不出取出走的是哪一個，
             // 兩個一起等的代價只是多等幾個 tick。
@@ -294,7 +308,7 @@ public sealed unsafe class AutoMateriaRetrieveAll : TcModule
             if (framework == null) return null;
 
             // 走 Original：這是我們自己送的，不需要也不應該再經過自己的 detour。
-            materializeItemHook.OriginalDisposeSafe(
+            hook.OriginalDisposeSafe(
                 framework, RetrieveEventId, watchedContainer, watchedSlot, 0);
 
             retrievedCount++;
