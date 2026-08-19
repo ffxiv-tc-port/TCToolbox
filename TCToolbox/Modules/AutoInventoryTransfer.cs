@@ -823,9 +823,8 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         }
 
         var addonId = agent->AgentInterface.GetAddonId();
-        var addon = addonId == 0
-            ? null
-            : AtkStage.Instance()->RaptureAtkUnitManager->GetAddonById((ushort)addonId);
+        // 判空集中在 UiHelper.GetAddonById（AtkStage.Instance() 與 RaptureAtkUnitManager 兩層都可能 null）。
+        var addon = UiHelper.GetAddonById(addonId);
         if (addon == null)
         {
             Svc.Log.Warning($"[{InternalName}] 取不到右鍵選單 addon，「{displayName}」未轉移。");
@@ -1347,7 +1346,8 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
 
         if (addonId == 0) return;
 
-        var addon = AtkStage.Instance()->RaptureAtkUnitManager->GetAddonById((ushort)addonId);
+        // 判空集中在 UiHelper.GetAddonById（AtkStage.Instance() 與 RaptureAtkUnitManager 兩層都可能 null）。
+        var addon = UiHelper.GetAddonById(addonId);
         if (addon == null) return;
 
         owner->Hide();

@@ -480,9 +480,8 @@ public sealed unsafe class SaddlebagEntrustDuplicates : TcModule
         }
 
         var addonId = agent->AgentInterface.GetAddonId();
-        var addon = addonId == 0
-            ? null
-            : AtkStage.Instance()->RaptureAtkUnitManager->GetAddonById((ushort)addonId);
+        // 判空集中在 UiHelper.GetAddonById（AtkStage.Instance() 與 RaptureAtkUnitManager 兩層都可能 null）。
+        var addon = UiHelper.GetAddonById(addonId);
         if (addon == null)
         {
             Svc.Log.Information($"[{InternalName}] 取不到右鍵選單 addon，跳過「{displayName}」。");
@@ -510,7 +509,8 @@ public sealed unsafe class SaddlebagEntrustDuplicates : TcModule
         var addonId = agent->AgentInterface.GetAddonId();
         if (addonId == 0) return;
 
-        var addon = AtkStage.Instance()->RaptureAtkUnitManager->GetAddonById((ushort)addonId);
+        // 判空集中在 UiHelper.GetAddonById（AtkStage.Instance() 與 RaptureAtkUnitManager 兩層都可能 null）。
+        var addon = UiHelper.GetAddonById(addonId);
         if (addon == null) return;
 
         agent->AgentInterface.Hide();

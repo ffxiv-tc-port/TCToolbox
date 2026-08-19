@@ -18,6 +18,30 @@ public static unsafe class UiHelper
 
     public static bool IsAddonReady(string name) => IsReady(GetAddon(name));
 
+    /// <summary>依 addon id 取 addon，取不到（含遊戲尚未就緒）一律回 <c>null</c>。</summary>
+    /// <remarks>
+    /// 🔴 這支存在的理由是 <c>AtkStage.Instance()->RaptureAtkUnitManager->GetAddonById(...)</c>
+    /// 這條兩層裸鏈：<c>AtkStage.Instance()</c> 是 <c>[StaticAddress(..., isPointer: true)]</c>
+    /// ——產生器讀「指標的位址」再解參考一層，遊戲尚未建立單例時回 <c>null</c>（非 isPointer 的那種
+    /// 才保證不回 null，是擲 <c>InvalidOperationException</c>）；<c>RaptureAtkUnitManager</c> 又是
+    /// <c>AtkStage</c> +0x20 的裸欄位，同樣可能是 null。
+    /// 裸解參考 null 原生指標是 AccessViolationException，在 .NET Core 屬 corrupted-state
+    /// exception，<c>try/catch</c> 攔不到 —— 只能事前擋。
+    /// <para>呼叫端本來就有「addon 為 null 就放棄」的路徑，所以這裡回 null 不改變任何既有語意。</para>
+    /// </remarks>
+    public static AtkUnitBase* GetAddonById(uint addonId)
+    {
+        if (addonId == 0) return null;
+
+        var stage = AtkStage.Instance();
+        if (stage == null) return null;
+
+        var manager = stage->RaptureAtkUnitManager;
+        if (manager == null) return null;
+
+        return manager->GetAddonById((ushort)addonId);
+    }
+
     private static void BuildValues(AtkValue* dest, object[] values)
     {
         for (var i = 0; i < values.Length; i++)
@@ -104,11 +128,18 @@ public static unsafe class UiHelper
         var addon = GetAddon("Talk");
         if (!IsReady(addon)) return false;
 
+        // 🔴 AtkStage.Instance() 是 [StaticAddress(..., isPointer: true)]，遊戲尚未建立單例時回 null。
+        //    `&stage->AtkEventTarget` 在 null 上算出來是 0（AtkEventTarget 在 +0x0），交給原生
+        //    ReceiveEvent 就是攔不到的 AVE。判空樣板同 ClickToMove.IsCursorOverGameUi。
+        //    讀不到回 false ＝「這次沒點掉」，呼叫端會重試。
+        var stage = AtkStage.Instance();
+        if (stage == null) return false;
+
         var evt = stackalloc AtkEvent[1];
         evt[0] = new AtkEvent
         {
             Listener = (AtkEventListener*)addon,
-            Target = &AtkStage.Instance()->AtkEventTarget,
+            Target = &stage->AtkEventTarget,
             State = new AtkEventState { StateFlags = (AtkEventStateFlags)132 },
         };
         var data = stackalloc AtkEventData[1];

@@ -53,7 +53,14 @@ public sealed unsafe class AutoQTE : TcModule
 
         PostMessageW(gameWindowHandle, WM_KEYDOWN, VK_SPACE, 0);
         PostMessageW(gameWindowHandle, WM_KEYUP, VK_SPACE, 0);
-        AtkStage.Instance()->ClearFocus();
+
+        // 🔴 AtkStage.Instance() 是 isPointer:true 的靜態位址，可能回 null；ClearFocus() 是
+        //    原生成員函式，對 null 呼叫是攔不到的 AVE。判空樣板同 ClickToMove.IsCursorOverGameUi。
+        //    這是 QTE addon 的繪製後回呼（節流過的熱路徑），不記 log；取不到就只是這次不清焦點，
+        //    按鍵已經送出去了，功能不受影響。
+        var stage = AtkStage.Instance();
+        if (stage == null) return;
+        stage->ClearFocus();
     }
 
     [DllImport("user32.dll", ExactSpelling = true)]
