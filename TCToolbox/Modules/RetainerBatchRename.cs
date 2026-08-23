@@ -1309,6 +1309,11 @@ public sealed unsafe class RetainerBatchRename : TcModule
             stashed.Clear();
             for (var i = 0; i < container->Size; i++)
             {
+                // 🔴 改名只需脫「防具與飾品」（槽 2~12）。主手(0)／副手(1)／靈魂水晶(13) 不用卸——
+                //    LM 405 原文只要求脫防具和飾品，而且對主手槽呼叫 MoveItemSlot 會回傳 10 失敗
+                //    （2026-08-23 實機：卸「卡扎納爾之書」失敗導致整段中止、對話沒推進）。
+                if (i < 2 || i > 12) continue;
+
                 var item = container->GetInventorySlot(i);
                 if (item == null || item->ItemId == 0) continue;
 
@@ -1341,10 +1346,11 @@ public sealed unsafe class RetainerBatchRename : TcModule
             if (!TryGetRetainerEquipContainer(out var container))
                 return AbortWith("驗證卸裝時讀不到僱員裝備欄。");
 
+            // 只檢查我們卸下的那些槽（防具＋飾品）；武器與靈魂水晶本來就留著，不算殘留。
             var remaining = 0;
-            for (var i = 0; i < container->Size; i++)
+            foreach (var g in stashed)
             {
-                var item = container->GetInventorySlot(i);
+                var item = container->GetInventorySlot(g.Slot);
                 if (item != null && item->ItemId != 0) remaining++;
             }
 
