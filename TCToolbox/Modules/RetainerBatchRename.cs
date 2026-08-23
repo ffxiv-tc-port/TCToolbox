@@ -1340,6 +1340,14 @@ public sealed unsafe class RetainerBatchRename : TcModule
         // ── c. 卸裝 ──
         queue.Enqueue("記錄目前裝備", () =>
         {
+            // 🔴 招呼 Talk 可能在這一步期間才冒出來（裝備欄比 Talk 先就緒；2026-08-23 實機）。
+            //    Talk 開著就先點掉、這一 tick 不做別的——不在對話框開著時搬裝備。
+            if (UiHelper.IsAddonReady(TalkAddon))
+            {
+                if (Throttle.Pass($"{InternalName}-BellTalk", 300)) UiHelper.ClickTalkIfOpen();
+                return false;
+            }
+
             if (!TryGetRetainerEquipContainer(out var container))
                 return AbortWith("讀不到僱員裝備欄（RetainerEquippedItems 尚未載入）。");
 
@@ -1380,6 +1388,8 @@ public sealed unsafe class RetainerBatchRename : TcModule
         queue.Enqueue("等待伺服器確認卸裝", () =>
         {
             if (stashed.Count == 0) return true;
+            if (UiHelper.IsAddonReady(TalkAddon) && Throttle.Pass($"{InternalName}-BellTalk", 300))
+                UiHelper.ClickTalkIfOpen();
             undressDelayStart ??= DateTime.UtcNow;
             return (DateTime.UtcNow - undressDelayStart.Value).TotalMilliseconds >= Config.UndressVerifyDelayMs;
         }, Config.UndressVerifyDelayMs + 20_000);
@@ -1446,6 +1456,15 @@ public sealed unsafe class RetainerBatchRename : TcModule
         {
             if (stashed.Count == 0) return true;
 
+            // 🔴 招呼 Talk 可能在這一步期間才冒出來（裝備欄比 Talk 先就緒；2026-08-23 實機）。
+            //    Talk 開著就先點掉、這一 tick 不做別的——不在對話框開著時搬裝備。
+            if (UiHelper.IsAddonReady(TalkAddon))
+            {
+                if (Throttle.Pass($"{InternalName}-BellTalk", 300)) UiHelper.ClickTalkIfOpen();
+                return false;
+            }
+
+
             if (++moves > MaxGearMovesPerRetainer)
                 return AbortWith($"卸裝反覆超過 {MaxGearMovesPerRetainer} 次，強制停止。請回報。");
 
@@ -1508,6 +1527,14 @@ public sealed unsafe class RetainerBatchRename : TcModule
 
         queue.Enqueue($"穿回裝備（{work.OldName}）", () =>
         {
+            // 🔴 招呼 Talk 可能在這一步期間才冒出來（裝備欄比 Talk 先就緒；2026-08-23 實機）。
+            //    Talk 開著就先點掉、這一 tick 不做別的——不在對話框開著時搬裝備。
+            if (UiHelper.IsAddonReady(TalkAddon))
+            {
+                if (Throttle.Pass($"{InternalName}-BellTalk", 300)) UiHelper.ClickTalkIfOpen();
+                return false;
+            }
+
             if (index >= stashed.Count)
             {
                 if (failed > 0)
