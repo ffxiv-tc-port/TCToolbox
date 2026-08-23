@@ -1465,16 +1465,15 @@ public sealed unsafe class RetainerBatchRename : TcModule
             }
 
 
-            // 🔴🔴 崩潰硬守衛（2026-08-23 實機 C0000005）：沒有「傳喚中的僱員」時對
-            //    RetainerEquippedItems 呼叫 MoveItemSlot＝原生層解參考空僱員＝把遊戲弄崩。
-            //    IsLoaded 會殘留上一次傳喚的 true，不能當「僱員在場」的證據——
-            //    真值＝RetainerManager.GetActiveRetainer() 非空且就是這一位。不在場就等（逾時由步驟上限管）。
-            var rm = RetainerManager.Instance();
-            var active = rm == null ? null : rm->GetActiveRetainer();
-            if (active == null || active->RetainerId != work.RetainerId)
+            // 🔴🔴 崩潰硬守衛 v2（2026-08-24 實機第二次 C0000005 定案）：
+            //    GetActiveRetainer() 回的是 LastSelectedRetainerId 指到的僱員——「上次選過誰」，
+            //    離開僱員後不歸零＝陳舊真值，第一版守衛因此放行了「清單剛開、僱員還沒傳喚出來」的搬移。
+            //    正確證據＝**僱員指令選單（含「讓僱員返回」）開著**：那只在僱員真的被傳喚出來時存在，
+            //    也正是實機卸裝成功時的狀態。不在這狀態就等（逾時由步驟上限管），絕不搬。
+            if (!IsRetainerSubmenuOpen())
             {
-                if (Throttle.Pass($"{InternalName}-NoActiveRetainer", 3000))
-                    Svc.Log.Information($"[{InternalName}] 僱員「{work.OldName}」不在傳喚狀態（active={(active == null ? "無" : active->RetainerId.ToString())}），等待中——絕不在這狀態搬裝備。");
+                if (Throttle.Pass($"{InternalName}-NoSubmenu", 3000))
+                    Svc.Log.Information($"[{InternalName}] 僱員指令選單未開（僱員未在場）——等待中，絕不在這狀態搬裝備。");
                 return false;
             }
 
@@ -1563,16 +1562,15 @@ public sealed unsafe class RetainerBatchRename : TcModule
                 return true;
             }
 
-            // 🔴🔴 崩潰硬守衛（2026-08-23 實機 C0000005）：沒有「傳喚中的僱員」時對
-            //    RetainerEquippedItems 呼叫 MoveItemSlot＝原生層解參考空僱員＝把遊戲弄崩。
-            //    IsLoaded 會殘留上一次傳喚的 true，不能當「僱員在場」的證據——
-            //    真值＝RetainerManager.GetActiveRetainer() 非空且就是這一位。不在場就等（逾時由步驟上限管）。
-            var rm = RetainerManager.Instance();
-            var active = rm == null ? null : rm->GetActiveRetainer();
-            if (active == null || active->RetainerId != work.RetainerId)
+            // 🔴🔴 崩潰硬守衛 v2（2026-08-24 實機第二次 C0000005 定案）：
+            //    GetActiveRetainer() 回的是 LastSelectedRetainerId 指到的僱員——「上次選過誰」，
+            //    離開僱員後不歸零＝陳舊真值，第一版守衛因此放行了「清單剛開、僱員還沒傳喚出來」的搬移。
+            //    正確證據＝**僱員指令選單（含「讓僱員返回」）開著**：那只在僱員真的被傳喚出來時存在，
+            //    也正是實機卸裝成功時的狀態。不在這狀態就等（逾時由步驟上限管），絕不搬。
+            if (!IsRetainerSubmenuOpen())
             {
-                if (Throttle.Pass($"{InternalName}-NoActiveRetainer", 3000))
-                    Svc.Log.Information($"[{InternalName}] 僱員「{work.OldName}」不在傳喚狀態（active={(active == null ? "無" : active->RetainerId.ToString())}），等待中——絕不在這狀態搬裝備。");
+                if (Throttle.Pass($"{InternalName}-NoSubmenu", 3000))
+                    Svc.Log.Information($"[{InternalName}] 僱員指令選單未開（僱員未在場）——等待中，絕不在這狀態搬裝備。");
                 return false;
             }
 
@@ -2124,6 +2122,13 @@ public sealed unsafe class RetainerBatchRename : TcModule
         {
             if (!Svc.Condition[ConditionFlag.OccupiedSummoningBell] && !UiHelper.IsAddonReady(RetainerListAddon))
                 return true;
+
+            // 僱員退下的道別 Talk 也要自己點（2026-08-24 實機：卡在這裡等手動）。
+            if (UiHelper.IsAddonReady(TalkAddon))
+            {
+                if (Throttle.Pass($"{InternalName}-LeaveTalk", 300)) UiHelper.ClickTalkIfOpen();
+                return false;
+            }
 
             // 還停在僱員子選單就先選「讓僱員返回」退回清單。
             var menu = UiHelper.GetAddon(SelectStringAddon);
@@ -3063,6 +3068,19 @@ public sealed unsafe class RetainerBatchRename : TcModule
     /// ⚠️ <c>RetainerEquippedItems</c> <b>只有在僱員視窗開著時才載入</b>，沒開就是 null
     /// ——那是常態不是異常（AutoRetainer 的除錯視窗註解也這麼寫）。
     /// </summary>
+    /// <summary>僱員指令選單（含「讓僱員返回」）是否開著＝僱員此刻真的被傳喚在場。</summary>
+    private bool IsRetainerSubmenuOpen()
+    {
+        var quitText = GetAddonText(AddonRowRetainerQuit);
+        if (quitText.Length == 0) return false;
+
+        var addon = UiHelper.GetAddon(SelectStringAddon);
+        if (!UiHelper.IsReady(addon)) return false;
+
+        return UiHelper.GetSelectStringEntries(addon)
+            .Exists(e => e.StartsWith(quitText, StringComparison.Ordinal));
+    }
+
     private static bool TryGetRetainerEquipContainer(out InventoryContainer* container)
     {
         container = null;
