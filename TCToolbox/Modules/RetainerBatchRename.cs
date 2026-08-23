@@ -1963,6 +1963,15 @@ public sealed unsafe class RetainerBatchRename : TcModule
     {
         queue.Enqueue("讓僱員返回", () =>
         {
+            // 🔴 傳喚後僱員會先講一句招呼（Talk），指令選單要等這句被點掉才會出現。
+            //    YesAlready 對僱員／傳喚鈴的 Talk 是「Not proceeding」（2026-08-23 實機確認不自動推進），
+            //    而自動改名期間我們又暫停了 YesAlready ⇒ 這句招呼一定得自己點，否則卡在等指令選單。
+            if (UiHelper.IsAddonReady(TalkAddon))
+            {
+                if (Throttle.Pass($"{InternalName}-QuitTalk", 300)) UiHelper.ClickTalkIfOpen();
+                return false;
+            }
+
             var quitText = GetAddonText(AddonRowRetainerQuit);
             if (quitText.Length == 0) return AbortWith("讀不到「讓僱員返回」的選單文字。");
 
