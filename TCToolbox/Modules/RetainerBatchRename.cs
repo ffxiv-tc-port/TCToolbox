@@ -1465,10 +1465,12 @@ public sealed unsafe class RetainerBatchRename : TcModule
             }
 
 
+            if (!Throttle.Pass($"{InternalName}-Undress", 200)) return false;
+
+            // 🔴 只數「真的要執行搬移」的次數。這行曾排在節流之前＝每個畫格都 ++，
+            //    一秒就撞上限強制停止（2026-08-23 實機：不到一秒報「反覆超過 40 次」，實際才搬 2~3 件）。
             if (++moves > MaxGearMovesPerRetainer)
                 return AbortWith($"卸裝反覆超過 {MaxGearMovesPerRetainer} 次，強制停止。請回報。");
-
-            if (!Throttle.Pass($"{InternalName}-Undress", 200)) return false;
 
             if (!TryGetRetainerEquipContainer(out var container))
                 return AbortWith("卸裝途中讀不到僱員裝備欄。");
