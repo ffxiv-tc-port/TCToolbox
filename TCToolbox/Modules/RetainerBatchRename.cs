@@ -212,6 +212,27 @@ public sealed unsafe class RetainerBatchRename : TcModule
     /// <summary><c>Lobby</c>「確定要將僱員的形象設定成目前的樣子嗎？」——按「是」（此時預覽＝保留的原容貌）。</summary>
     private const uint LobbyRowSetAppearanceNow = 621;
 
+    // 🔴 形象確認框改用「短錨」比對，不用整句 Lobby 模板——實機「要儲存目前的形象嗎？」後面
+    //    還接了一長串說明（「今後創建新角色時，可以讀取…」），整句模板 Contains 會漏而卡住（2026-08-23 實機）。
+    private const string UseSavedAppearanceAnchor = "要使用已儲存的角色形象";
+    private const string SaveAppearanceAnchor = "要儲存目前的形象";
+    private const string SetAppearanceNowAnchor = "設定成目前的樣子";
+
+    // 🔴 台服僱員改名撞名時 NPCDialogue 印「無法使用此名字，」——與 Addon 2864／LogMessage 1335 的
+    //    模板都不同，模板比對不到會害輸入框無限重填同一個被占用的名字（2026-08-23 實機）。
+    private const string NameUnusableAnchor = "無法使用此名字";
+
+    // 🔴 「要使用已儲存的角色形象嗎？→是」之後，遊戲開的是**儲存形象檔案選擇器**
+    //    `CharaMakeDataImport`（「要載入哪一份檔案」）＋說明框 `CharaMakeDataImportDialog`。
+    //    實機錄製（2026-08-23 21:27:02）：選第一個檔＝FireCallback [Int=102, Int=0, Bool=false]。
+    //    載入完成後 CharaMake 編輯器帶著該檔的外觀開啟（AtkValues[0].Int==2、[2]=種族字串），
+    //    按「完成」＝對 _CharaMakeFeature FireCallback [Int=100] → 進入「要儲存目前的形象嗎？」鏈。
+    //    ⚠️ 空白（答否）時 AtkValues[0].Int==0、[2]=「? ? ?」——**看到空白絕不按完成**。
+    private const string CharaMakeDataImportAddon = "CharaMakeDataImport";
+    private const string CharaMakeAddon = "CharaMake";
+    private const string CharaMakeFeatureAddon = "_CharaMakeFeature";
+    private const string CharaMakeBlankRaceMarker = "? ? ?";
+
     // ── CharaMake 改名：EXD 查不到、只能寫死的台服 7.20 實機字串 ──
     // 🔴 這些字串在台服 EXD dump 裡不存在（管理人選單／性格／名字確認都是執行期組出來的），
     //    只能照實機錄製寫死。改版換字串的失敗形式是「比對不到→不動作→逾時跳過」（fail-closed），
@@ -1303,9 +1324,18 @@ public sealed unsafe class RetainerBatchRename : TcModule
         //    「僱員在探險中時這個容器會不會載入」我們沒有實機證據。
         //    若把等容器排在前面，而那個假設剛好不成立，流程就會卡在等容器、
         //    永遠走不到那個唯一能解開它的步驟——自己把自己鎖死，而且逾時訊息會指向錯的地方。
-        queue.EnqueueWait("等待僱員裝備欄載入", () =>
-            Svc.Condition[ConditionFlag.OccupiedSummoningBell] && TryGetRetainerEquipContainer(out _),
-            30_000);
+        queue.Enqueue("等待僱員裝備欄載入", () =>
+        {
+            // 🔴 傳喚後僱員先講招呼（Talk），裝備欄與指令選單都要等它被點掉。
+            //    使用者的 YesAlready 不推進僱員 Talk（實機 Not proceeding），這裡必須自己點。
+            if (UiHelper.IsAddonReady(TalkAddon))
+            {
+                if (Throttle.Pass($"{InternalName}-SummonTalk", 300)) UiHelper.ClickTalkIfOpen();
+                return false;
+            }
+
+            return Svc.Condition[ConditionFlag.OccupiedSummoningBell] && TryGetRetainerEquipContainer(out _);
+        }, 30_000);
 
         // ── c. 卸裝 ──
         queue.Enqueue("記錄目前裝備", () =>
@@ -1344,7 +1374,15 @@ public sealed unsafe class RetainerBatchRename : TcModule
 
         EnqueueUndress(work);
 
-        queue.EnqueueDelay(Config.UndressVerifyDelayMs, "等待伺服器確認卸裝");
+        // 📌 沒有卸任何東西（0 件或全是武器/水晶）就不必等伺服器確認——實機這 10 秒白等，
+        //    而且招呼 Talk 正好開著時，這 10 秒看起來就像「卡住沒推進」。
+        DateTime? undressDelayStart = null;
+        queue.Enqueue("等待伺服器確認卸裝", () =>
+        {
+            if (stashed.Count == 0) return true;
+            undressDelayStart ??= DateTime.UtcNow;
+            return (DateTime.UtcNow - undressDelayStart.Value).TotalMilliseconds >= Config.UndressVerifyDelayMs;
+        }, Config.UndressVerifyDelayMs + 20_000);
 
         queue.Enqueue("驗證卸裝結果", () =>
         {
@@ -2076,6 +2114,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
         DateTime? started = null;
         var everSawRenameUi = false;
         var gatePassed = false;
+        var importFired = false;
         var nameSubmitted = false;
 
         queue.Enqueue($"自動改名（{work.OldName}）", () =>
@@ -2144,7 +2183,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
                 var prompt = UiHelper.GetSelectYesnoText();
                 if (prompt.Length == 0) return false;
 
-                var useSaved = GetLobbyText(LobbyRowUseSavedAppearance);
+                var useSaved = UseSavedAppearanceAnchor;
                 if (useSaved.Length > 0 && prompt.Contains(useSaved, StringComparison.Ordinal))
                 {
                     if (Throttle.Pass($"{InternalName}-YesUseSaved", 600))
@@ -2156,7 +2195,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
                     return false;
                 }
 
-                var saveNow = GetLobbyText(LobbyRowSaveAppearance);
+                var saveNow = SaveAppearanceAnchor;
                 if (saveNow.Length > 0 && prompt.Contains(saveNow, StringComparison.Ordinal))
                 {
                     if (Throttle.Pass($"{InternalName}-NoSaveAppearance", 600))
@@ -2167,7 +2206,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
                     return false;
                 }
 
-                var setNow = GetLobbyText(LobbyRowSetAppearanceNow);
+                var setNow = SetAppearanceNowAnchor;
                 if (setNow.Length > 0 && prompt.Contains(setNow, StringComparison.Ordinal))
                 {
                     if (!gatePassed)
@@ -2206,6 +2245,56 @@ public sealed unsafe class RetainerBatchRename : TcModule
 
                 if (Throttle.Pass($"{InternalName}-UnknownYesno", 3000))
                     Svc.Log.Information($"[{InternalName}] 自動改名遇到未預期的確認框「{prompt}」，不按任何鈕（fail-closed），等內部期限放棄。");
+                return false;
+            }
+
+            // (A2) 儲存形象檔案選擇器——只在閘門已過之後出現才處理；選第一個檔（1 號）。
+            if (UiHelper.IsAddonReady(CharaMakeDataImportAddon))
+            {
+                everSawRenameUi = true;
+                if (!gatePassed)
+                {
+                    if (Throttle.Pass($"{InternalName}-ImportNoGate", 3000))
+                        Svc.Log.Information($"[{InternalName}] 出現形象檔案選擇器但安全閘門未過——不動作（fail-closed）。");
+                    return false;
+                }
+
+                if (Throttle.Pass($"{InternalName}-DataImport", 1500))
+                {
+                    var dlg = UiHelper.GetAddon("CharaMakeDataImportDialog");
+                    var desc = UiHelper.IsReady(dlg) ? UiHelper.GetFirstStringValue(dlg) : string.Empty;
+                    Svc.Log.Information(
+                        $"[{InternalName}] 形象檔案選擇器→ 載入第 1 個儲存檔{(desc.Length > 0 ? $"（{desc}）" : string.Empty)}。");
+                    var import = UiHelper.GetAddon(CharaMakeDataImportAddon);
+                    if (UiHelper.IsReady(import))
+                    {
+                        UiHelper.FireCallbackIntIntBool(import, 102, 0, false);
+                        importFired = true;
+                    }
+                }
+                return false;
+            }
+
+            // (A3) CharaMake 編輯器——只有「閘門已過＋剛剛真的載入了儲存檔＋編輯器帶著已載入的外觀」
+            //     三者同時成立才按「完成」（_CharaMakeFeature [Int=100]）。空白編輯器一律不碰、等內部期限。
+            if (UiHelper.IsAddonReady(CharaMakeAddon))
+            {
+                everSawRenameUi = true;
+
+                if (gatePassed && importFired && UiHelper.TryGetCharaMakeLoadedState(CharaMakeAddon, CharaMakeBlankRaceMarker, out var raceText))
+                {
+                    if (Throttle.Pass($"{InternalName}-CharaMakeFinish", 2000))
+                    {
+                        Svc.Log.Information($"[{InternalName}] CharaMake 已載入儲存形象（{raceText}）→ 按「完成」。");
+                        var feature = UiHelper.GetAddon(CharaMakeFeatureAddon);
+                        if (UiHelper.IsReady(feature)) UiHelper.FireCallbackInt(feature, 100);
+                    }
+                }
+                else if (Throttle.Pass($"{InternalName}-CharaMakeHold", 5000))
+                {
+                    Svc.Log.Information(
+                        $"[{InternalName}] CharaMake 開著但（閘門過={gatePassed}／已載檔={importFired}／外觀已載入判定失敗）——不按任何鈕（fail-closed），等內部期限。");
+                }
                 return false;
             }
 
@@ -3442,6 +3531,15 @@ public sealed unsafe class RetainerBatchRename : TcModule
                     sawAlreadyHasRight = true;
                     return;
                 }
+            }
+
+            // 🔴 台服撞名實機錨（NPCDialogue「無法使用此名字，」）——優先於模板比對，避免無限重填。
+            if (text.Contains(NameUnusableAnchor, StringComparison.Ordinal))
+            {
+                if (recordingActive)
+                    Svc.Log.Information($"[{InternalName}] [錄製][訊息] 名字無法使用（錨：{NameUnusableAnchor}）：{text}");
+                sawNameTaken = true;
+                return;
             }
 
             if (MatchesAny(text, AddonRowsNameTaken, LogMessageRowsNameTaken, out var takenSource))

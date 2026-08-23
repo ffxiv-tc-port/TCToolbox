@@ -174,6 +174,78 @@ public static unsafe class UiHelper
         return true;
     }
 
+    /// <summary>讀 addon AtkValues 裡第一個字串值（沒有就空字串）。錄製／診斷用。</summary>
+    public static string GetFirstStringValue(AtkUnitBase* addon)
+    {
+        if (addon == null) return string.Empty;
+        var count = addon->AtkValuesCount;
+        for (var i = 0; i < count; i++)
+        {
+            var v = addon->AtkValues[i];
+            if (v.Type is ValueType.String or ValueType.String8 or ValueType.ManagedString)
+            {
+                var ptr = v.String.Value;
+                if (ptr != null)
+                    return Dalamud.Memory.MemoryHelper.ReadSeStringNullTerminated((nint)ptr).TextValue;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    /// <summary>對 addon 送單一 Int 的 callback（照實機錄製的形狀）。</summary>
+    public static void FireCallbackInt(AtkUnitBase* addon, int a)
+    {
+        if (addon == null) return;
+        var values = stackalloc AtkValue[1];
+        values[0].Type = ValueType.Int;
+        values[0].Int = a;
+        addon->FireCallback(1, values, true);
+    }
+
+    /// <summary>對 addon 送 [Int, Int, Bool] 的 callback（照實機錄製的形狀）。</summary>
+    public static void FireCallbackIntIntBool(AtkUnitBase* addon, int a, int b, bool c)
+    {
+        if (addon == null) return;
+        var values = stackalloc AtkValue[3];
+        values[0].Type = ValueType.Int;
+        values[0].Int = a;
+        values[1].Type = ValueType.Int;
+        values[1].Int = b;
+        values[2].Type = ValueType.Bool;
+        values[2].Byte = (byte)(c ? 1 : 0);
+        addon->FireCallback(3, values, true);
+    }
+
+    /// <summary>
+    /// CharaMake 編輯器是否「帶著已載入的外觀」開著。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 實機錄製（2026-08-23）：載入儲存檔後 <c>AtkValues[0].Int==2</c>、<c>AtkValues[2]</c>＝種族字串
+    /// （「拉拉菲爾族 女」）；空白（沒載檔）時 <c>[0]==0</c>、<c>[2]</c>＝「? ? ?」。
+    /// 判定不到（版面變了／值型別不符）一律回 false——寧可不按「完成」也不碰空白編輯器。
+    /// </remarks>
+    public static bool TryGetCharaMakeLoadedState(string addonName, string blankMarker, out string raceText)
+    {
+        raceText = string.Empty;
+        var addon = GetAddon(addonName);
+        if (!IsReady(addon)) return false;
+        if (addon->AtkValuesCount < 3) return false;
+
+        var state = addon->AtkValues[0];
+        if (state.Type != ValueType.Int || state.Int == 0) return false;
+
+        var race = addon->AtkValues[2];
+        if (race.Type is not (ValueType.String or ValueType.String8 or ValueType.ManagedString)) return false;
+        var ptr = race.String.Value;
+        if (ptr == null) return false;
+
+        raceText = Dalamud.Memory.MemoryHelper.ReadSeStringNullTerminated((nint)ptr).TextValue;
+        if (raceText.Length == 0 || raceText.Contains(blankMarker, StringComparison.Ordinal)) return false;
+
+        return true;
+    }
+
     /// <summary>點擊 addon 上的按鈕元件（複用按鈕自身既有的事件）。</summary>
     public static bool ClickButton(AtkUnitBase* addon, AtkComponentButton* button)
     {
