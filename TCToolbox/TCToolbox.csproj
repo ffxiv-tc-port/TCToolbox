@@ -18,6 +18,16 @@
         <AssemblyVersion>$(Version)</AssemblyVersion>
         <FileVersion>$(Version)</FileVersion>
     </PropertyGroup>
+    <ItemGroup>
+        <!--
+            內建候選名單（100 個）。使用者有 81 個僱員分散在多個角色，手邊不一定有現成名單，
+            所以附一份在組件裡；模組的「載入內建名單」按鈕讀的就是它。
+            🔴 讀內嵌資源時不要寫死完整資源名（RootNamespace 一改就靜默變空表）——
+               模組是用 GetManifestResourceNames() 找結尾相符的那一筆，並且印出載入筆數。
+        -->
+        <EmbeddedResource Include="Resources/retainer_names.txt" />
+    </ItemGroup>
+
     <Target Name="PersistBuildNumber" AfterTargets="Build">
         <WriteLinesToFile File="$(BuildNumberFile)" Lines="$(BuildNumber)" Overwrite="true" />
     </Target>

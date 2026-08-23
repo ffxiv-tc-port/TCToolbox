@@ -79,8 +79,128 @@ public sealed class Configuration : IPluginConfiguration
     public LoginCommandsConfig LoginCommands { get; set; } = new();
     public DutyAnnounceConfig DutyAnnounce { get; set; } = new();
     public LetterCollectAllConfig LetterCollectAll { get; set; } = new();
+    public RetainerBatchRenameConfig RetainerBatchRename { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
+}
+
+/// <summary>候選名字的狀態。</summary>
+/// <remarks>
+/// 🔴 <b>零值必須是有效狀態。</b>反序列化時 JSON 缺少這個鍵就會落在零值上，
+/// 而「未用」正是那種情況的正確答案——把零值放在「已被占用」之類的狀態上，
+/// 會讓舊設定檔升上來之後整份名單靜默變成不可用。
+/// </remarks>
+public enum RetainerNameCandidateState
+{
+    /// <summary>還沒用過，可以指派。<b>這是預設狀態，所以必須是零值。</b></summary>
+    Available = 0,
+
+    /// <summary>已經用在某位僱員身上。</summary>
+    Used = 1,
+
+    /// <summary>伺服器（或使用者）回報這個名字已經被占用。</summary>
+    Taken = 2,
+
+    /// <summary>預檢或伺服器判定這個名字不能用。</summary>
+    Rejected = 3,
+}
+
+/// <summary>一個候選名字的持久化狀態。</summary>
+/// <remarks>
+/// 🔴 <b>這份狀態是全域的，不分角色。</b>僱員名字是<b>全世界唯一</b>的，所以
+/// 「這個名字已經被占用」對每個角色都成立；同一份名單要能跨角色輪流消耗
+/// （使用者的僱員分散在多個角色上，每個角色上限 10 位）。
+/// 換角色<b>絕對不能</b>重置這些狀態——那會讓流程一再去試已知不能用的名字。
+/// </remarks>
+public sealed class RetainerNameCandidateStatus
+{
+    public RetainerNameCandidateState State { get; set; } = RetainerNameCandidateState.Available;
+
+    /// <summary>用在哪一位僱員身上（<c>RetainerId</c> 全域唯一）。</summary>
+    public ulong UsedByRetainerId { get; set; }
+
+    /// <summary>當時那位僱員屬於哪個角色（僅供視窗顯示用）。</summary>
+    public ulong UsedByContentId { get; set; }
+
+    /// <summary>當時的角色名（僅供視窗顯示用；角色改名的話這裡會是舊的，無妨）。</summary>
+    public string UsedByCharacterName { get; set; } = string.Empty;
+
+    /// <summary>當時那位僱員叫什麼（僅供視窗顯示用）。</summary>
+    public string UsedByRetainerName { get; set; } = string.Empty;
+
+    /// <summary>人看的說明（為什麼被剔除／被誰用掉）。</summary>
+    public string Note { get; set; } = string.Empty;
+}
+
+/// <summary>批次僱員改名。</summary>
+public sealed class RetainerBatchRenameConfig
+{
+    /// <summary>
+    /// 使用者手動改名的期間，把畫面資訊寫進記錄。
+    /// </summary>
+    /// <remarks>
+    /// 📌 預設 <c>true</c>。這一版<b>不自動操作改名畫面</b>（CharaMake 的僱員模式在台服沒有
+    /// 任何可離線查證的資料，猜 callback 序號去點它是不可逆的破壞），改成在使用者手動操作時
+    /// 把 addon 開關、選單文字、每一次 UI callback、以及背包／僱員裝備欄的每一格變化
+    /// 寫進記錄（<c>Information</c> 等級）。
+    /// 那些資料是之後判斷「能不能自動化」的唯一依據，所以預設開著。
+    /// <para>
+    /// ⚠️ 錄製只在流程停在「等你改名」的那一段才生效，
+    /// 其餘時間 hook 是停用的（<c>AtkUnitBase::FireCallback</c> 是全遊戲的熱路徑）。
+    /// 想錄整條流程請用視窗上的「開始錄製（我自己操作）」。
+    /// </para>
+    /// </remarks>
+    public bool RecordDuringManualRename = true;
+
+    /// <summary>
+    /// 偵測到僱員名稱已經改變就自動往下走，不必按「改名完成」。
+    /// </summary>
+    /// <remarks>
+    /// 📌 預設 <c>true</c>：名字變了是「使用者已經改完」最直接的證據。
+    /// 關掉的話一律等按鈕——按鈕本身<b>永遠都在</b>，這格只影響要不要另外自動偵測。
+    /// </remarks>
+    public bool AutoDetectRenameDone = true;
+
+    /// <summary>
+    /// 卸裝之後等這麼久（毫秒）才驗證裝備真的離開僱員身上。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 預設 2500ms。<c>MoveItemSlot</c> 會<b>同步</b>改好本機容器，所以呼叫完立刻回讀一定是成功的；
+    /// 伺服器若拒絕，要幾秒之後才把道具退回來（本 repo 2026-07-31 實機量到的退回延遲是 3.9～10.6 秒，
+    /// 但那批是在沒帶 <c>a6</c> 的情況下量的，帶了 <c>a6: true</c> 之後的延遲分佈未知）。
+    /// ⚠️ 設太短的後果是「卸裝其實沒生效卻繼續往下跑」，那會讓改名整個失敗；
+    /// 設太長只是慢一點。不確定就往大的調。
+    /// </remarks>
+    public int UndressVerifyDelayMs = 2_500;
+
+    /// <summary>
+    /// 同一位僱員最多連續試幾個候選名字。
+    /// </summary>
+    /// <remarks>
+    /// 📌 預設 5。名字被占用時會自動換下一個候選；這是<b>失控保險絲</b>——
+    /// 若偵測「被占用」的訊號誤判成常態，沒有這道上限會一路把整份名單燒光。
+    /// </remarks>
+    public int MaxCandidateAttemptsPerRetainer = 5;
+
+    /// <summary>
+    /// 候選名單原文（一行一個名字）。
+    /// </summary>
+    /// <remarks>
+    /// 📌 預設空字串＝<b>沒有名單，流程不會開始</b>（前置閘門會擋）。
+    /// 使用者可以直接貼、從設定資料夾的 <c>retainer_names.txt</c> 載入、
+    /// 或按「載入內建名單」把組件內附的 100 個候選加進來。
+    /// </remarks>
+    public string NamePoolText = string.Empty;
+
+    /// <summary>
+    /// 每個候選名字的狀態。<b>鍵是名字本身</b>，不是行號。
+    /// </summary>
+    /// <remarks>
+    /// 🔑 用名字當鍵，使用者重新排序或增刪名單時，已知被占用的名字不會因為位置變了就被重試。
+    /// 🔴 這份是<b>全域</b>的（見 <see cref="RetainerNameCandidateStatus"/>）：僱員名全世界唯一，
+    /// 所以跨角色共用同一份消耗紀錄。
+    /// </remarks>
+    public Dictionary<string, RetainerNameCandidateStatus> CandidateStatus { get; set; } = [];
 }
 
 /// <summary>招募詳細視窗自動加入。</summary>
