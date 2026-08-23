@@ -72,6 +72,34 @@ internal static class AutoRetainerIpc
         }
     }
 
+    /// <summary>
+    /// 一次問出「AutoRetainer 在不在」與「它忙不忙」。
+    /// </summary>
+    /// <remarks>
+    /// 🔑 <see cref="IsAvailable"/> 與 <see cref="IsBusy"/> 各自都會打一次 IPC，
+    /// 而它們探的是<b>同一個端點</b>——要輪詢的呼叫端用這一支就只打一次。
+    /// <para>
+    /// ⚠️ 回傳 <see langword="false"/> 有兩種意思都合法：AutoRetainer 沒裝、或它沒開這個 IPC。
+    /// 兩種情況下 <paramref name="busy"/> 都是 <see langword="false"/>，
+    /// 呼叫端該把它當成「不知道，所以不擋」而不是「確定閒置」。
+    /// </para>
+    /// </remarks>
+    /// <param name="busy">AutoRetainer 是否正在忙；IPC 打不通時為 <see langword="false"/>。</param>
+    /// <returns>IPC 打得通（＝AutoRetainer 已安裝並載入）就回 <see langword="true"/>。</returns>
+    public static bool TryGetIsBusy(out bool busy)
+    {
+        try
+        {
+            busy = IsBusyGate.Value.InvokeFunc();
+            return true;
+        }
+        catch (IpcError)
+        {
+            busy = false;
+            return false;
+        }
+    }
+
     /// <summary>AutoRetainer 目前是不是正在忙（有作業在跑）。</summary>
     public static bool IsBusy()
     {

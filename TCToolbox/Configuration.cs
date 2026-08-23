@@ -183,6 +183,29 @@ public sealed class RetainerBatchRenameConfig
     public int MaxCandidateAttemptsPerRetainer = 5;
 
     /// <summary>
+    /// 改名之前，先把該僱員<b>已經完成</b>的探險成果收回來（<b>不重新派遣</b>）。
+    /// </summary>
+    /// <remarks>
+    /// 📌 預設 <c>true</c>。台服 <c>LogMessage</c> 3904「僱員在探險的過程中無法更換裝備。」
+    /// ⇒ 探險中的僱員卸不了裝、也就改不了名。先前的行為是把這種僱員<b>整個擋在前置檢查</b>，
+    /// 使用者得自己一隻一隻去收。
+    /// <para>
+    /// ⚠️ 這一格只影響「探險<b>已經完成</b>」的僱員。<b>探險還在跑</b>的僱員照舊擋下來
+    /// （沒有任何辦法讓探險提早結束），前置檢查會顯示剩餘時間。
+    /// </para>
+    /// <para>
+    /// 🔴 打開時流程會在卸裝之前多一道硬閘門：探險沒有真的收回就<b>當場停下</b>，
+    /// 不會讓錯誤在後面以「卸裝沒生效」的樣貌出現。
+    /// </para>
+    /// <para>
+    /// 🔴 <b>與 AutoRetainer 互斥</b>：AutoRetainer 若正在跑自己的收派循環，
+    /// 會把剛收回的僱員立刻重新派遣。所以「這一輪真的會去收探險」時，
+    /// 前置檢查會另外要求 AutoRetainer 不在忙碌狀態。
+    /// </para>
+    /// </remarks>
+    public bool CollectCompletedVentureBeforeRename = true;
+
+    /// <summary>
     /// 候選名單原文（一行一個名字）。
     /// </summary>
     /// <remarks>
