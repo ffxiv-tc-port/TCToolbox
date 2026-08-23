@@ -122,6 +122,27 @@ public static unsafe class UiHelper
         return true;
     }
 
+    /// <summary>SelectYesno 點「否」（callback value 1，與「是」的 0 相對）。</summary>
+    public static bool ClickSelectYesnoNo()
+    {
+        var addon = GetAddon("SelectYesno");
+        if (!IsReady(addon)) return false;
+        FireCallback(addon, true, 1);
+        return true;
+    }
+
+    /// <summary>讀 SelectYesno 的提示文字（讀不到一律回空字串，不擲例外）。</summary>
+    public static string GetSelectYesnoText()
+    {
+        var addon = GetAddon("SelectYesno");
+        if (!IsReady(addon)) return string.Empty;
+
+        var node = ((AddonSelectYesno*)addon)->PromptText;
+        if (node == null || !node->NodeText.StringPtr.HasValue) return string.Empty;
+
+        return node->NodeText.ToString();
+    }
+
     /// <summary>若 Talk 對話框開著就點掉它。</summary>
     public static bool ClickTalkIfOpen()
     {

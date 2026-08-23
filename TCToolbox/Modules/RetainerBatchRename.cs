@@ -177,6 +177,9 @@ public sealed unsafe class RetainerBatchRename : TcModule
 
     private const string RetainerTaskAskAddon = "RetainerTaskAsk";
 
+    /// <summary>快速探險收取偶爾會彈的確認框。台服 addon 名沿用既有慣例（小寫 n）。</summary>
+    private const string SelectYesnoAddon = "SelectYesno";
+
     /// <summary><c>EObjName</c>「傳喚鈴」。AutoRetainer <c>Lang.BellName</c> 讀的也是這一列。</summary>
     private const uint EObjNameRowSummoningBell = 2000401;
 
@@ -366,6 +369,12 @@ public sealed unsafe class RetainerBatchRename : TcModule
     private int collectSkippedCount;
     private int collectHeldCount;
 
+    /// <summary>收回探險時「連續」逾時的僱員數；累到 <see cref="MaxCollectConsecutiveTimeouts"/> 就判 UI 壞了、整批停下。</summary>
+    private int collectConsecutiveTimeouts;
+
+    /// <summary>收回探險連續逾時到這個數就停整批（單一隻逾時只跳過，不停）。</summary>
+    private const int MaxCollectConsecutiveTimeouts = 3;
+
     /// <summary>快照時的伺服器時間（UNIX 秒）。<c>0</c>＝還沒讀到。</summary>
     private long serverNowUnix;
 
@@ -423,6 +432,15 @@ public sealed unsafe class RetainerBatchRename : TcModule
     {
         queue.OnTimeout = step =>
         {
+            // 🔴 收回探險是逐隻獨立的：一隻卡住不該讓其餘收不到。CollectVentures 模式下，
+            //    單步逾時＝記錄這一位（含最後是不是被重新派遣）＋跳下一位，不停整批；
+            //    只有連續逾時累積到上限才判定 UI 真的壞了、整批停下。
+            if (runMode == RunMode.CollectVentures)
+            {
+                HandleCollectTimeout(step);
+                return;
+            }
+
             Svc.Log.Information(
                 $"[{InternalName}] 流程在「{step}」逾時中止（{ProgressText()}）。" +
                 $"目前卸下未穿回：{stashed.Count} 件。");
@@ -484,6 +502,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
         collectedCount = 0;
         collectSkippedCount = 0;
         collectHeldCount = 0;
+        collectConsecutiveTimeouts = 0;
         serverNowUnix = 0;
         arProbed = false;
         arAvailable = false;
@@ -1792,59 +1811,99 @@ public sealed unsafe class RetainerBatchRename : TcModule
             return true;
         }, 20_000);
 
-        queue.EnqueueWait(
-            $"等待探險成果視窗（{retainerName}）",
-            () => !shouldCollect || UiHelper.IsAddonReady(RetainerTaskResultAddon),
-            20_000);
-
-        queue.Enqueue($"按「確認」收下探險成果（{retainerName}）", () =>
+        // 收回探險成果——容錯狀態機。每 tick 看「當下哪個視窗開著」就做對應動作，不假設遊戲一定照
+        // 「成果視窗→確認→再派視窗」的線性順序走：再派視窗可能提早出現、成果視窗可能一閃而過。
+        // 直到 RetainerManager 讀到這位僱員閒置（探險編號歸零）且沒有任何探險視窗開著，才算真的收回完成。
+        //
+        // 🔴 這一步「不重派」的關鍵：任何時候看到 RetainerTaskAsk 就按 ReturnButton，絕不按
+        //    AssignButton；看到 RetainerTaskResult 就按 ConfirmButton，絕不按 ReassignButton。
+        //    這一步的逾時交給 TaskQueue，由 OnTimeout 的 CollectVentures 分支處理（單隻收不到只記錄＋
+        //    跳下一位，不會停掉整批）。
+        queue.Enqueue($"收回探險成果（{retainerName}）", () =>
         {
             if (!shouldCollect) return true;
 
-            var addon = UiHelper.GetAddon(RetainerTaskResultAddon);
-            if (!UiHelper.IsReady(addon)) return false;
-
-            if (!Throttle.Pass($"{InternalName}-ResultConfirm", 500)) return false;
-
-            // 🔴🔴 只碰 ConfirmButton（+0x260）。ReassignButton（+0x258，「重新派遣」）
-            //    在整個模組裡不出現第二次。
-            // 📌 UiHelper.ClickButton 內部先判 OwnerNode 再讀 IsEnabled（§47：IsEnabled 解的是
-            //    OwnerNode，檢查 AtkResNode 不算守衛），按鈕還沒 enable 時回 false ⇒ 這一步
-            //    自然變成「等按鈕可按」，等不到就由 TaskQueue 逾時指名這一步停下。
-            return UiHelper.ClickButton(addon, ((AddonRetainerTaskResult*)addon)->ConfirmButton) ? true : false;
-        }, 20_000);
-
-        queue.Enqueue($"等待探險成果收回（{retainerName}）", () =>
-        {
-            if (!shouldCollect) return true;
-
-            // 🔴 若遊戲接著彈出派遣視窗，按「返回」把它關掉——絕不按「派遣」。
-            //    AutoRetainer 取消派遣走的也是這顆 ReturnButton（CheckForErrorAssignedVenture）。
-            //    ⚠️ 離線無法確定「確認」之後到底會不會彈這個視窗；這裡是防禦性的，
-            //       沒彈就完全不會執行到。
+            // (1) 任何時候彈出「要再派遣嗎」＝按「返回」關掉，絕不重新派遣。
+            //     AutoRetainer 取消派遣走的也是這顆 ReturnButton。
             var ask = UiHelper.GetAddon(RetainerTaskAskAddon);
             if (UiHelper.IsReady(ask))
             {
-                if (Throttle.Pass($"{InternalName}-AskReturn", 1_000))
+                if (Throttle.Pass($"{InternalName}-AskReturn", 500))
                 {
                     Svc.Log.Information(
-                        $"[{InternalName}] 收回之後彈出了派遣視窗（{RetainerTaskAskAddon}），按「返回」關掉，不重新派遣。");
+                        $"[{InternalName}] 「{retainerName}」彈出派遣視窗（{RetainerTaskAskAddon}），按「返回」，不重新派遣。");
                     UiHelper.ClickButton(ask, ((AddonRetainerTaskAsk*)ask)->ReturnButton);
                 }
 
                 return false;
             }
 
-            if (UiHelper.IsAddonReady(RetainerTaskResultAddon)) return false;
+            // (2) 確認框（快速探險收取偶爾會彈）——讀文字留紀錄，保守按「否」，避免誤觸再派。
+            //     照艦隊慣例：不認得的 Yesno 一律按「否」較安全。
+            if (UiHelper.IsAddonReady(SelectYesnoAddon))
+            {
+                if (Throttle.Pass($"{InternalName}-CollectYesno", 500))
+                {
+                    var prompt = UiHelper.GetSelectYesnoText();
+                    Svc.Log.Information(
+                        $"[{InternalName}] 「{retainerName}」收取途中彈出確認框「{prompt}」，保守按「否」（不重新派遣）。");
+                    UiHelper.ClickSelectYesnoNo();
+                }
 
-            // 真值來源是 RetainerManager：探險編號歸零才算真的收回了。
-            if (!TryLookupVenture(retainerId, out var state, out _)) return false;
-            if (state != VentureState.Idle) return false;
+                return false;
+            }
 
-            collectedCount++;
-            Svc.Log.Information($"[{InternalName}] 「{retainerName}」的探險成果已收回，現在是閒置狀態。");
-            return true;
-        }, 30_000);
+            // (3) 探險成果視窗＝按「確認」收下。
+            //     🔴🔴 只碰 ConfirmButton（+0x260）；ReassignButton（+0x258）整個模組不出現第二次。
+            //     📌 UiHelper.ClickButton 內部先判 OwnerNode 再讀 IsEnabled（§47），按鈕還沒 enable
+            //        時回 false ⇒ 自然變成「等按鈕可按」。
+            var result = UiHelper.GetAddon(RetainerTaskResultAddon);
+            if (UiHelper.IsReady(result))
+            {
+                if (Throttle.Pass($"{InternalName}-ResultConfirm", 500))
+                    UiHelper.ClickButton(result, ((AddonRetainerTaskResult*)result)->ConfirmButton);
+
+                return false;
+            }
+
+            // (4) 沒有任何探險視窗開著——先看是不是真的收完了（真值只認 RetainerManager）。
+            if (TryLookupVenture(retainerId, out var state, out _) && state == VentureState.Idle)
+            {
+                collectedCount++;
+                collectConsecutiveTimeouts = 0;
+                Svc.Log.Information($"[{InternalName}] 「{retainerName}」的探險成果已收回，現在是閒置狀態。");
+                return true;
+            }
+
+            // (5) 還沒閒置、也沒有成果視窗：多半是上一次點擊沒生效、視窗一閃而過，選單又回到僱員子選單。
+            //     重新點「查看僱員探險情況　[結束]」（enforce，等同 AutoRetainer 的 EnforceSelectString）。
+            var menu = UiHelper.GetAddon(SelectStringAddon);
+            if (UiHelper.IsReady(menu))
+            {
+                var completeText = GetAddonText(AddonRowVentureReportComplete);
+                if (completeText.Length > 0)
+                {
+                    var entries = UiHelper.GetSelectStringEntries(menu);
+                    var index = entries.FindIndex(e => e.StartsWith(completeText, StringComparison.Ordinal));
+                    if (index >= 0)
+                    {
+                        if (Throttle.Pass($"{InternalName}-ReViewVenture", 1_000))
+                        {
+                            Svc.Log.Information(
+                                $"[{InternalName}] 「{retainerName}」成果視窗沒出現、選單回到僱員子選單，重新點「[結束]」那一項。");
+                            UiHelper.SelectStringEntry(menu, index);
+                        }
+
+                        return false;
+                    }
+
+                    // 「[結束]」那一項已經不在了：可能已被（AutoRetainer 或使用者）重新派遣，或本來就
+                    //  沒得收。留給 TaskQueue 逾時去判（那裡會讀 RetainerManager 說明最後狀態），不卡死。
+                }
+            }
+
+            return false;
+        }, 40_000);
     }
 
     /// <summary>
@@ -2021,6 +2080,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
         collectedCount = 0;
         collectSkippedCount = 0;
         collectHeldCount = 0;
+        collectConsecutiveTimeouts = 0;
         lastSummary = string.Empty;
 
         Svc.Log.Information(
@@ -2058,6 +2118,132 @@ public sealed unsafe class RetainerBatchRename : TcModule
         EnqueueCollectVenture(work.RetainerId, work.OldName);
         EnqueueQuitRetainer();
         queue.EnqueueDelay(1_000, "間隔");
+        EnqueueNextCollect();
+    }
+
+    /// <summary>
+    /// 收回探險時某一步逾時的處理：記錄這一位（含最後是不是被重新派遣），跳下一位，不停整批。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 只在 <see cref="RunMode.CollectVentures"/> 模式下由 <c>OnTimeout</c> 呼叫；
+    ///    改名流程（<see cref="RunMode.Rename"/>）的逾時維持原本的「整條停下」。
+    /// ⚠️ 逾時當下 <c>OnTimeout</c> 觸發前 <c>TaskQueue</c> 已 <c>Abort()</c> 清空佇列，
+    ///    所以這裡是在空佇列上重新排「復原＋下一位」。
+    /// </remarks>
+    private void HandleCollectTimeout(string step)
+    {
+        collectConsecutiveTimeouts++;
+
+        var hasWork = collectIndex >= 0 && collectIndex < collectList.Count;
+        var name = hasWork ? collectList[collectIndex].OldName : "（未知）";
+        var retainerId = hasWork ? collectList[collectIndex].RetainerId : 0;
+
+        string outcome;
+        if (retainerId != 0 && TryLookupVenture(retainerId, out var state, out var remaining))
+        {
+            switch (state)
+            {
+                case VentureState.Idle:
+                    // 其實已經收回了，只是流程沒在逾時前認出來——成果沒有損失，重置連續計數。
+                    outcome = "但這一位現在是閒置狀態，探險其實已收回、成果沒有損失（只是流程沒及時認出）";
+                    collectedCount++;
+                    collectConsecutiveTimeouts = 0;
+                    break;
+                case VentureState.Running:
+                    outcome = $"而且這一位現在又在探險中（剩 {FormatRemaining(remaining)}）——很可能已被重新派遣";
+                    collectSkippedCount++;
+                    break;
+                case VentureState.Complete:
+                    outcome = "這一位的探險仍是「已完成、未收回」——沒有被重新派遣，只是這次沒收到";
+                    collectSkippedCount++;
+                    break;
+                default:
+                    outcome = "讀不到這一位的探險完成時刻";
+                    collectSkippedCount++;
+                    break;
+            }
+        }
+        else
+        {
+            outcome = "讀不到這一位的僱員資料";
+            collectSkippedCount++;
+        }
+
+        Svc.Log.Information(
+            $"[{InternalName}] 「{name}」在「{step}」逾時，{outcome}。跳過這一位，連續逾時 {collectConsecutiveTimeouts} 位。");
+
+        if (collectConsecutiveTimeouts >= MaxCollectConsecutiveTimeouts)
+        {
+            Svc.Chat.PrintError(
+                $"[TC Toolbox] 收回探險連續 {collectConsecutiveTimeouts} 位逾時，整批停止（UI 狀態可能不對，請回報）。");
+            StopRun($"連續 {collectConsecutiveTimeouts} 位逾時");
+            return;
+        }
+
+        Svc.Chat.PrintError($"[TC Toolbox] 「{name}」收回逾時，跳過改收下一位。");
+        EnqueueCollectRecovery();
+    }
+
+    /// <summary>
+    /// 收回逾時後的「盡量回到僱員清單，再跳下一位」復原步。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 自限：內部 10 秒期限到就回 <c>true</c> 往下走，絕不讓 <c>TaskQueue</c> 逾時再觸發一次
+    ///    <c>OnTimeout</c>（TaskQueue 逾時設 15 秒 &gt; 內部期限）。復原不成功也沒關係——下一位的
+    ///    傳喚鈴那一步會重新建立狀態。全程只按「返回／否／確認／讓僱員返回」，絕不重新派遣。
+    /// </remarks>
+    private void EnqueueCollectRecovery()
+    {
+        DateTime? deadline = null;
+        queue.Enqueue("收回逾時後回到僱員清單", () =>
+        {
+            deadline ??= DateTime.UtcNow.AddMilliseconds(10_000);
+            var expired = DateTime.UtcNow >= deadline.Value;
+
+            // 已經回到僱員清單＝復原完成。
+            if (UiHelper.IsAddonReady(RetainerListAddon)) return true;
+
+            var ask = UiHelper.GetAddon(RetainerTaskAskAddon);
+            if (UiHelper.IsReady(ask))
+            {
+                if (Throttle.Pass($"{InternalName}-AskReturn", 500))
+                    UiHelper.ClickButton(ask, ((AddonRetainerTaskAsk*)ask)->ReturnButton);
+                return expired ? true : false;
+            }
+
+            if (UiHelper.IsAddonReady(SelectYesnoAddon))
+            {
+                if (Throttle.Pass($"{InternalName}-CollectYesno", 500))
+                    UiHelper.ClickSelectYesnoNo();
+                return expired ? true : false;
+            }
+
+            var result = UiHelper.GetAddon(RetainerTaskResultAddon);
+            if (UiHelper.IsReady(result))
+            {
+                if (Throttle.Pass($"{InternalName}-ResultConfirm", 500))
+                    UiHelper.ClickButton(result, ((AddonRetainerTaskResult*)result)->ConfirmButton);
+                return expired ? true : false;
+            }
+
+            var menu = UiHelper.GetAddon(SelectStringAddon);
+            if (UiHelper.IsReady(menu))
+            {
+                var quitText = GetAddonText(AddonRowRetainerQuit);
+                if (quitText.Length > 0)
+                {
+                    var entries = UiHelper.GetSelectStringEntries(menu);
+                    var index = entries.FindIndex(e => e.StartsWith(quitText, StringComparison.Ordinal));
+                    if (index >= 0 && Throttle.Pass($"{InternalName}-Quit", 1_000))
+                        UiHelper.SelectStringEntry(menu, index);
+                }
+
+                return expired ? true : false;
+            }
+
+            return expired ? true : false;
+        }, 15_000);
+
         EnqueueNextCollect();
     }
 
