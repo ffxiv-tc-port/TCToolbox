@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
 using Dalamud.Memory;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
@@ -185,6 +187,47 @@ public static unsafe class UiHelper
         if (evt == null) return false;
 
         addon->ReceiveEvent(evt->State.EventType, (int)evt->Param, evt);
+        return true;
+    }
+
+    /// <summary>
+    /// 對 <c>InputString</c> 送出「確定＋名字」的合成 callback。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 值的排列逐字對應台服 7.20 實機錄製：<c>[0:int=0（確定）, 1:str=名字, 2:str=空字串]</c>。
+    /// 字串必須是非受控記憶體、FireCallback 期間有效、送完立即釋放（樣板同 ECommons <c>Callback.Fire</c>）。
+    /// 取不到 addon（或尚未就緒）回 <see langword="false"/>，呼叫端會重試。
+    /// </remarks>
+    public static bool FireInputStringConfirm(string name)
+    {
+        var addon = GetAddon("InputString");
+        if (!IsReady(addon)) return false;
+
+        var nameBytes = Encoding.UTF8.GetBytes(name ?? string.Empty);
+        var nameAlloc = Marshal.AllocHGlobal(nameBytes.Length + 1);
+        var emptyAlloc = Marshal.AllocHGlobal(1);
+        try
+        {
+            Marshal.Copy(nameBytes, 0, nameAlloc, nameBytes.Length);
+            Marshal.WriteByte(nameAlloc, nameBytes.Length, 0);
+            Marshal.WriteByte(emptyAlloc, 0, 0);
+
+            var values = stackalloc AtkValue[3];
+            values[0].Type = ValueType.Int;
+            values[0].Int = 0;
+            values[1].Type = ValueType.String;
+            values[1].String = (byte*)nameAlloc;
+            values[2].Type = ValueType.String;
+            values[2].String = (byte*)emptyAlloc;
+
+            addon->FireCallback(3, values, true);
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(nameAlloc);
+            Marshal.FreeHGlobal(emptyAlloc);
+        }
+
         return true;
     }
 }

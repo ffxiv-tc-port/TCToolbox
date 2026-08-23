@@ -189,6 +189,55 @@ public sealed unsafe class RetainerBatchRename : TcModule
     private const string RetainerListAddon = "RetainerList";
     private const string SelectStringAddon = "SelectString";
 
+    /// <summary><c>InputString</c> addon——改名輸入框（台服 7.20 實機錄製的 addon 名）。</summary>
+    private const string InputStringAddon = "InputString";
+
+    private const string TalkAddon = "Talk";
+
+    // ── CharaMake 改名：形象相關確認框（台服 EXD Lobby 表確認，改版換字串仍能跟著走）──
+
+    /// <summary>🔴 <c>Lobby</c>「要使用已儲存的角色形象嗎？」——保留容貌的安全閘門，按「是」。</summary>
+    private const uint LobbyRowUseSavedAppearance = 2044;
+
+    /// <summary><c>Lobby</c>「要儲存目前的形象嗎？」——按「否」（不另存範本）。</summary>
+    private const uint LobbyRowSaveAppearance = 2176;
+
+    /// <summary><c>Lobby</c>「確定要將僱員的形象設定成目前的樣子嗎？」——按「是」（此時預覽＝保留的原容貌）。</summary>
+    private const uint LobbyRowSetAppearanceNow = 621;
+
+    // ── CharaMake 改名：EXD 查不到、只能寫死的台服 7.20 實機字串 ──
+    // 🔴 這些字串在台服 EXD dump 裡不存在（管理人選單／性格／名字確認都是執行期組出來的），
+    //    只能照實機錄製寫死。改版換字串的失敗形式是「比對不到→不動作→逾時跳過」（fail-closed），
+    //    不會誤按，更不會進到空白捏臉畫面。
+
+    /// <summary>管理人選單「想改變僱員的樣貌、性格、名字」——用「樣貌」判別（該選單只有這一項含此詞）。</summary>
+    private const string VocateChangeAppearanceMarker = "樣貌";
+
+    /// <summary>性格選單第一項「開朗」。</summary>
+    private const string PersonalityFirstMarker = "開朗";
+
+    /// <summary>「確定要更改僱員X的設定嗎？」的兩個固定片段（X 是舊名或新名，不比對 X）。</summary>
+    private const string RenameSettingConfirmMarker1 = "更改僱員";
+
+    /// <inheritdoc cref="RenameSettingConfirmMarker1"/>
+    private const string RenameSettingConfirmMarker2 = "設定";
+
+    /// <summary>「確認好僱員的性格了嗎？」——SelectYesno 出現「性格」即此步，按「是」。</summary>
+    private const string PersonalityConfirmMarker = "性格";
+
+    /// <summary>管理人（僱員窗口）NPC 的參考列——讀第一個非空的 <c>Title</c> 當比對基準。</summary>
+    /// <remarks>這些列在台服 <c>ENpcResident</c> 的 <c>Title</c> 都是「僱員窗口」（2026-08-23 EXD dump 實查）。</remarks>
+    private static readonly uint[] VocateNpcTitleRows = [1000233, 1001963, 1003275, 1011198, 1018983];
+
+    /// <summary>與管理人 NPC 的互動距離（NPC 比鈴寬鬆一點）。</summary>
+    private const float VocateInteractDistance = 6f;
+
+    /// <summary>自動改名整段的內部期限（毫秒）：到了就放棄這位、去救裝備、換下一位（不讓 TaskQueue 逾時停整批）。</summary>
+    private const int AutoRenameInternalDeadlineMs = 90_000;
+
+    /// <summary>還沒看到任何改名視窗、卻已找不到管理人這麼久（毫秒）就早退（多半是沒站在管理人旁邊）。</summary>
+    private const int AutoRenameVocateSearchMs = 20_000;
+
     /// <summary>使用者放候選名單的檔名（在外掛設定資料夾底下）。</summary>
     private const string NamePoolFileName = "retainer_names.txt";
 
@@ -478,6 +527,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
 
     protected override void OnDisable()
     {
+        YesAlreadyIpc.Restore();
         Svc.Framework.Update -= OnUpdate;
         Svc.Chat.ChatMessage -= OnChatMessage;
 
@@ -711,6 +761,9 @@ public sealed unsafe class RetainerBatchRename : TcModule
 
     private static string GetLogMessageText(uint rowId) =>
         Svc.Data.GetExcelSheet<LogMessage>().GetRowOrDefault(rowId)?.Text.ExtractText() ?? string.Empty;
+
+    private static string GetLobbyText(uint rowId) =>
+        Svc.Data.GetExcelSheet<Lobby>().GetRowOrDefault(rowId)?.Text.ExtractText() ?? string.Empty;
 
     // ──────────────────────────── 名單池 ────────────────────────────
 
@@ -1307,66 +1360,20 @@ public sealed unsafe class RetainerBatchRename : TcModule
             return true;
         });
 
-        // ── d. 指派候選名字 → 錄製模式 → 等使用者手動改名 ──
-        queue.Enqueue("指派候選名字", () =>
+        // ── d. 改名：自動 CharaMake（預設）或退回錄製＋等手動 ──
+        if (Config.AutoCharaMakeRename)
         {
-            candidateAttempts = 0;
-            candidateExhausted = false;
-            candidateExhaustedReason = string.Empty;
-            currentCandidate = string.Empty;
-            sawNameTaken = false;
-            sawNameRejected = false;
-
-            if (!TryAssignNextCandidate())
-                return AbortWith(candidateExhaustedReason);
-
-            waitingForManualRename = true;
-            manualRenameConfirmed = false;
-            StartRecording(work);
-            return true;
-        });
-
-        queue.Enqueue($"等待手動改名（{work.OldName}）", () =>
+            EnqueueAssignCandidateAuto(work);
+            EnqueueQuitRetainer();
+            EnqueueLeaveBell(work);
+            EnqueueAutoCharaMakeRename(work);
+            EnqueueReturnToNeutral(work);
+            EnqueueReopenRetainerForRedress(work);
+        }
+        else
         {
-            if (manualRenameConfirmed) return true;
-            if (candidateExhausted) return AbortWith(candidateExhaustedReason);
-            return false;
-        }, ManualRenameTimeoutMs);
-
-        queue.Enqueue("結束錄製模式", () =>
-        {
-            waitingForManualRename = false;
-            if (!recordingStandalone) StopRecording();
-
-            var nowName = LookupRetainerName(work.RetainerId);
-            Svc.Log.Information(
-                $"[{InternalName}] 改名前「{work.OldName}」→ 目前「{nowName}」（最後指派的候選「{currentCandidate}」）。");
-
-            if (nowName.Length == 0 || nowName == work.OldName)
-            {
-                Svc.Log.Information(
-                    $"[{InternalName}] 名字沒有變化——可能是使用者取消了改名。仍然照常把裝備穿回去。");
-            }
-            else
-            {
-                renamedCount++;
-
-                // 🔑 用「僱員現在真正叫什麼」去對名單，不是用我們指派的候選 ——
-                //    使用者完全可能在改名畫面裡打了別的名字，那時候我們的指派是錯的。
-                if (candidates.Exists(c => c.Name == nowName))
-                {
-                    MarkCandidateUsed(nowName, work.RetainerId, work.OldName);
-                }
-                else
-                {
-                    Svc.Log.Information(
-                        $"[{InternalName}] 僱員現名不在名單內：「{nowName}」（不阻擋，只是這個名字沒有被記成已用）。");
-                }
-            }
-
-            currentCandidate = string.Empty;
-            return true;
-        });
+            EnqueueManualRenameFlow(work);
+        }
 
         // ── e. 穿回去 ──
         EnqueueRedress(work);
@@ -1967,6 +1974,505 @@ public sealed unsafe class RetainerBatchRename : TcModule
         }, 30_000);
     }
 
+
+    // ──────────────────────────── 自動 CharaMake 改名 ────────────────────────────
+
+    /// <summary>指派候選名字（自動改名版）——只設 <see cref="currentCandidate"/> 與旗標，不啟動錄製、不等手動。</summary>
+    private void EnqueueAssignCandidateAuto(WorkItem work)
+    {
+        queue.Enqueue($"指派候選名字（自動改名，{work.OldName}）", () =>
+        {
+            YesAlreadyIpc.Suppress();
+
+            candidateAttempts = 0;
+            candidateExhausted = false;
+            candidateExhaustedReason = string.Empty;
+            currentCandidate = string.Empty;
+            sawNameTaken = false;
+            sawNameRejected = false;
+
+            if (!TryAssignNextCandidate())
+                return AbortWith(candidateExhaustedReason);
+
+            return true;
+        });
+    }
+
+    /// <summary>讓僱員返回之後，關掉僱員清單、離開傳喚鈴，才能跟管理人互動開「有什麼事？」。</summary>
+    /// <remarks>📌 關法照抄 AutoRetainer <c>CloseRetainerList</c>：對 <c>RetainerList</c> 送 <c>FireCallback(1, [Int=-1])</c>。</remarks>
+    private void EnqueueLeaveBell(WorkItem work)
+    {
+        queue.Enqueue($"離開傳喚鈴（改名前，{work.OldName}）", () =>
+        {
+            if (!Svc.Condition[ConditionFlag.OccupiedSummoningBell] && !UiHelper.IsAddonReady(RetainerListAddon))
+                return true;
+
+            // 還停在僱員子選單就先選「讓僱員返回」退回清單。
+            var menu = UiHelper.GetAddon(SelectStringAddon);
+            if (UiHelper.IsReady(menu))
+            {
+                var quitText = GetAddonText(AddonRowRetainerQuit);
+                if (quitText.Length > 0)
+                {
+                    var entries = UiHelper.GetSelectStringEntries(menu);
+                    var index = entries.FindIndex(e => e.StartsWith(quitText, StringComparison.Ordinal));
+                    if (index >= 0)
+                    {
+                        if (Throttle.Pass($"{InternalName}-LeaveQuit", 800))
+                            UiHelper.SelectStringEntry(menu, index);
+                        return false;
+                    }
+                }
+            }
+
+            var list = UiHelper.GetAddon(RetainerListAddon);
+            if (UiHelper.IsReady(list))
+            {
+                if (Throttle.Pass($"{InternalName}-CloseRL", 800))
+                    UiHelper.FireCallback(list, false, -1);
+            }
+
+            return false;
+        }, 20_000);
+    }
+
+    /// <summary>
+    /// 自動操作 CharaMake 改名：互動管理人 → 「有什麼事？」→ 改變樣貌性格名字 → 選這位僱員 →
+    /// 一路按確認、保留容貌、性格選第一項、填名字送出。整段一步到底、內部自限。
+    /// </summary>
+    /// <remarks>
+    /// 🔴🔴 安全不變式：只在正面比對到「要使用已儲存的角色形象嗎？」時才按「是」並把 <c>gatePassed</c> 立起來；
+    /// 沒通過這道閘門，絕不確認任何「設定成目前的樣子」——那一步若在閘門前出現就當場中止整批，
+    /// 因為確認一個沒保留原容貌的預覽＝不可逆地把外觀改成空白。
+    /// <para>🔴 除了「儲存目前形象？＝否」，本狀態機只會按「是」，且每個「是」都要正面比對到對應提示；
+    /// 認不得的 SelectYesno 一律不按（fail-closed）。</para>
+    /// <para>🔴 失敗（找不到管理人／某步比不到／逾內部期限）不停整批：記一行 Information、回 true 往下走，
+    /// 讓後面的「重新傳喚＋穿回」把已卸的裝備救回來，再換下一位。只有安全閘門違例才 AbortWith。</para>
+    /// </remarks>
+    private void EnqueueAutoCharaMakeRename(WorkItem work)
+    {
+        DateTime? started = null;
+        var everSawRenameUi = false;
+        var gatePassed = false;
+        var nameSubmitted = false;
+
+        queue.Enqueue($"自動改名（{work.OldName}）", () =>
+        {
+            if (!TryReady(out var reason)) return AbortWith(reason);
+            started ??= DateTime.UtcNow;
+            var elapsed = (DateTime.UtcNow - started.Value).TotalMilliseconds;
+
+            // (0) 成功判定最優先：RetainerManager 讀到候選名＝改名生效。避免完成後又被管理人選單勾回去重跑。
+            var liveName = LookupRetainerName(work.RetainerId);
+            if (currentCandidate.Length > 0 && liveName == currentCandidate)
+            {
+                renamedCount++;
+                MarkCandidateUsed(currentCandidate, work.RetainerId, work.OldName);
+                Svc.Log.Information($"[{InternalName}] 「{work.OldName}」已自動改名為「{currentCandidate}」。");
+                currentCandidate = string.Empty;
+                return true;
+            }
+
+            // 名字被占用／不能用（OnChatMessage 設起）：換下一個候選、允許重新驅動輸入框。
+            if (sawNameTaken)
+            {
+                sawNameTaken = false;
+                MarkCurrentCandidate(RetainerNameCandidateState.Taken, "伺服器回報名字已被使用（自動改名）");
+                nameSubmitted = false;
+                if (candidateExhausted)
+                {
+                    Svc.Log.Information($"[{InternalName}] 「{work.OldName}」候選用盡（{candidateExhaustedReason}），放棄改名這一位。");
+                    currentCandidate = string.Empty;
+                    return true;
+                }
+            }
+            else if (sawNameRejected)
+            {
+                sawNameRejected = false;
+                MarkCurrentCandidate(RetainerNameCandidateState.Rejected, "伺服器回報名字不能使用（自動改名）");
+                nameSubmitted = false;
+                if (candidateExhausted)
+                {
+                    Svc.Log.Information($"[{InternalName}] 「{work.OldName}」候選用盡（{candidateExhaustedReason}），放棄改名這一位。");
+                    currentCandidate = string.Empty;
+                    return true;
+                }
+            }
+
+            // 內部期限：保證早於 TaskQueue 逾時放棄，永不觸發 OnTimeout→停整批。
+            if (elapsed >= AutoRenameInternalDeadlineMs)
+            {
+                Svc.Log.Information(
+                    $"[{InternalName}] 「{work.OldName}」自動改名逾內部期限（{AutoRenameInternalDeadlineMs / 1000} 秒）未完成，放棄這一位（去救裝備、換下一位）。");
+                currentCandidate = string.Empty;
+                return true;
+            }
+            if (!everSawRenameUi && elapsed >= AutoRenameVocateSearchMs)
+            {
+                Svc.Log.Information(
+                    $"[{InternalName}] 「{work.OldName}」等 {AutoRenameVocateSearchMs / 1000} 秒仍開不了管理人選單，放棄改名這一位（去救裝備、換下一位）。");
+                currentCandidate = string.Empty;
+                return true;
+            }
+
+            // (A) SelectYesno —— 一律讀提示文字決定。這裡是安全核心。
+            if (UiHelper.IsAddonReady(SelectYesnoAddon))
+            {
+                everSawRenameUi = true;
+                var prompt = UiHelper.GetSelectYesnoText();
+                if (prompt.Length == 0) return false;
+
+                var useSaved = GetLobbyText(LobbyRowUseSavedAppearance);
+                if (useSaved.Length > 0 && prompt.Contains(useSaved, StringComparison.Ordinal))
+                {
+                    if (Throttle.Pass($"{InternalName}-YesUseSaved", 600))
+                    {
+                        Svc.Log.Information($"[{InternalName}] 安全閘門命中「{useSaved}」→ 按「是」，保留原容貌。");
+                        UiHelper.ClickSelectYesnoYes();
+                        gatePassed = true;
+                    }
+                    return false;
+                }
+
+                var saveNow = GetLobbyText(LobbyRowSaveAppearance);
+                if (saveNow.Length > 0 && prompt.Contains(saveNow, StringComparison.Ordinal))
+                {
+                    if (Throttle.Pass($"{InternalName}-NoSaveAppearance", 600))
+                    {
+                        Svc.Log.Information($"[{InternalName}] 「{saveNow}」→ 按「否」（不另存範本）。");
+                        UiHelper.ClickSelectYesnoNo();
+                    }
+                    return false;
+                }
+
+                var setNow = GetLobbyText(LobbyRowSetAppearanceNow);
+                if (setNow.Length > 0 && prompt.Contains(setNow, StringComparison.Ordinal))
+                {
+                    if (!gatePassed)
+                        return AbortWith(
+                            $"安全中止：還沒通過「要使用已儲存的角色形象嗎？」的閘門，就出現「{setNow}」。" +
+                            $"不確認，以免把「{work.OldName}」的外觀改成空白（不可逆）。請改用手動改名，或把自動改名關掉。");
+
+                    if (Throttle.Pass($"{InternalName}-YesSetAppearance", 600))
+                    {
+                        Svc.Log.Information($"[{InternalName}] 「{setNow}」→ 按「是」（預覽＝保留的原容貌）。");
+                        UiHelper.ClickSelectYesnoYes();
+                    }
+                    return false;
+                }
+
+                if (prompt.Contains(RenameSettingConfirmMarker1, StringComparison.Ordinal) &&
+                    prompt.Contains(RenameSettingConfirmMarker2, StringComparison.Ordinal))
+                {
+                    if (Throttle.Pass($"{InternalName}-YesRenameSetting", 600))
+                    {
+                        Svc.Log.Information($"[{InternalName}] 更改設定確認框「{prompt}」→ 按「是」。");
+                        UiHelper.ClickSelectYesnoYes();
+                    }
+                    return false;
+                }
+
+                if (prompt.Contains(PersonalityConfirmMarker, StringComparison.Ordinal))
+                {
+                    if (Throttle.Pass($"{InternalName}-YesPersonality", 600))
+                    {
+                        Svc.Log.Information($"[{InternalName}] 性格確認框「{prompt}」→ 按「是」。");
+                        UiHelper.ClickSelectYesnoYes();
+                    }
+                    return false;
+                }
+
+                if (Throttle.Pass($"{InternalName}-UnknownYesno", 3000))
+                    Svc.Log.Information($"[{InternalName}] 自動改名遇到未預期的確認框「{prompt}」，不按任何鈕（fail-closed），等內部期限放棄。");
+                return false;
+            }
+
+            // (B) InputString —— 填候選名字。
+            if (UiHelper.IsAddonReady(InputStringAddon))
+            {
+                everSawRenameUi = true;
+
+                var nameLen = currentCandidate.Length == 0
+                    ? 0
+                    : new System.Globalization.StringInfo(currentCandidate).LengthInTextElements;
+                if (nameLen < 1 || nameLen > 6)
+                {
+                    Svc.Log.Information($"[{InternalName}] 候選「{currentCandidate}」長度 {nameLen} 不在 1~6，改用下一個。");
+                    MarkCurrentCandidate(RetainerNameCandidateState.Rejected, $"名字長度 {nameLen} 不符 1~6");
+                    nameSubmitted = false;
+                    if (candidateExhausted)
+                    {
+                        Svc.Log.Information($"[{InternalName}] 「{work.OldName}」候選用盡（{candidateExhaustedReason}），放棄改名這一位。");
+                        currentCandidate = string.Empty;
+                        return true;
+                    }
+                    return false;
+                }
+
+                if (Throttle.Pass($"{InternalName}-AutoInput", 2000))
+                {
+                    if (UiHelper.FireInputStringConfirm(currentCandidate))
+                    {
+                        nameSubmitted = true;
+                        Svc.Log.Information($"[{InternalName}] 於 InputString 填入候選「{currentCandidate}」並送出。");
+                    }
+                }
+                return false;
+            }
+
+            // (C) SelectString —— 依內容分派（不靠寫死索引）。
+            var ss = UiHelper.GetAddon(SelectStringAddon);
+            if (UiHelper.IsReady(ss))
+            {
+                var entries = UiHelper.GetSelectStringEntries(ss);
+
+                // 1. 管理人「有什麼事？」→ 改變樣貌性格名字。送出名字後不再重入。
+                var idxChange = entries.FindIndex(e => e.Contains(VocateChangeAppearanceMarker, StringComparison.Ordinal));
+                if (idxChange >= 0 && !nameSubmitted)
+                {
+                    everSawRenameUi = true;
+                    if (Throttle.Pass($"{InternalName}-VocateChange", 1000))
+                    {
+                        Svc.Log.Information($"[{InternalName}] 管理人選單第 {idxChange} 項「{entries[idxChange]}」→ 選它（改變樣貌性格名字）。");
+                        UiHelper.SelectStringEntry(ss, idxChange);
+                    }
+                    return false;
+                }
+
+                // 2. 選擇僱員 —— 用舊名首段比對（改名尚未生效，清單仍顯示舊名）。
+                var idxRetainer = entries.FindIndex(e => FirstNameToken(e) == work.OldName);
+                if (idxRetainer >= 0)
+                {
+                    everSawRenameUi = true;
+                    if (Throttle.Pass($"{InternalName}-SelectRetainerRename", 1000))
+                    {
+                        Svc.Log.Information($"[{InternalName}] 選擇僱員清單第 {idxRetainer} 項「{entries[idxRetainer]}」（比對舊名「{work.OldName}」）。");
+                        UiHelper.SelectStringEntry(ss, idxRetainer);
+                    }
+                    return false;
+                }
+
+                // 3. 性格選單 —— 第一項若是「開朗」就選它（int=0）。
+                if (entries.Count > 0 && entries[0].StartsWith(PersonalityFirstMarker, StringComparison.Ordinal))
+                {
+                    everSawRenameUi = true;
+                    if (Throttle.Pass($"{InternalName}-PersonalityFirst", 1000))
+                    {
+                        Svc.Log.Information($"[{InternalName}] 性格選單→ 選第一項「{entries[0]}」（int=0）。");
+                        UiHelper.SelectStringEntry(ss, 0);
+                    }
+                    return false;
+                }
+
+                if (Throttle.Pass($"{InternalName}-UnknownSelectString", 3000))
+                    Svc.Log.Information($"[{InternalName}] 自動改名遇到未預期的選單（{string.Join(" | ", entries)}），不動作，等內部期限。");
+                return false;
+            }
+
+            // (D) Talk —— 點掉推進。
+            if (UiHelper.IsAddonReady(TalkAddon))
+            {
+                if (Throttle.Pass($"{InternalName}-RenameTalk", 300))
+                    UiHelper.ClickTalkIfOpen();
+                return false;
+            }
+
+            // (E) 沒有任何改名視窗開著：還沒進到改名流程就互動管理人；否則等轉場。
+            if (!everSawRenameUi)
+            {
+                if (Throttle.Pass($"{InternalName}-Vocate", 1500))
+                {
+                    if (!InteractWithNearbyVocate() && Throttle.Pass($"{InternalName}-VocateMiss", 3000))
+                        Svc.Log.Information(
+                            $"[{InternalName}] 附近找不到可互動的僱員管理人（僱員窗口）或互動未生效——自動改名走管理人選單，請站在管理人旁邊。");
+                }
+            }
+
+            return false;
+        }, AutoRenameInternalDeadlineMs + 15_000);
+    }
+
+    /// <summary>改名之後（無論成敗）重新傳喚並選這位僱員，讓 <see cref="EnqueueRedress"/> 有僱員裝備欄可用。</summary>
+    /// <remarks>🔴 依現名（每幀重查 <see cref="LookupRetainerName"/>）選僱員，不是舊名。沒卸下裝備就整段跳過。</remarks>
+    private void EnqueueReopenRetainerForRedress(WorkItem work)
+    {
+        queue.Enqueue($"重新互動傳喚鈴（穿回前，{work.OldName}）", () =>
+        {
+            if (stashed.Count == 0) return true;
+            if (!TryReady(out var reason)) return AbortWith(reason);
+
+            if (Svc.Condition[ConditionFlag.OccupiedSummoningBell]) return true;
+            if (UiHelper.IsAddonReady(RetainerListAddon)) return true;
+
+            if (!Throttle.Pass($"{InternalName}-BellRedress", 1_500)) return false;
+
+            InteractWithNearbyBell();
+            return false;
+        }, 30_000);
+
+        queue.EnqueueWait("等待僱員清單開啟（穿回前）", () =>
+            stashed.Count == 0 || UiHelper.IsAddonReady(RetainerListAddon), 30_000);
+
+        queue.Enqueue("選擇僱員（穿回前，依現名）", () =>
+        {
+            if (stashed.Count == 0) return true;
+            if (!Throttle.Pass($"{InternalName}-SelectRetainerRedress", 1_000)) return false;
+
+            var addon = UiHelper.GetAddon(RetainerListAddon);
+            if (!UiHelper.IsReady(addon)) return false;
+
+            var liveName = LookupRetainerName(work.RetainerId);
+            if (liveName.Length == 0) return AbortWith("穿回前讀不到僱員現名，無法重新選取。");
+
+            if (!TryFindRetainerListIndex(addon, liveName, out var index, out var seenNames))
+                return AbortWith($"穿回前在僱員清單找不到「{liveName}」（讀到的是：{seenNames}）。");
+
+            UiHelper.FireCallback(
+                addon, true, RetainerListSelectEventId, (uint)index, default(AtkValue), default(AtkValue));
+            return true;
+        }, 20_000);
+
+        queue.EnqueueWait("等待僱員裝備欄載入（穿回前）", () =>
+            stashed.Count == 0 ||
+            (Svc.Condition[ConditionFlag.OccupiedSummoningBell] && TryGetRetainerEquipContainer(out _)),
+            30_000);
+    }
+
+    /// <summary>
+    /// 改名之後（或放棄之後）把殘留的改名視窗清乾淨、回到中立狀態，讓後面的「重新傳喚」互動得了鈴。
+    /// 回到中立時順便還原 YesAlready。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>不碰殘留的 SelectYesno</b>：改名中途放棄時可能停在安全關鍵的「要使用已儲存的角色形象嗎？」，
+    /// 亂按會進空白捏臉畫面（不可逆）。看到確認框就不動、等逾時 <see cref="StopRun"/>（安全，只卡這一位）。
+    /// <para>🔴 這是自動改名序列 YesAlready 的正常還原點；中止／停止／停用路徑由 <see cref="StopRun"/>／
+    /// <see cref="FinishRun"/>／<c>OnDisable</c> 各自還原（冪等）。</para>
+    /// </remarks>
+    private void EnqueueReturnToNeutral(WorkItem work)
+    {
+        queue.Enqueue($"離開改名畫面回到中立（{work.OldName}）", () =>
+        {
+            if (UiHelper.IsAddonReady(TalkAddon))
+            {
+                if (Throttle.Pass($"{InternalName}-NeutralTalk", 300))
+                    UiHelper.ClickTalkIfOpen();
+                return false;
+            }
+
+            var ss = UiHelper.GetAddon(SelectStringAddon);
+            if (UiHelper.IsReady(ss))
+            {
+                if (Throttle.Pass($"{InternalName}-NeutralCancelSS", 600))
+                    UiHelper.FireCallback(ss, false, -1);
+                return false;
+            }
+
+            var input = UiHelper.GetAddon(InputStringAddon);
+            if (UiHelper.IsReady(input))
+            {
+                if (Throttle.Pass($"{InternalName}-NeutralCancelInput", 600))
+                    UiHelper.FireCallback(input, false, -1);
+                return false;
+            }
+
+            if (UiHelper.IsAddonReady(SelectYesnoAddon))
+            {
+                // 🔴 殘留確認框可能是改名途中放棄時停在安全關鍵的那一步——絕不亂按，等逾時停止。
+                if (Throttle.Pass($"{InternalName}-NeutralYesnoWait", 3000))
+                    Svc.Log.Information($"[{InternalName}] 回中立時仍有確認框開著（改名可能中途放棄），不亂按，等逾時停止。");
+                return false;
+            }
+
+            // 中立（可能停在 RetainerList／世界）：還原 YesAlready，往下走去重新傳喚穿回。
+            YesAlreadyIpc.Restore();
+            return true;
+        }, 20_000);
+    }
+
+    /// <summary>取選單項第一段（僱員名）——僱員名不含空白，後面接全形空白＋狀態文字。</summary>
+    private static string FirstNameToken(string entry)
+    {
+        if (string.IsNullOrEmpty(entry)) return string.Empty;
+        var s = entry.TrimStart();
+        var cut = s.Length;
+        for (var i = 0; i < s.Length; i++)
+        {
+            var c = s[i];
+            if (c == ' ' || c == (char)0x3000 || c == (char)9 || c == '[' || c == (char)0xFF3B)
+            {
+                cut = i;
+                break;
+            }
+        }
+
+        return s[..cut].TrimEnd();
+    }
+
+    /// <summary>退回舊行為：指派候選 → 錄製＋等使用者手動改名 → 結束錄製。與自動改名互斥。</summary>
+    private void EnqueueManualRenameFlow(WorkItem work)
+    {
+        // ── d. 指派候選名字 → 錄製模式 → 等使用者手動改名 ──
+        queue.Enqueue("指派候選名字", () =>
+        {
+            candidateAttempts = 0;
+            candidateExhausted = false;
+            candidateExhaustedReason = string.Empty;
+            currentCandidate = string.Empty;
+            sawNameTaken = false;
+            sawNameRejected = false;
+
+            if (!TryAssignNextCandidate())
+                return AbortWith(candidateExhaustedReason);
+
+            waitingForManualRename = true;
+            manualRenameConfirmed = false;
+            StartRecording(work);
+            return true;
+        });
+
+        queue.Enqueue($"等待手動改名（{work.OldName}）", () =>
+        {
+            if (manualRenameConfirmed) return true;
+            if (candidateExhausted) return AbortWith(candidateExhaustedReason);
+            return false;
+        }, ManualRenameTimeoutMs);
+
+        queue.Enqueue("結束錄製模式", () =>
+        {
+            waitingForManualRename = false;
+            if (!recordingStandalone) StopRecording();
+
+            var nowName = LookupRetainerName(work.RetainerId);
+            Svc.Log.Information(
+                $"[{InternalName}] 改名前「{work.OldName}」→ 目前「{nowName}」（最後指派的候選「{currentCandidate}」）。");
+
+            if (nowName.Length == 0 || nowName == work.OldName)
+            {
+                Svc.Log.Information(
+                    $"[{InternalName}] 名字沒有變化——可能是使用者取消了改名。仍然照常把裝備穿回去。");
+            }
+            else
+            {
+                renamedCount++;
+
+                // 🔑 用「僱員現在真正叫什麼」去對名單，不是用我們指派的候選 ——
+                //    使用者完全可能在改名畫面裡打了別的名字，那時候我們的指派是錯的。
+                if (candidates.Exists(c => c.Name == nowName))
+                {
+                    MarkCandidateUsed(nowName, work.RetainerId, work.OldName);
+                }
+                else
+                {
+                    Svc.Log.Information(
+                        $"[{InternalName}] 僱員現名不在名單內：「{nowName}」（不阻擋，只是這個名字沒有被記成已用）。");
+                }
+            }
+
+            currentCandidate = string.Empty;
+            return true;
+        });
+    }
+
     // ─────────────────── 獨立流程：收回所有已完成探險 ───────────────────
 
     /// <summary>「收回所有已完成探險（不重派）」的前置閘門。</summary>
@@ -2311,6 +2817,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
 
     private void StopRun(string reason)
     {
+        YesAlreadyIpc.Restore();
         if (!recordingStandalone) StopRecording();
         waitingForManualRename = false;
         manualRenameConfirmed = false;
@@ -2337,6 +2844,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
 
     private void FinishRun(string reason)
     {
+        YesAlreadyIpc.Restore();
         if (!recordingStandalone) StopRecording();
         waitingForManualRename = false;
         lastSummary = runMode == RunMode.CollectVentures
@@ -2455,6 +2963,65 @@ public sealed unsafe class RetainerBatchRename : TcModule
     /// 對附近的傳喚鈴送出互動。
     /// 🔴 <c>IGameObject</c> 只在這一幀之內使用，不留到下一幀。
     /// </summary>
+    /// <summary>
+    /// 對附近的僱員管理人（<c>ENpcResident.Title</c>＝「僱員窗口」）送出互動，開「有什麼事？」選單。
+    /// 🔴 <c>IGameObject</c> 只在這一幀之內使用，不留到下一幀。
+    /// </summary>
+    /// <remarks>🔑 用 <c>BaseId</c> 查 <c>ENpcResident</c>（查表用 BaseId 安全）、比對 <c>Title</c>，不寫死中文、也不比對身分。</remarks>
+    private static bool InteractWithNearbyVocate()
+    {
+        var vocateTitle = GetVocateReferenceTitle();
+        if (vocateTitle.Length == 0) return false;
+
+        var player = Svc.Objects.LocalPlayer;
+        if (player == null) return false;
+        var playerPosition = player.Position;
+
+        Dalamud.Game.ClientState.Objects.Types.IGameObject? best = null;
+        var bestDistance = float.MaxValue;
+
+        foreach (var obj in Svc.Objects)
+        {
+            if (obj.ObjectKind != ObjectKind.EventNpc) continue;
+            if (!obj.IsTargetable) continue;
+            if (ResolveNpcTitle(obj.BaseId) != vocateTitle) continue;
+
+            var distance = Vector3.Distance(obj.Position, playerPosition);
+            if (distance >= VocateInteractDistance || distance >= bestDistance) continue;
+
+            bestDistance = distance;
+            best = obj;
+        }
+
+        if (best == null) return false;
+
+        var targetSystem = TargetSystem.Instance();
+        if (targetSystem == null) return false;
+
+        targetSystem->InteractWithObject(
+            (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)best.Address, false);
+        return true;
+    }
+
+    /// <summary>讀管理人（僱員窗口）NPC 的參考 <c>Title</c>——取候選列裡第一個非空的。</summary>
+    private static string GetVocateReferenceTitle()
+    {
+        foreach (var rowId in VocateNpcTitleRows)
+        {
+            var title = Svc.Data.GetExcelSheet<ENpcResident>().GetRowOrDefault(rowId)?.Title.ExtractText() ?? string.Empty;
+            if (title.Length > 0) return title;
+        }
+
+        return string.Empty;
+    }
+
+    /// <summary>用物件 <c>BaseId</c> 查它的 <c>ENpcResident.Title</c>（查表用 BaseId 安全）。</summary>
+    private static string ResolveNpcTitle(uint dataId)
+    {
+        if (dataId == 0) return string.Empty;
+        return Svc.Data.GetExcelSheet<ENpcResident>().GetRowOrDefault(dataId)?.Title.ExtractText() ?? string.Empty;
+    }
+
     private static bool InteractWithNearbyBell()
     {
         var names = GetBellNames();
@@ -3498,6 +4065,28 @@ public sealed unsafe class RetainerBatchRename : TcModule
 
     private void DrawOptions()
     {
+        var auto = Config.AutoCharaMakeRename;
+        if (ImGui.Checkbox("自動操作改名畫面（保留容貌、只改名字）", ref auto))
+        {
+            Config.AutoCharaMakeRename = auto;
+            Plugin.Instance.Config.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "預設開啟。改完裝之後自動走管理人選單「有什麼事？」→ 改變樣貌性格名字 → 選這位僱員 →\n" +
+                "一路按確認，並在「要使用已儲存的角色形象嗎？」按「是」保留原本的容貌，\n" +
+                "性格統一選第一項（開朗），最後填入候選名字送出。名字被占用會自動換下一個候選。\n" +
+                "\n" +
+                "每一步都要比對到預期的對話文字才動作，對不上就停手、逾時跳過這一位（fail-closed）——\n" +
+                "尤其「要使用已儲存的角色形象嗎？」那道閘門沒先通過，絕不確認任何「設定成目前的樣子」，\n" +
+                "以免把外觀改成空白（不可逆）。\n" +
+                "\n" +
+                "關掉＝退回舊行為：只自動卸裝／穿裝，改名畫面停在那裡等你手動操作（期間照舊錄製）。\n" +
+                "自動化萬一在某步卡住，關掉這格就能一鍵切回手動。");
+        }
+
         var collectFirst = Config.CollectCompletedVentureBeforeRename;
         if (ImGui.Checkbox("改名前先收回已完成的探險（不重新派遣）", ref collectFirst))
         {

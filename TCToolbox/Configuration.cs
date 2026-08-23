@@ -136,6 +136,24 @@ public sealed class RetainerNameCandidateStatus
 public sealed class RetainerBatchRenameConfig
 {
     /// <summary>
+    /// 自動操作 CharaMake 改名畫面（保留容貌、只改名字），而不是停在那裡等你手動改。
+    /// </summary>
+    /// <remarks>
+    /// 📌 預設 <c>true</c>（呼叫者裁決）：走管理人選單「有什麼事？」→ 改變樣貌性格名字 → 選這位僱員 →
+    /// 一路按確認、<b>在「要使用已儲存的角色形象嗎？」按「是」保留原容貌</b> → 性格統一選第一項（開朗）→
+    /// 填入候選名字 → 送出。名字被占用會自動換下一個候選。
+    /// <para>
+    /// 🔴 這條路徑的每一步都<b>比對話文字</b>才動作，對不上就<b>不動、逾時跳過</b>（fail-closed）——
+    /// 尤其「要使用已儲存的角色形象嗎？」那道閘門若沒先通過，絕不確認任何「設定成目前的樣子」，
+    /// 以免把外觀改成空白（不可逆）。
+    /// </para>
+    /// <para>
+    /// ⚠️ 關掉＝退回舊行為：只自動卸裝／穿裝，改名畫面停在那裡等你手動操作（期間照舊錄製）。
+    /// </para>
+    /// </remarks>
+    public bool AutoCharaMakeRename = true;
+
+    /// <summary>
     /// 使用者手動改名的期間，把畫面資訊寫進記錄。
     /// </summary>
     /// <remarks>
