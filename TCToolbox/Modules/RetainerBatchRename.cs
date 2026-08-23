@@ -119,6 +119,13 @@ public sealed unsafe class RetainerBatchRename : TcModule
     private const uint LogMessageAlreadyHasRight = 404;
     private const uint LogMessageRightGranted = 405;
 
+    // 🔴 這兩句在台服的執行期會把道具名嵌進句子（實機 LogMessage 2108：
+    //    「無法使用僱員幻想藥，現在已經擁有重新設定僱員容貌的權利了。」）——
+    //    LogMessage 404 的模板「無法使用，現在已經…」因此不是它的子字串，用 Contains(模板) 會漏、然後逾時。
+    //    改用**道具名無關的穩定錨**比對（2026-08-23 實機定案）。
+    private const string RightGrantedAnchor = "可以重新設定僱員的容貌了";
+    private const string AlreadyHasRightAnchor = "已經擁有重新設定僱員容貌的權利";
+
     /// <summary>
     /// 「名字已被占用」的候選訊息列（<c>Addon</c> 表）。
     /// </summary>
@@ -3422,15 +3429,15 @@ public sealed unsafe class RetainerBatchRename : TcModule
 
             if (queue.IsBusy)
             {
-                var granted = GetLogMessageText(LogMessageRightGranted);
-                if (granted.Length > 0 && text.Contains(granted, StringComparison.Ordinal))
+                // 🔴 用穩定錨，不用 LogMessage 模板——台服實機把道具名嵌進句子（LogMessage 2108），
+                //    404 模板比對不到，會害「等待改名權利生效」逾時。
+                if (text.Contains(RightGrantedAnchor, StringComparison.Ordinal))
                 {
                     sawRightGranted = true;
                     return;
                 }
 
-                var already = GetLogMessageText(LogMessageAlreadyHasRight);
-                if (already.Length > 0 && text.Contains(already, StringComparison.Ordinal))
+                if (text.Contains(AlreadyHasRightAnchor, StringComparison.Ordinal))
                 {
                     sawAlreadyHasRight = true;
                     return;
