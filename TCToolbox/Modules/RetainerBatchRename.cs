@@ -340,9 +340,6 @@ public sealed unsafe class RetainerBatchRename : TcModule
 
     private string recordingUnavailableReason = string.Empty;
 
-    /// <summary>上一次按「載入內建名單」的結果（列上顯示；讀到 0 筆時是紅字）。</summary>
-    private string builtInLoadResult = string.Empty;
-
     /// <summary>錄製用的庫存快照（(容器, 格號) → 內容）。只存值，不存指標。</summary>
     private readonly Dictionary<(InventoryType Type, int Slot), SlotSnapshot> inventorySnapshot = [];
 
@@ -795,55 +792,6 @@ public sealed unsafe class RetainerBatchRename : TcModule
             $"（原名「{previousRetainerName}」，RetainerId {retainerId}）。");
     }
 
-    /// <summary>
-    /// 讀組件內附的候選名單。
-    /// </summary>
-    /// <remarks>
-    /// 🔴 <b>不寫死完整資源名。</b>內嵌資源的預設名字是
-    /// <c>&lt;RootNamespace&gt;.&lt;資料夾&gt;.&lt;檔名&gt;</c>，只要 <c>RootNamespace</c> 或資料夾改了，
-    /// 寫死的字串就會對不上，而 <c>GetManifestResourceStream</c> 對不上時<b>回 null 不報錯</b>
-    /// ——結果是靜默的空名單。這裡改成列舉全部資源名找結尾相符的那一筆，
-    /// 找不到時把<b>實際存在的資源名</b>一起回報，讓失敗看得見。
-    /// </remarks>
-    private static List<string> ReadBuiltInNames(out string diagnostic)
-    {
-        var result = new List<string>();
-
-        var assembly = typeof(RetainerBatchRename).Assembly;
-        var resourceNames = assembly.GetManifestResourceNames();
-
-        string? match = null;
-        foreach (var candidate in resourceNames)
-        {
-            if (candidate.EndsWith(NamePoolFileName, StringComparison.Ordinal))
-            {
-                match = candidate;
-                break;
-            }
-        }
-
-        if (match == null)
-        {
-            diagnostic = "組件裡找不到內建名單資源（現有資源："
-                         + (resourceNames.Length == 0 ? "（無）" : string.Join("、", resourceNames)) + "）";
-            return result;
-        }
-
-        using var stream = assembly.GetManifestResourceStream(match);
-        if (stream == null)
-        {
-            diagnostic = $"資源「{match}」開不起來";
-            return result;
-        }
-
-        using var reader = new StreamReader(stream, Encoding.UTF8);
-        foreach (var line in SplitLines(reader.ReadToEnd()))
-            result.Add(line);
-
-        diagnostic = match;
-        return result;
-    }
-
     /// <summary>把文字切成一行一名（去空白、丟空行）。</summary>
     private static List<string> SplitLines(string text)
     {
@@ -890,27 +838,6 @@ public sealed unsafe class RetainerBatchRename : TcModule
         Plugin.Instance.Config.Save();
         parsedPoolText = "\uFFFF";
         return added.Count;
-    }
-
-    /// <summary>載入組件內附的 100 個候選名（追加、去重）。</summary>
-    private void LoadBuiltInNamePool()
-    {
-        var names = ReadBuiltInNames(out var diagnostic);
-
-        // 🔴 0 筆一定要看得見：靜默的空名單會讓使用者以為「按了就有」，
-        //    然後在前置閘門那裡看到「候選不足」卻不知道為什麼。
-        if (names.Count == 0)
-        {
-            builtInLoadResult = $"內建名單讀到 0 筆：{diagnostic}";
-            Svc.Log.Information($"[{InternalName}] {builtInLoadResult}");
-            Svc.Chat.PrintError($"[TC Toolbox] {builtInLoadResult}");
-            return;
-        }
-
-        var added = AppendNamesToPool(names);
-        builtInLoadResult = $"內建名單共 {names.Count} 筆，新增 {added} 筆（其餘已在名單裡）。";
-        Svc.Log.Information($"[{InternalName}] {builtInLoadResult}（資源：{diagnostic}）");
-        Svc.Chat.Print($"[TC Toolbox] {builtInLoadResult}");
     }
 
     /// <summary>
@@ -2234,25 +2161,6 @@ public sealed unsafe class RetainerBatchRename : TcModule
         ImGui.SameLine();
         if (ImGui.Button("複製檔案路徑##name-pool"))
             ImGui.SetClipboardText(path);
-
-        ImGui.SameLine();
-        if (ImGui.Button("載入內建名單##name-pool"))
-            LoadBuiltInNamePool();
-
-        if (ImGui.IsItemHovered())
-        {
-            ImGui.SetTooltip(
-                "把外掛內附的 100 個候選名加進名單池（追加、重複的會跳過，不會清掉既有狀態）。\n" +
-                "這些名字已經先對台服的 NPC 名稱過濾過，純中文、無符號。");
-        }
-
-        if (builtInLoadResult.Length > 0)
-        {
-            if (builtInLoadResult.Contains("0 筆", StringComparison.Ordinal))
-                ImGui.TextColored(BadColor, builtInLoadResult);
-            else
-                ImGui.TextDisabled(builtInLoadResult);
-        }
 
         ImGui.SameLine();
         if (ImGui.Button("重設所有候選狀態##name-pool"))
