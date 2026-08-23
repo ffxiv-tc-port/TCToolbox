@@ -1241,6 +1241,22 @@ public sealed unsafe class RetainerBatchRename : TcModule
         {
             if (!TryReady(out var reason)) return AbortWith(reason);
 
+            // 🔴 傳喚鈴佔用中喝不了藥（UseAction 靜默無效；2026-08-24 實機：上一隻穿完裝清單還開著，
+            //    下一隻卡在喝藥）。還在鈴的狀態就先自己收掉再喝。
+            if (Svc.Condition[ConditionFlag.OccupiedSummoningBell] || UiHelper.IsAddonReady(RetainerListAddon))
+            {
+                if (UiHelper.IsAddonReady(TalkAddon))
+                {
+                    if (Throttle.Pass($"{InternalName}-PreUseTalk", 300)) UiHelper.ClickTalkIfOpen();
+                    return false;
+                }
+
+                var list = UiHelper.GetAddon(RetainerListAddon);
+                if (UiHelper.IsReady(list) && Throttle.Pass($"{InternalName}-PreUseCloseRL", 800))
+                    UiHelper.FireCallback(list, true, -1);
+                return false;
+            }
+
             var inventory = InventoryManager.Instance();
             if (inventory == null) return AbortWith("讀不到背包內容。");
 
@@ -1480,8 +1496,25 @@ public sealed unsafe class RetainerBatchRename : TcModule
         // ── e. 穿回去 ──
         EnqueueRedress(work);
 
-        // ── f. 讓僱員返回 ──
+        // ── f. 讓僱員返回 → 離開傳喚鈴（下一隻要喝藥，鈴佔用中喝不了）──
         EnqueueQuitRetainer();
+
+        queue.Enqueue("離開傳喚鈴（收尾）", () =>
+        {
+            if (!Svc.Condition[ConditionFlag.OccupiedSummoningBell] && !UiHelper.IsAddonReady(RetainerListAddon))
+                return true;
+
+            if (UiHelper.IsAddonReady(TalkAddon))
+            {
+                if (Throttle.Pass($"{InternalName}-EndTalk", 300)) UiHelper.ClickTalkIfOpen();
+                return false;
+            }
+
+            var list = UiHelper.GetAddon(RetainerListAddon);
+            if (UiHelper.IsReady(list) && Throttle.Pass($"{InternalName}-EndCloseRL", 800))
+                UiHelper.FireCallback(list, true, -1);
+            return false;
+        }, 20_000);
 
         queue.EnqueueDelay(1_000, "間隔");
 
