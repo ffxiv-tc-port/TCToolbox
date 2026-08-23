@@ -1454,8 +1454,11 @@ public sealed unsafe class RetainerBatchRename : TcModule
             if (!TryGetRetainerEquipContainer(out var container))
                 return AbortWith("卸裝途中讀不到僱員裝備欄。");
 
+            // 🔴 只掃防具與飾品槽（2~12）。這裡曾經從槽 0 開始掃＝先撞主手武器
+            //    （MoveItemSlot 回傳 10 失敗→整段中止；2026-08-23 實機兩次都炸在「卡扎納爾之書」）。
+            //    「記錄目前裝備」那步的槽位過濾（.54）不夠——這個實際卸裝的迴圈自己又掃了一次容器。
             var slot = -1;
-            for (var i = 0; i < container->Size; i++)
+            for (var i = 2; i <= 12 && i < container->Size; i++)
             {
                 var item = container->GetInventorySlot(i);
                 if (item != null && item->ItemId != 0)
@@ -1465,7 +1468,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
                 }
             }
 
-            if (slot < 0) return true; // 空了＝這一步完成
+            if (slot < 0) return true; // 防具與飾品都空了＝這一步完成（武器與靈魂水晶刻意留著）
 
             var manager = InventoryManager.Instance();
             if (manager == null) return AbortWith("取不到 InventoryManager。");
