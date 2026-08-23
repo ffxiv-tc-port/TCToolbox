@@ -165,13 +165,13 @@ public sealed class RetainerBatchRenameConfig
     /// 卸裝之後等這麼久（毫秒）才驗證裝備真的離開僱員身上。
     /// </summary>
     /// <remarks>
-    /// 🔴 預設 2500ms。<c>MoveItemSlot</c> 會<b>同步</b>改好本機容器，所以呼叫完立刻回讀一定是成功的；
+    /// 🔴 預設 10000ms（2026-08-23 主 session 抽驗時從 2500 調高：要蓋過實機量到的退回延遲上界）。<c>MoveItemSlot</c> 會<b>同步</b>改好本機容器，所以呼叫完立刻回讀一定是成功的；
     /// 伺服器若拒絕，要幾秒之後才把道具退回來（本 repo 2026-07-31 實機量到的退回延遲是 3.9～10.6 秒，
     /// 但那批是在沒帶 <c>a6</c> 的情況下量的，帶了 <c>a6: true</c> 之後的延遲分佈未知）。
     /// ⚠️ 設太短的後果是「卸裝其實沒生效卻繼續往下跑」，那會讓改名整個失敗；
     /// 設太長只是慢一點。不確定就往大的調。
     /// </remarks>
-    public int UndressVerifyDelayMs = 2_500;
+    public int UndressVerifyDelayMs = 10_000;
 
     /// <summary>
     /// 同一位僱員最多連續試幾個候選名字。

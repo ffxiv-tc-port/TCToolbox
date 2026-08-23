@@ -2571,7 +2571,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
 
         ImGui.SetNextItemWidth(180f);
         var delay = Config.UndressVerifyDelayMs;
-        if (ImGui.SliderInt("卸裝後等待伺服器確認（毫秒）", ref delay, 500, 10_000))
+        if (ImGui.SliderInt("卸裝後等待伺服器確認（毫秒）", ref delay, 500, 20_000))
         {
             Config.UndressVerifyDelayMs = delay;
             Plugin.Instance.Config.Save();
