@@ -1260,6 +1260,8 @@ public sealed unsafe class RetainerBatchRename : TcModule
             return true;
         });
 
+        var useRetries = 0;
+        DateTime? lastUseAt = null;
         queue.Enqueue("等待改名權利生效", () =>
         {
             // 🔑 三個獨立訊號，任一成立就往下走：
@@ -1279,8 +1281,28 @@ public sealed unsafe class RetainerBatchRename : TcModule
             var inventory = InventoryManager.Instance();
             if (inventory == null) return false;
 
-            return inventory->GetInventoryItemCount(FantasiaItemId) < fantasiaCountBeforeUse;
-        }, 15_000);
+            if (inventory->GetInventoryItemCount(FantasiaItemId) < fantasiaCountBeforeUse) return true;
+
+            // 🔴 UseAction 有時靜默沒生效（2026-08-24 實機：第一次按開始整輪沒用藥就逾時）。
+            //    等 4 秒沒任何訊號就自動再用一次，最多 3 次，而不是逾時把整輪停掉。
+            lastUseAt ??= DateTime.UtcNow;
+            if ((DateTime.UtcNow - lastUseAt.Value).TotalMilliseconds >= 4_000)
+            {
+                if (++useRetries > 3)
+                    return AbortWith($"用了 {useRetries} 次{ItemNames.Get(FantasiaItemId)}都沒有任何回應（訊息／數量都沒變）。");
+
+                var actionManager = ActionManager.Instance();
+                if (actionManager != null)
+                {
+                    Svc.Log.Information($"[{InternalName}] 沒等到改名權利訊號，重試使用{ItemNames.Get(FantasiaItemId)}（第 {useRetries} 次重試）。");
+                    actionManager->UseAction(ActionType.Item, FantasiaItemId, extraParam: 65535);
+                }
+
+                lastUseAt = DateTime.UtcNow;
+            }
+
+            return false;
+        }, 30_000);
 
         // ── b. 開鈴 → 選僱員 ──
         EnqueueOpenRetainer(work);
@@ -1382,17 +1404,36 @@ public sealed unsafe class RetainerBatchRename : TcModule
 
         EnqueueUndress(work);
 
-        // 📌 沒有卸任何東西（0 件或全是武器/水晶）就不必等伺服器確認——實機這 10 秒白等，
-        //    而且招呼 Talk 正好開著時，這 10 秒看起來就像「卡住沒推進」。
-        DateTime? undressDelayStart = null;
+        // 📌 自適應驗證（2026-08-24：固定等 10 秒實機嫌久）：防具欄（槽 2~12）**連續 3 秒保持空**
+        //    ＝伺服器沒把裝備退回，就前進；期間有東西彈回來＝退回，計時歸零並由下一步的檢查停下。
+        //    Config.UndressVerifyDelayMs 仍是總上限（伺服器極慢時最多等這麼久）。
+        DateTime? undressEmptySince = null;
+        DateTime? undressWaitStart = null;
         queue.Enqueue("等待伺服器確認卸裝", () =>
         {
             if (stashed.Count == 0) return true;
             if (UiHelper.IsAddonReady(TalkAddon) && Throttle.Pass($"{InternalName}-BellTalk", 300))
                 UiHelper.ClickTalkIfOpen();
-            undressDelayStart ??= DateTime.UtcNow;
-            return (DateTime.UtcNow - undressDelayStart.Value).TotalMilliseconds >= Config.UndressVerifyDelayMs;
-        }, Config.UndressVerifyDelayMs + 20_000);
+
+            undressWaitStart ??= DateTime.UtcNow;
+            if ((DateTime.UtcNow - undressWaitStart.Value).TotalMilliseconds >= Math.Max(Config.UndressVerifyDelayMs, 3_000))
+                return true; // 撐滿上限＝交給下一步「驗證卸裝結果」做最終判定
+
+            var armorEmpty = true;
+            if (TryGetRetainerEquipContainer(out var c))
+            {
+                foreach (var g in stashed)
+                {
+                    var item = c->GetInventorySlot(g.Slot);
+                    if (item != null && item->ItemId != 0) { armorEmpty = false; break; }
+                }
+            }
+            else armorEmpty = false;
+
+            if (!armorEmpty) { undressEmptySince = null; return false; }
+            undressEmptySince ??= DateTime.UtcNow;
+            return (DateTime.UtcNow - undressEmptySince.Value).TotalMilliseconds >= 3_000;
+        }, Config.UndressVerifyDelayMs + 30_000);
 
         queue.Enqueue("驗證卸裝結果", () =>
         {
@@ -2088,6 +2129,19 @@ public sealed unsafe class RetainerBatchRename : TcModule
             UiHelper.SelectStringEntry(addon, index);
             return true;
         }, 30_000);
+
+        // 僱員退下的道別 Talk 自己點掉，等指令選單真的關了才算退完
+        //（2026-08-24 實機：最後結束時的對話停著等手動，下一隻也會因此接不上）。
+        queue.Enqueue("等僱員退下", () =>
+        {
+            if (UiHelper.IsAddonReady(TalkAddon))
+            {
+                if (Throttle.Pass($"{InternalName}-QuitFarewell", 300)) UiHelper.ClickTalkIfOpen();
+                return false;
+            }
+
+            return !IsRetainerSubmenuOpen();
+        }, 15_000);
     }
 
 
