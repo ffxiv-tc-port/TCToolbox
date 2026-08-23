@@ -229,7 +229,9 @@ public static unsafe class UiHelper
     {
         raceText = string.Empty;
         var addon = GetAddon(addonName);
-        if (!IsReady(addon)) return false;
+        // 🔴 CharaMake 根 addon 的 IsReady（IsVisible + LoadedState）在實機恆 false（隱形容器），
+        //    這裡只判空——AtkValues 是 addon 存活期間有效的受控讀取。
+        if (addon == null) return false;
         if (addon->AtkValuesCount < 3) return false;
 
         var state = addon->AtkValues[0];

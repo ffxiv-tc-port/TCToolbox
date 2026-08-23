@@ -1465,6 +1465,19 @@ public sealed unsafe class RetainerBatchRename : TcModule
             }
 
 
+            // 🔴🔴 崩潰硬守衛（2026-08-23 實機 C0000005）：沒有「傳喚中的僱員」時對
+            //    RetainerEquippedItems 呼叫 MoveItemSlot＝原生層解參考空僱員＝把遊戲弄崩。
+            //    IsLoaded 會殘留上一次傳喚的 true，不能當「僱員在場」的證據——
+            //    真值＝RetainerManager.GetActiveRetainer() 非空且就是這一位。不在場就等（逾時由步驟上限管）。
+            var rm = RetainerManager.Instance();
+            var active = rm == null ? null : rm->GetActiveRetainer();
+            if (active == null || active->RetainerId != work.RetainerId)
+            {
+                if (Throttle.Pass($"{InternalName}-NoActiveRetainer", 3000))
+                    Svc.Log.Information($"[{InternalName}] 僱員「{work.OldName}」不在傳喚狀態（active={(active == null ? "無" : active->RetainerId.ToString())}），等待中——絕不在這狀態搬裝備。");
+                return false;
+            }
+
             if (!Throttle.Pass($"{InternalName}-Undress", 200)) return false;
 
             // 🔴 只數「真的要執行搬移」的次數。這行曾排在節流之前＝每個畫格都 ++，
@@ -1548,6 +1561,19 @@ public sealed unsafe class RetainerBatchRename : TcModule
 
                 stashed.Clear();
                 return true;
+            }
+
+            // 🔴🔴 崩潰硬守衛（2026-08-23 實機 C0000005）：沒有「傳喚中的僱員」時對
+            //    RetainerEquippedItems 呼叫 MoveItemSlot＝原生層解參考空僱員＝把遊戲弄崩。
+            //    IsLoaded 會殘留上一次傳喚的 true，不能當「僱員在場」的證據——
+            //    真值＝RetainerManager.GetActiveRetainer() 非空且就是這一位。不在場就等（逾時由步驟上限管）。
+            var rm = RetainerManager.Instance();
+            var active = rm == null ? null : rm->GetActiveRetainer();
+            if (active == null || active->RetainerId != work.RetainerId)
+            {
+                if (Throttle.Pass($"{InternalName}-NoActiveRetainer", 3000))
+                    Svc.Log.Information($"[{InternalName}] 僱員「{work.OldName}」不在傳喚狀態（active={(active == null ? "無" : active->RetainerId.ToString())}），等待中——絕不在這狀態搬裝備。");
+                return false;
             }
 
             if (!Throttle.Pass($"{InternalName}-Redress", 200)) return false;
@@ -2121,7 +2147,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
             if (UiHelper.IsReady(list))
             {
                 if (Throttle.Pass($"{InternalName}-CloseRL", 800))
-                    UiHelper.FireCallback(list, false, -1);
+                    UiHelper.FireCallback(list, true, -1); // 🔴 close 要 true（實機錄製的手動關法），false 送過去沒反應
             }
 
             return false;
@@ -2309,7 +2335,9 @@ public sealed unsafe class RetainerBatchRename : TcModule
 
             // (A3) CharaMake 編輯器——只有「閘門已過＋剛剛真的載入了儲存檔＋編輯器帶著已載入的外觀」
             //     三者同時成立才按「完成」（_CharaMakeFeature [Int=100]）。空白編輯器一律不碰、等內部期限。
-            if (UiHelper.IsAddonReady(CharaMakeAddon))
+            // 🔴 CharaMake 根 addon 的 IsReady 在實機恆 false（隱形容器），要用子視窗 _CharaMakeFeature
+            //    判「編輯器開著」（2026-08-23 實機：A3 分支從沒進過，完成鍵是使用者手動按的）。
+            if (UiHelper.IsAddonReady(CharaMakeFeatureAddon) || UiHelper.GetAddon(CharaMakeAddon) != null)
             {
                 everSawRenameUi = true;
 
@@ -2506,7 +2534,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
             if (UiHelper.IsReady(ss))
             {
                 if (Throttle.Pass($"{InternalName}-NeutralCancelSS", 600))
-                    UiHelper.FireCallback(ss, false, -1);
+                    UiHelper.FireCallback(ss, true, -1); // 🔴 close 要 true，同上
                 return false;
             }
 
