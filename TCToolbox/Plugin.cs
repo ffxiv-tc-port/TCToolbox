@@ -107,6 +107,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AchievementProgressTracker());
         Modules.Add(new ChatCoordsOpenMap());
         Modules.Add(new LoginCommands());
+        Modules.Add(new AetherCurrentTracker());
 
         foreach (var module in Modules)
         {

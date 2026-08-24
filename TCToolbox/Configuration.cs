@@ -83,8 +83,26 @@ public sealed class Configuration : IPluginConfiguration
     public AutoCrafterGathererManualConfig CrafterGathererManual { get; set; } = new();
     public QuickSplitStacksConfig QuickSplitStacks { get; set; } = new();
     public CabinetStoreAllConfig CabinetStoreAll { get; set; } = new();
+    public AetherCurrentTrackerConfig AetherCurrentTracker { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
+}
+
+/// <summary><see cref="Modules.AetherCurrentTracker"/> 的設定。</summary>
+public sealed class AetherCurrentTrackerConfig
+{
+    /// <summary>在畫面上把風脈泉的位置畫出來。</summary>
+    public bool ShowWorldOverlay { get; set; } = true;
+
+    /// <summary>畫面外的目標在螢幕邊緣畫箭頭指出方向。</summary>
+    public bool ShowOffScreenArrows { get; set; } = true;
+
+    /// <summary>已共鳴的也畫（細灰圈）。</summary>
+    /// <remarks>
+    /// 📌 預設 <see langword="false"/>：已經共鳴過的對「還差哪幾個」沒有幫助，
+    /// 全畫出來只會讓畫面變亂。想確認位置的人再打開。
+    /// </remarks>
+    public bool ShowResonatedInOverlay { get; set; }
 }
 
 /// <summary><see cref="Modules.CabinetStoreAll"/> 的設定。</summary>
