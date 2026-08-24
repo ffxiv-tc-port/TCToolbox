@@ -757,91 +757,42 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
     // 而那個函式讀的是 AgentInventoryContext 的 EventParams，索引對不上；
     // 而且那個選單裡有「丟棄」，點錯一格的代價太高。置物櫃走 TransferViaChest。
 
+    /// <remarks>
+    /// 📌 2026-08-25：判斷順序、索引算法與那行選單傾印診斷都原封不動搬進
+    /// <see cref="InventoryContextMenu.TryFireEntry"/> 供「道具快速拆分」共用，
+    /// 這裡只剩「哪種失敗印哪一句聊天訊息」——那部分是轉移專用的措辭，沒有搬。
+    /// 對使用者可見的行為（聊天訊息內容、節流鍵、Information 診斷）一個字都沒有改。
+    /// ⚠️ 唯一的差異在 <c>Debug</c> 級那一行：搬過去之後不再附帶道具名。
+    /// 使用者跑 LogLevel 2 本來就收不到 Debug，所以那行對回報沒有影響。
+    /// </remarks>
     private bool TryFireContextMenuEntry(AgentInventoryContext* agent, uint addonRowId, string displayName)
     {
-        var wanted = Svc.Data.GetExcelSheet<Addon>()?.GetRowOrDefault(addonRowId)?.Text.ExtractText().Trim();
-        if (string.IsNullOrEmpty(wanted))
+        var result = InventoryContextMenu.TryFireEntry(agent, addonRowId, InternalName, out var wanted);
+
+        switch (result)
         {
-            Svc.Log.Warning($"[{InternalName}] 讀不到 Addon#{addonRowId} 的字串，無法比對選單項目。");
-            return false;
+            case ContextMenuFireResult.Fired:
+                return true;
+
+            case ContextMenuFireResult.NotFound:
+                if (Throttle.Pass("AutoInventoryTransfer-NoMenuEntry", 3_000))
+                    Svc.Chat.PrintError($"[TC Toolbox] 右鍵選單裡找不到「{wanted}」，「{displayName}」未轉移。");
+                return false;
+
+            case ContextMenuFireResult.InSubmenu:
+                if (Throttle.Pass("AutoInventoryTransfer-Submenu", 3_000))
+                    Svc.Chat.PrintError($"[TC Toolbox] 「{wanted}」被收在次選單裡，請改用手動拖放。");
+                return false;
+
+            case ContextMenuFireResult.Disabled:
+                if (Throttle.Pass("AutoInventoryTransfer-MenuDisabled", 3_000))
+                    Svc.Chat.PrintError($"[TC Toolbox] 「{wanted}」目前無法使用，「{displayName}」未轉移。");
+                return false;
+
+            // LabelUnavailable／AddonUnavailable 原本就只寫 Warning、不對使用者說話（已在共用端寫過）。
+            default:
+                return false;
         }
-
-        var startIndex = Math.Clamp(agent->ContexItemStartIndex, 0, 98);
-        var itemCount = Math.Clamp(agent->ContextItemCount, 0, 98 - startIndex);
-
-        var index = -1;
-        var labels = new string[itemCount];
-        for (var entry = 0; entry < itemCount; entry++)
-        {
-            var v = agent->EventParams[startIndex + entry];
-            if (v.Type is not FFXIVClientStructs.FFXIV.Component.GUI.ValueType.String
-                and not FFXIVClientStructs.FFXIV.Component.GUI.ValueType.ManagedString)
-                continue;
-
-            var ptr = v.String.Value;
-            if (ptr == null) continue;
-            labels[entry] = MemoryHelper.ReadSeStringNullTerminated((nint)ptr).TextValue.Trim();
-            if (index == -1 && labels[entry] == wanted) index = entry;
-        }
-
-        // 選單長相一律記下來（Information 級，因為使用者的記錄等級會濾掉 DBG）。
-        // 「▸」標的是被收進二級指令的項目——那是最可能讓找不到的原因，
-        // 而且從錯誤訊息裡看不出來，只能靠這行分辨「沒有這個項目」與「在二級選單裡」。
-        var dump = new string[itemCount];
-        for (var entry = 0; entry < itemCount; entry++)
-        {
-            var inSubmenu = (agent->ContextItemSubmenuMask & (1u << entry)) != 0;
-            dump[entry] = $"{entry}{(inSubmenu ? "▸" : "")}:{labels[entry]}";
-        }
-
-        Svc.Log.Information(
-            $"[{InternalName}] 找「{wanted}」→ {(index == -1 ? "沒找到" : $"第 {index} 項")}；" +
-            $"選單 {itemCount} 項（起點 EventParams[{startIndex}]，▸＝二級指令）：{string.Join(" | ", dump)}");
-
-        if (index == -1)
-        {
-            if (Throttle.Pass("AutoInventoryTransfer-NoMenuEntry", 3_000))
-                Svc.Chat.PrintError($"[TC Toolbox] 右鍵選單裡找不到「{wanted}」，「{displayName}」未轉移。");
-            return false;
-        }
-
-        // 被收進次選單的項目不能直接用這個序號觸發（那是主選單的列號）。
-        if ((agent->ContextItemSubmenuMask & (1u << index)) != 0)
-        {
-            Svc.Log.Warning($"[{InternalName}] 「{wanted}」在次選單裡（submenu mask），無法直接觸發。");
-            if (Throttle.Pass("AutoInventoryTransfer-Submenu", 3_000))
-                Svc.Chat.PrintError($"[TC Toolbox] 「{wanted}」被收在次選單裡，請改用手動拖放。");
-            return false;
-        }
-
-        if (agent->IsContextItemDisabled(index))
-        {
-            Svc.Log.Warning($"[{InternalName}] 選單項目 {index}（{wanted}）是停用狀態。");
-            if (Throttle.Pass("AutoInventoryTransfer-MenuDisabled", 3_000))
-                Svc.Chat.PrintError($"[TC Toolbox] 「{wanted}」目前無法使用，「{displayName}」未轉移。");
-            return false;
-        }
-
-        var addonId = agent->AgentInterface.GetAddonId();
-        // 判空集中在 UiHelper.GetAddonById（AtkStage.Instance() 與 RaptureAtkUnitManager 兩層都可能 null）。
-        var addon = UiHelper.GetAddonById(addonId);
-        if (addon == null)
-        {
-            Svc.Log.Warning($"[{InternalName}] 取不到右鍵選單 addon，「{displayName}」未轉移。");
-            return false;
-        }
-
-        Svc.Log.Debug($"[{InternalName}] 觸發選單項目 {index}（{wanted}）給「{displayName}」");
-
-        var values = stackalloc AtkValue[5];
-        for (var i = 0; i < 5; i++)
-        {
-            values[i].Type = FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Int;
-            values[i].Int = 0;
-        }
-        values[1].Int = index;
-        addon->FireCallback(5, values, true);
-        return true;
     }
 
     private void OpenForItemSlotDetour(
