@@ -184,7 +184,10 @@ public sealed unsafe class QuickSplitStacks : TcModule
         queue.Abort();
         pending = target;
         popupOpening = true;
-        popupPos = ImGui.GetMousePos();
+
+        // 🔴 刻意不在這裡讀 ImGui 的滑鼠座標：這支是右鍵選單的 callback，
+        //    由遊戲的選單處理流程叫進來，不在 ImGui 的繪製框架裡。
+        //    位置改在 DrawPopup 的第一幀取（見 popupOpening）。
 
         // 記住上次填的數字很方便（「每次都拆 99」是常見用法），但不能超過這一疊的上限。
         amountInput = Math.Clamp(Config.RememberAmount ? Config.LastAmount : 1, 1, Math.Max(1, target.Quantity - 1));
@@ -202,6 +205,8 @@ public sealed unsafe class QuickSplitStacks : TcModule
 
         if (popupOpening)
         {
+            // 開窗的第一幀才取滑鼠座標——這裡確定在 ImGui 的繪製框架內。
+            popupPos = ImGui.GetMousePos();
             ImGui.SetNextWindowPos(popupPos + new Vector2(12f, 12f), ImGuiCond.Always);
             ImGui.SetNextWindowFocus();
             popupOpening = false;
