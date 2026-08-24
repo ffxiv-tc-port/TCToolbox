@@ -191,7 +191,11 @@ public sealed unsafe class AutoCrafterGathererManual : TcModule
                     Svc.Log.Information(
                         $"[{InternalName}] 連續 {consecutiveFailures} 次使用指南後狀態仍未出現，" +
                         $"暫停 {BackoffMs / 60_000} 分鐘（職業 {jobId}、狀態 {statusId}）。");
-                    Throttle.Pass("AutoCrafterGathererManual-Use", BackoffMs);
+
+                    // 🔴 一定要用 Block 不能用 Pass。Pass 在鍵還在冷卻中時直接 return false、
+                    //    完全不寫時間 —— 而「剛用完道具、30 秒冷卻還沒過」正是我們要設退避的那一刻，
+                    //    所以 Pass 在真正需要它的時候一律是無操作，而且不報錯。
+                    Throttle.Block("AutoCrafterGathererManual-Use", BackoffMs);
                     consecutiveFailures = 0;
                 }
             }
