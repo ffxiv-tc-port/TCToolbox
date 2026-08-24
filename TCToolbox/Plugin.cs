@@ -86,6 +86,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new CustomDeliveriesOverview());
         Modules.Add(new AutoCustomDeliveryResult());
         Modules.Add(new AutoRequestItemSubmit());
+        Modules.Add(new AutoCrafterGathererManual());
         Modules.Add(new ARSwitcher());
 
         // ④ 介面 · 雜項
