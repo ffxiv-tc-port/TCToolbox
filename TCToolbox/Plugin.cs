@@ -71,6 +71,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new OptimizedEnemyList());
         Modules.Add(new OptimizedTargetInfo());
         Modules.Add(new AutoRetarget());
+        Modules.Add(new AutoCheckFoodUsage());
         Modules.Add(new AutoRefocus());
         Modules.Add(new MarkerInPartyList());
         Modules.Add(new AutoPlayerCommend());
