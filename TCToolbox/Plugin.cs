@@ -52,6 +52,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new OptimizedFreeCompanyChest());
         Modules.Add(new ShopDefaults());
         Modules.Add(new OptimizedFreeShop());
+        Modules.Add(new ShopDisplayRealItemIcon());
         Modules.Add(new QuickSplitStacks());
         Modules.Add(new CopyItemNameContextMenu());
         Modules.Add(new HuijiWikiContextMenu());
