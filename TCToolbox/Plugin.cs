@@ -80,6 +80,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new PFPageSizeCustomize());
         Modules.Add(new PartyFinderFilter());
         Modules.Add(new BetterPartyFinderSort());
+        Modules.Add(new NoAutoClosePartyFinder());
         Modules.Add(new FateTracker());
         Modules.Add(new FateLevelSync());
 
