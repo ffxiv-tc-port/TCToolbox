@@ -85,6 +85,7 @@ public sealed class Configuration : IPluginConfiguration
     public QuickSplitStacksConfig QuickSplitStacks { get; set; } = new();
     public CabinetStoreAllConfig CabinetStoreAll { get; set; } = new();
     public AetherCurrentTrackerConfig AetherCurrentTracker { get; set; } = new();
+    public ContentFinderCommandConfig ContentFinderCommand { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
 }
@@ -1299,6 +1300,13 @@ public sealed class DutyAnnounceConfig
     /// ⚠️ 等待期間離開副本區域的話這次播報會被取消——否則那句話會送到副本外面去。
     /// </remarks>
     public int DelayMs = 1_000;
+}
+
+/// <summary>指令開啟任務搜尋器。</summary>
+public sealed class ContentFinderCommandConfig
+{
+    /// <summary>開啟搜尋器後在聊天欄提示（記錄一律會寫，不受這格影響）。</summary>
+    public bool NotifyOnOpen = true;
 }
 
 /// <summary>登入後執行自訂指令。</summary>
