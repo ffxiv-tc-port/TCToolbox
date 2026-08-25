@@ -114,7 +114,10 @@ public sealed unsafe class AutoJoinPartyFinder : TcModule
     private void OnDetailSetup(AddonEvent type, AddonArgs args)
     {
         detailOpenedTick = Environment.TickCount64;
-        handledThisOpen = false;
+
+        // 🔴 若這次詳細視窗是 NoAutoClosePartyFinder 在刷新時「程式重開」的，就不自動加入
+        //    （否則兩模組同開時，別人加入／離開造成的刷新會被誤當成使用者主動開詳細而自動加入）。
+        handledThisOpen = PartyFinderCoordination.ConsumeProgrammaticReopen();
     }
 
     private void OnDetailFinalize(AddonEvent type, AddonArgs args)

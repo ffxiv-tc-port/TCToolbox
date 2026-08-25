@@ -184,6 +184,8 @@ public sealed unsafe class NoAutoClosePartyFinder : TcModule
             if (agent == null) return;
             if (UiHelper.IsAddonReady(DetailAddon)) return; // 已經開著就不重複開
 
+            // 🔴 標記這是「程式重開」，讓 AutoJoinPartyFinder 那側不要把這次刷新當成使用者主動開詳細而自動加入。
+            PartyFinderCoordination.MarkProgrammaticReopen();
             agent->OpenListing(listingId);
         }
         catch (Exception ex)
