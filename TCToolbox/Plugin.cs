@@ -90,6 +90,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new SelectableRecruitmentText());
         Modules.Add(new FateTracker());
         Modules.Add(new FateLevelSync());
+        Modules.Add(new QueueCombatTeleport());
 
         // ③ 部隊 · 生活
         Modules.Add(new AutoFCWSDeliver());
