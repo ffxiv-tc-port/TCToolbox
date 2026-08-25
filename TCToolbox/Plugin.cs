@@ -76,6 +76,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new OptimizedDutyFinderSetting());
         Modules.Add(new WeeklyBingoClickToOpen());
         Modules.Add(new ContentFinderCommand());
+        Modules.Add(new FastContentsFinderRegister());
         Modules.Add(new AutoRefreshPartyFinder());
         Modules.Add(new AutoJoinPartyFinder());
         Modules.Add(new PFPageSizeCustomize());
