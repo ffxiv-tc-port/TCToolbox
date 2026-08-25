@@ -91,6 +91,7 @@ public sealed class Plugin : IDalamudPlugin
 
         // ③ 部隊 · 生活
         Modules.Add(new AutoFCWSDeliver());
+        Modules.Add(new FastGrandCompanyExchange());
         Modules.Add(new AutoGardensWork());
         Modules.Add(new AutoGysahlGreens());
         Modules.Add(new CustomDeliveriesOverview());

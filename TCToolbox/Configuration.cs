@@ -88,6 +88,7 @@ public sealed class Configuration : IPluginConfiguration
     public ContentFinderCommandConfig ContentFinderCommand { get; set; } = new();
     public FastContentsFinderRegisterConfig FastContentsFinderRegister { get; set; } = new();
     public FastRetainerStoreConfig FastRetainerStore { get; set; } = new();
+    public FastGrandCompanyExchangeConfig FastGrandCompanyExchange { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
 }
@@ -1387,4 +1388,14 @@ public sealed class FastRetainerStoreConfig
 
     /// <summary>結束時在聊天欄報告（記錄一律會寫，不受這格影響）。</summary>
     public bool NotifyOnFinish = true;
+}
+
+/// <summary>軍票商店快速交換。記住上次輸入的道具名與數量。</summary>
+public sealed class FastGrandCompanyExchangeConfig
+{
+    /// <summary>上次輸入的道具名（可為片段）。</summary>
+    public string ItemName = string.Empty;
+
+    /// <summary>要交換的數量；-1＝可負擔上限。預設 1（不預設為花光全部軍票）。</summary>
+    public int Count = 1;
 }
