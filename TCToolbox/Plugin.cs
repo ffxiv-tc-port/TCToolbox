@@ -119,6 +119,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new LoginCommands());
         Modules.Add(new AetherCurrentTracker());
         Modules.Add(new DiscardList());
+        Modules.Add(new AutoDisplayMSQProgress());
 
         foreach (var module in Modules)
         {
