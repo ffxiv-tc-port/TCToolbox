@@ -78,6 +78,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoRefreshPartyFinder());
         Modules.Add(new AutoJoinPartyFinder());
         Modules.Add(new PFPageSizeCustomize());
+        Modules.Add(new PartyFinderFilter());
         Modules.Add(new FateTracker());
         Modules.Add(new FateLevelSync());
 
