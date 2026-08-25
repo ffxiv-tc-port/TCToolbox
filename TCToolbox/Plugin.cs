@@ -120,6 +120,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AetherCurrentTracker());
         Modules.Add(new DiscardList());
         Modules.Add(new AutoDisplayMSQProgress());
+        Modules.Add(new AutoChangeKeyboardLayout());
 
         foreach (var module in Modules)
         {

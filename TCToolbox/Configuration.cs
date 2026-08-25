@@ -91,8 +91,24 @@ public sealed class Configuration : IPluginConfiguration
     public FastGrandCompanyExchangeConfig FastGrandCompanyExchange { get; set; } = new();
     public AutoShopPurchaseConfig AutoShopPurchase { get; set; } = new();
     public DiscardListConfig DiscardList { get; set; } = new();
+    public AutoChangeKeyboardLayoutConfig KeyboardLayout { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
+}
+
+/// <summary><see cref="Modules.AutoChangeKeyboardLayout"/> 的設定。</summary>
+/// <remarks>
+/// ⚠️ 兩個欄位都是 <c>ushort</c> 的鍵盤配置語言 id（HKL 低字組）。
+/// 🔴 預設 0＝「尚未設定」，模組啟用時會把 0 補成目前系統配置＝兩邊相同＝不切換，沿用現行行為。
+/// 舊設定檔沒有這兩個鍵，反序列化不會覆寫初始值，所以升級不會讓人突然被切輸入法。
+/// </remarks>
+public sealed class AutoChangeKeyboardLayoutConfig
+{
+    /// <summary>文字輸入框取得焦點時要切到的配置語言 id。</summary>
+    public ushort FocusLayoutLangID;
+
+    /// <summary>離開文字輸入框時要切回的配置語言 id。</summary>
+    public ushort UnfocusLayoutLangID;
 }
 
 /// <summary><see cref="Modules.AetherCurrentTracker"/> 的設定。</summary>
