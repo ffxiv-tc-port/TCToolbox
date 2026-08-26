@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Conditions;
@@ -157,7 +158,13 @@ public sealed unsafe class AutoCrafterGathererManual : TcModule
     private void OnUpdate(IFramework framework)
     {
         // 輪詢節流：使用者可調，下限 5 秒。這一段以下的成本全是欄位讀取，沒有配置也沒有查表。
-        if (!Throttle.Pass("AutoCrafterGathererManual-Poll", Config.PollSeconds * 1_000)) return;
+        // 🔴 下限要寫在這裡（使用點），不能只靠 SliderInt 的範圍：
+        //    slider 沒加 AlwaysClamp 時 Ctrl+點擊可以鍵入範圍外的值，而設定檔手改也會持久生效。
+        //    PollSeconds 被設成 0 的話 Pass(key, 0) 每幀放行 ⇒ 每幀跑完整輪詢
+        //    （Condition 十七連查、背包掃描、GetActionStatus），而且 Config.PollSeconds * 1_000
+        //    在極端值下還有 int 溢位路徑。Clamp 把兩者一併消掉，
+        //    也讓上一行註解說的「下限 5 秒」真的成立。
+        if (!Throttle.Pass("AutoCrafterGathererManual-Poll", Math.Clamp(Config.PollSeconds, 5, 120) * 1_000)) return;
 
         var player = Svc.Objects.LocalPlayer;
         if (player == null) return;
@@ -185,19 +192,7 @@ public sealed unsafe class AutoCrafterGathererManual : TcModule
             }
             else
             {
-                consecutiveFailures++;
-                if (consecutiveFailures >= MaxConsecutiveFailures)
-                {
-                    Svc.Log.Information(
-                        $"[{InternalName}] 連續 {consecutiveFailures} 次使用指南後狀態仍未出現，" +
-                        $"暫停 {BackoffMs / 60_000} 分鐘（職業 {jobId}、狀態 {statusId}）。");
-
-                    // 🔴 一定要用 Block 不能用 Pass。Pass 在鍵還在冷卻中時直接 return false、
-                    //    完全不寫時間 —— 而「剛用完道具、30 秒冷卻還沒過」正是我們要設退避的那一刻，
-                    //    所以 Pass 在真正需要它的時候一律是無操作，而且不報錯。
-                    Throttle.Block("AutoCrafterGathererManual-Use", BackoffMs);
-                    consecutiveFailures = 0;
-                }
+                RegisterFailure(jobId, statusId, "使用指南後狀態仍未出現");
             }
 
             pendingStatusId = 0;
@@ -266,10 +261,39 @@ public sealed unsafe class AutoCrafterGathererManual : TcModule
         }
         else
         {
-            consecutiveFailures++;
             Svc.Log.Information(
                 $"[{InternalName}] UseAction 回傳 false（道具 {useId}、職業 {jobId}）：遊戲拒絕使用。");
+
+            RegisterFailure(jobId, statusId, "遭遊戲拒絕使用指南（UseAction 回 false）");
         }
+    }
+
+    /// <summary>
+    /// 登記一次失敗，達門檻就退避。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>兩條拒絕路徑都必須走這裡。</b>原本只有「送出後狀態沒出現」那條接上門檻檢查，
+    /// <c>UseAction</c> 直接回 <see langword="false"/> 那條只做了計數遞增。
+    /// 而 <c>GetActionStatus</c> 回 0（可用）但 <c>UseAction</c> 持續回 false 是真實存在的情境
+    /// （兩者判準不完全重合），這時 <c>pendingStatusId</c> 永遠不會被設
+    /// ⇒ 結算分支永遠不執行 ⇒ 計數無界累加、退避永不觸發，
+    /// 變成每個輪詢間隔重試一次並寫一行 log，直到永遠——
+    /// 正是類別註解自己點名要防的那個失控形狀。
+    /// </remarks>
+    private void RegisterFailure(uint jobId, uint statusId, string reason)
+    {
+        consecutiveFailures++;
+        if (consecutiveFailures < MaxConsecutiveFailures) return;
+
+        Svc.Log.Information(
+            $"[{InternalName}] 連續 {consecutiveFailures} 次{reason}，" +
+            $"暫停 {BackoffMs / 60_000} 分鐘（職業 {jobId}、狀態 {statusId}）。");
+
+        // 🔴 一定要用 Block 不能用 Pass。Pass 在鍵還在冷卻中時直接 return false、
+        //    完全不寫時間 —— 而「剛用完道具、30 秒冷卻還沒過」正是我們要設退避的那一刻，
+        //    所以 Pass 在真正需要它的時候一律是無操作，而且不報錯。
+        Throttle.Block("AutoCrafterGathererManual-Use", BackoffMs);
+        consecutiveFailures = 0;
     }
 
     /// <summary>玩家身上有沒有這個狀態。走 Dalamud 的受管理 <c>StatusList</c>，不碰原生指標。</summary>
@@ -322,7 +346,9 @@ public sealed unsafe class AutoCrafterGathererManual : TcModule
         var poll = Config.PollSeconds;
         if (ImGui.SliderInt("檢查間隔（秒）", ref poll, 5, 120))
         {
-            Config.PollSeconds = poll;
+            // 寫回前夾擠（slider 可以 Ctrl+點擊鍵入範圍外的值）。
+            // ⚙ 這只是第二道：已經落盤的壞值只有使用點的 Math.Clamp 救得到。
+            Config.PollSeconds = Math.Clamp(poll, 5, 120);
             Plugin.Instance.Config.Save();
         }
 
@@ -340,7 +366,7 @@ public sealed unsafe class AutoCrafterGathererManual : TcModule
             ImGui.SetTooltip(
                 "背包裡同時有多種時，依「改訂版 → 商用 → 軍用第二卷 → 軍用」的順序挑，用掉最高階的那一種。\n" +
                 "已經滿等的職業不會使用指南。\n" +
-                "連續 3 次使用後狀態仍未出現時會自動暫停 10 分鐘，並在記錄裡寫一行原因。");
+                "連續 3 次失敗（狀態沒出現、或遭遊戲拒絕使用）時會自動暫停 10 分鐘，並在記錄裡寫一行原因。");
         }
     }
 }

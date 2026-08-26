@@ -295,8 +295,14 @@ public sealed unsafe class AutoConstantlyClick : TcModule
             }
 
             // 按住期間：每滿一個間隔就回報一次「剛按下」
+            // 🔴 下限一定要壓在這個使用點，不能只靠 SliderInt 的範圍：
+            //    slider 沒加 AlwaysClamp 時 Ctrl+點擊可以鍵入範圍外的值，設定檔手改也會持久生效
+            //    （EzConfig 的既有鍵一律覆蓋欄位初始值）。RepeatIntervalMs 被設成 0 或負值時
+            //    `now - lastFireTick[index] < 0` 恆為假 ⇒ 按住期間每一次查詢都回報「剛按下」
+            //    ＝快捷欄動作以每幀頻率連發送向伺服器。
+            //    下限值對齊艦隊慣例（AutoMerge 的 Math.Max(50,…)、TradeAllCollectables 的 Math.Max(100,…)）。
             if (!repeating[index]) return false;
-            if (now - lastFireTick[index] < Config.RepeatIntervalMs) return false;
+            if (now - lastFireTick[index] < Math.Max(100, Config.RepeatIntervalMs)) return false;
 
             lastFireTick[index] = now;
 
@@ -318,7 +324,9 @@ public sealed unsafe class AutoConstantlyClick : TcModule
         var interval = Config.RepeatIntervalMs;
         if (ImGui.SliderInt("重複間隔（毫秒）", ref interval, 100, 1_000))
         {
-            Config.RepeatIntervalMs = interval;
+            // 寫回前夾擠（slider 可以 Ctrl+點擊鍵入範圍外的值）。
+            // ⚙ 這只是第二道：已經落盤的壞值只有使用點的 Math.Max 救得到。
+            Config.RepeatIntervalMs = Math.Clamp(interval, 100, 1_000);
             Plugin.Instance.Config.Save();
         }
         if (ImGui.IsItemHovered())

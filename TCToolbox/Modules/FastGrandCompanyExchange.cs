@@ -189,6 +189,9 @@ public sealed unsafe class FastGrandCompanyExchange : TcModule
 
         SetStatus($"交換「{resolved.Name}」×{count}…");
 
+        // 上一趟留下的冷卻不該延後這一趟的第一發（Throttle 的鍵是全域持久的）。
+        Throttle.Reset($"{InternalName}-TierTab");
+
         // 步驟一：切到正確的軍階分頁。
         queue.Enqueue("切換軍階分頁", () =>
         {
@@ -198,7 +201,15 @@ public sealed unsafe class FastGrandCompanyExchange : TcModule
             var targetTier = resolved.Tier - 1;
             if (ReadUInt(addon, TierValueIndex) == (uint)targetTier) return true;
 
-            UiHelper.FireCallback(addon, true, 1, targetTier);
+            // 🔴 這一步是「發事件＋輪詢結果」合在同一個步驟裡，所以每個 framework tick 都會回到這裡。
+            //    不節流的話就是對遊戲視窗以約 60 次/秒重發分頁切換事件，直到條件成立或 10 秒逾時。
+            //    而條件是否成立取決於 TierValueIndex——那個索引來自國際服版面，台服無法離線證明；
+            //    一旦它在台服對到別的欄位，條件恆不成立 ⇒ 逾時前會灌進約 600 次事件。
+            //    逾時本身無害（不花軍票），但事件洪流本身就是失控行為。
+            //    節流慣例同 RetainerBatchRename（各步重發一律包 Throttle.Pass 300~800ms）。
+            if (Throttle.Pass($"{InternalName}-TierTab", 500))
+                UiHelper.FireCallback(addon, true, 1, targetTier);
+
             return false;
         });
 

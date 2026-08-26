@@ -42,6 +42,43 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
     /// <summary>視窗重建的容忍時間。超過就當作真的被關掉。</summary>
     private const double MenuRebuildGraceSeconds = 3;
 
+    /// <summary>
+    /// 這一項的 <c>Request</c> 交納視窗有沒有真的出現過。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 沒有這個旗標的話 <see cref="ConfirmRequest"/> 會把「視窗從頭到尾沒出現」也算成交納成功
+    /// ——overlay 上「已交 N 項」持續攀升而實際上一項都沒交出去。
+    /// </remarks>
+    private bool requestSeen;
+
+    /// <summary>
+    /// 上一輪解析結果的指紋（首項 Index ＋ 清單長度），用來偵測「零進展」。
+    /// </summary>
+    private (uint Index, int Count)? lastParseFingerprint;
+
+    /// <summary>連續幾輪解析結果完全相同了。</summary>
+    private int noProgressRounds;
+
+    /// <summary>這一趟排進佇列的項數（<see cref="MaxItemsPerRun"/> 的計數）。</summary>
+    private int enqueuedItems;
+
+    /// <summary>
+    /// 連續幾輪解析結果完全相同就判定「交納沒有生效」並中止。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>這整條批次迴圈原本沒有任何無進展保險絲。</b>解析步驟會無條件遞迴重排下一輪，
+    /// 而送出 agent 事件被台服靜默拒絕（台服的拒絕常常完全沒有徵兆）或 <c>Request</c> 視窗
+    /// 因任何原因沒開時，<see cref="FillRequest"/> 把「視窗沒出現」當成「已完成」回 true、
+    /// <see cref="ConfirmRequest"/> 接著把它計成已交納，下一輪又解析到同一批素材
+    /// ⇒ 每約 0.7 秒重送一次 agent 事件，永不自停。
+    /// 逾時保底管不到：每一步都很快就「完成」了。
+    /// 📌 同類模組（AutoMerge／OpenAllCoffers／TradeAllCollectables）本來就都有這兩道保險絲。
+    /// </remarks>
+    private const int MaxNoProgressRounds = 3;
+
+    /// <summary>單趟交納的項數上限（合建素材實際上限約數十項，這個數綽綽有餘）。</summary>
+    private const int MaxItemsPerRun = 100;
+
     private sealed record DeliverItem(uint Index, uint ItemId, uint Count);
 
     /// <summary>
@@ -149,6 +186,10 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
 
         deliveredCount = 0;
         menuGoneSince = null;
+        requestSeen = false;
+        lastParseFingerprint = null;
+        noProgressRounds = 0;
+        enqueuedItems = 0;
         EnqueueNextItem();
     }
 
@@ -181,6 +222,40 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
 
             var item = items[0];
 
+            // ── 保險絲一：零進展偵測 ───────────────────────────────────────────
+            // 解析結果與上一輪完全相同 ＝ 上一輪那一項其實沒交出去。
+            // 這是「agent 事件被靜默拒絕」唯一看得出來的地方（台服的拒絕沒有任何回饋）。
+            var fingerprint = (item.Index, items.Count);
+            if (lastParseFingerprint == fingerprint)
+            {
+                noProgressRounds++;
+                if (noProgressRounds >= MaxNoProgressRounds)
+                {
+                    Svc.Chat.PrintError(
+                        $"[TC Toolbox] 交納沒有生效（連續 {noProgressRounds} 輪清單完全沒變），已停止。" +
+                        $"本輪實際交出 {deliveredCount} 項。");
+                    Svc.Log.Information(
+                        $"[AutoFCWSDeliver] 零進展保險絲觸發：連續 {noProgressRounds} 輪解析到同一批素材" +
+                        $"（首項 Index={item.Index}、清單長度={items.Count}），判定交納事件沒有生效。");
+                    return null;
+                }
+            }
+            else
+            {
+                lastParseFingerprint = fingerprint;
+                noProgressRounds = 0;
+            }
+
+            // ── 保險絲二：單趟項數上限 ─────────────────────────────────────────
+            if (enqueuedItems >= MaxItemsPerRun)
+            {
+                Svc.Chat.PrintError($"[TC Toolbox] 已達單趟交納上限 {MaxItemsPerRun} 項，先停下來（本輪已交 {deliveredCount} 項）。");
+                Svc.Log.Information($"[AutoFCWSDeliver] 觸及 MaxItemsPerRun={MaxItemsPerRun}，中止本趟。");
+                return null;
+            }
+
+            enqueuedItems++;
+
             // 隱藏值：Type 帶 ItemId（去 HQ 位）、Int64 高 32 位帶數量——與遊戲原生點擊列時送出的事件相同
             var hidden = new AtkValue
             {
@@ -190,6 +265,7 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
             UiHelper.SendAgentEvent(AgentId.CompanyCraftMaterial, 0, 0, item.Index, item.Count, hidden);
 
             fillSlotCursor = 1;
+            requestSeen = false;
             queue.EnqueueDelay(500, "等待交納視窗");
             queue.Enqueue("填入交納視窗", FillRequest, 10_000);
             queue.Enqueue("送出交納並等待完成", ConfirmRequest, 15_000);
@@ -203,6 +279,10 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
     {
         var request = UiHelper.GetAddon("Request");
         if (!UiHelper.IsReady(request)) return true; // 沒出現交納視窗（或已被交出）
+
+        // 記下「這一項的交納視窗真的出現過」——ConfirmRequest 靠它區分
+        // 「交完了所以視窗關了」與「從頭到尾沒開過」。這兩件事在那裡長得一模一樣。
+        requestSeen = true;
 
         var contextIcon = UiHelper.GetAddon("ContextIconMenu");
         if (UiHelper.IsReady(contextIcon))
@@ -241,6 +321,21 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
             if (Throttle.Pass("AutoFCWSDeliver-HandOver", 500))
                 UiHelper.ClickButton(request, ((AddonRequest*)request)->HandOverButton);
             return false;
+        }
+
+        // 🔴 只有「交納視窗真的出現過」才算交出去了。視窗從頭到尾沒開＝這一項根本沒交，
+        //    盲目遞增會讓 overlay 的「已交 N 項」在零交納的情況下持續攀升，
+        //    把使用者的唯一回饋管道變成假訊號。真正的收口交給解析步驟的零進展保險絲。
+        if (!requestSeen)
+        {
+            if (Throttle.Pass("AutoFCWSDeliver-NoRequest", 10_000))
+            {
+                Svc.Log.Information(
+                    "[AutoFCWSDeliver] 交納視窗未出現，本項不計入已交納" +
+                    "（多半是 agent 事件被拒絕；連續數輪沒進展會由保險絲中止）。");
+            }
+
+            return true;
         }
 
         deliveredCount++;

@@ -46,42 +46,79 @@ public sealed unsafe class AutoDisplayMSQProgress : TcModule
     /// <summary>我們自己觸發 <c>OnRefresh</c> 時設 true，擋掉遞迴的 PostRefresh 回呼。</summary>
     private bool inRefresh;
 
+    /// <summary>節流器的鍵。⚠️ Throttle 的鍵是全域持久的，停用→重啟用要自己清掉殘留冷卻。</summary>
+    private const string ComputeThrottleKey = "AutoDisplayMSQProgress-Compute";
+
+    /// <summary>上一次算出來的進度字串；<c>null</c>＝還沒算出過／上次算不出來。</summary>
+    private string? cachedText;
+
     protected override void OnEnable()
     {
+        // ⚠️ 停用→（1 秒內）重啟用時，上一輪殘留的冷卻會把下面這次補打整個吃掉，
+        //    表現成「重新啟用之後標題沒有變化」。鍵是全域持久的，所以要自己清。
+        Throttle.Reset(ComputeThrottleKey);
+        cachedText = null;
+
         Svc.AddonLifecycle.RegisterListener(AddonEvent.PostRefresh, AddonName, OnAddonRefresh);
         if (UiHelper.IsAddonReady(AddonName))
             OnAddonRefresh(AddonEvent.PostRefresh, null!);
     }
 
-    protected override void OnDisable() => Svc.AddonLifecycle.UnregisterListener(OnAddonRefresh);
+    protected override void OnDisable()
+    {
+        Svc.AddonLifecycle.UnregisterListener(OnAddonRefresh);
+        cachedText = null;
+    }
 
+    /// <summary>
+    /// ScenarioTree 每次重繪都要把進度重新注入回去。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>節流只能包住「計算」，不能包住「注入」。</b>這裡的注入是覆蓋遊戲自己的標題文字，
+    /// 而<b>下一次遊戲自己重繪就會蓋回正常內容</b>（見類別註解）——也就是說「最後一次 PostRefresh」
+    /// 才是有效狀態。若把整個處理常式節流掉，1 秒內連續 refresh（開冒險筆記、任務進度變動時很常見）
+    /// 的第二次就會把我們的文字蓋掉，而那次事件被節流吃掉、又沒有輪詢或重試路徑
+    /// ⇒ 進度顯示消失／過期，直到下一次撐過節流的 refresh 為止。
+    /// ⇒ 每次 PostRefresh 都無條件重新注入（注入本身很便宜），只有昂貴的
+    /// <see cref="TryComputeProgress"/>（掃整張 Quest 表）走節流＋快取。
+    /// </remarks>
     private void OnAddonRefresh(AddonEvent type, AddonArgs args)
     {
         if (inRefresh) return;
-        if (!Throttle.Pass("AutoDisplayMSQProgress", 1000)) return;
 
         try
         {
             var addon = UiHelper.GetAddon(AddonName);
             if (addon == null || !UiHelper.IsReady(addon)) return;
 
-            if (!TryComputeProgress(out var remaining, out var percentComplete, out var firstIncompleteQuest))
-                return;
-            if (remaining <= 0 || percentComplete <= 0f) return;
+            // 快取還沒建立時一定要算（Throttle.Pass 首次必放行，之後每秒最多一次）。
+            if (cachedText == null || Throttle.Pass(ComputeThrottleKey, 1000))
+                cachedText = ComputeText();
 
-            var quest = Svc.Data.GetExcelSheet<Quest>().GetRowOrDefault(firstIncompleteQuest);
-            if (quest == null) return;
+            if (cachedText == null) return;
 
-            var questName = quest.Value.Name.ExtractText();
-            if (string.IsNullOrEmpty(questName)) return;
-
-            var text = $"{questName} ({remaining} / {percentComplete:F1}%)";
-            InjectText(addon, text);
+            InjectText(addon, cachedText);
         }
         catch (Exception ex)
         {
             Svc.Log.Error(ex, $"[{InternalName}] 計算或注入主線進度失敗");
         }
+    }
+
+    /// <summary>算出要顯示的字串；算不出來（資料還沒就緒／不在主線）回 <c>null</c>。</summary>
+    private static string? ComputeText()
+    {
+        if (!TryComputeProgress(out var remaining, out var percentComplete, out var firstIncompleteQuest))
+            return null;
+        if (remaining <= 0 || percentComplete <= 0f) return null;
+
+        var quest = Svc.Data.GetExcelSheet<Quest>().GetRowOrDefault(firstIncompleteQuest);
+        if (quest == null) return null;
+
+        var questName = quest.Value.Name.ExtractText();
+        if (string.IsNullOrEmpty(questName)) return null;
+
+        return $"{questName} ({remaining} / {percentComplete:F1}%)";
     }
 
     /// <summary>把文字寫進 ScenarioTree 標題欄，並請它自我重繪。全程界限與 null 檢查。</summary>

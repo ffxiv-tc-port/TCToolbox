@@ -63,7 +63,22 @@ public static class SimpleTweaksProbe
     /// <summary>重新確認的最短間隔（毫秒）。Draw 每幀都會問，這裡是唯一的節流。</summary>
     private const int RefreshIntervalMs = 5_000;
 
-    private static long lastProbeAt = long.MinValue;
+    /// <summary>上一次真的去探測的時間戳（<see cref="Environment.TickCount64"/>）。</summary>
+    /// <remarks>
+    /// 🔴 <b>初值不可以用 <c>long.MinValue</c> 當哨兵。</b>下面的節流寫成
+    /// <c>now - lastProbeAt &lt; RefreshIntervalMs</c>，而 <c>now - long.MinValue</c> 會溢位成
+    /// 巨大的<b>負數</b>，恆小於間隔 ⇒ <see cref="Refresh"/> 永遠在第一行就 return，
+    /// 而 <c>lastProbeAt</c> 又只在那個 early-return 之後才被賦值 ⇒ 永遠不會被更新。
+    /// 結果是整個 SimpleTweaks 衝突偵測從未執行過：<c>installed</c> 恆 false、
+    /// <see cref="Query"/> 恆回 <see cref="ConflictState.NotInstalled"/>、
+    /// 連這個類別特地要顯示的 <see cref="ConflictState.Unknown"/> 也永不出現
+    /// ——正是它存在要防的那個靜默方向。
+    /// 🔑 正解是讓哨兵<b>不要參與減法</b>：初值取 <c>-RefreshIntervalMs</c>，
+    /// 因為 <c>TickCount64</c> 非負，<c>now - (-間隔) = now + 間隔 &gt;= 間隔</c> 恆成立
+    /// ⇒ 首次必放行，而且永遠不會溢位。
+    /// </remarks>
+    private static long lastProbeAt = -RefreshIntervalMs;
+
     private static bool installed;
 
     /// <summary>已啟用 tweak 的鍵集合；<c>null</c> 代表讀不到（＝不知道）。</summary>
