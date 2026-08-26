@@ -590,21 +590,27 @@ public sealed class CustomDeliveriesOverview : TcModule
         var value = (int)current;
         if (ImGui.InputInt("地圖圖示編號", ref value))
         {
-            Config.MappyIconId = value <= 0 ? DefaultMappyIconId : (uint)value;
+            // 🔴 清空／輸入 0 一律寫回哨兵 0（理由同 AetherCurrentTracker：寫具體常數＝烙死編號）。
+            Config.MappyIconId = value <= 0 ? 0u : (uint)value;
             Plugin.Instance.Config.Save();
             lastMappySignature = string.Empty;
         }
 
         ImGui.SameLine();
-        if (ImGui.SmallButton("預設"))
+        if (ImGui.SmallButton($"預設（目前 {DefaultMappyIconId}）"))
         {
-            Config.MappyIconId = DefaultMappyIconId;
+            Config.MappyIconId = 0;
             Plugin.Instance.Config.Save();
             lastMappySignature = string.Empty;
         }
 
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip($"預設 {DefaultMappyIconId}＝遊戲 MapSymbol 表裡「老主顧交易」那一列的圖示。");
+        {
+            ImGui.SetTooltip(
+                $"寫回「跟隨內建預設值」（目前是 {DefaultMappyIconId}"
+                + "＝遊戲 MapSymbol 表裡「老主顧交易」那一列的圖示）。\n"
+                + "跟隨的意思是：日後內建預設值若有修正，你會自動吃到。");
+        }
     }
 
     private void DrawWindow()

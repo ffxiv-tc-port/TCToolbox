@@ -111,6 +111,12 @@ public sealed class HuntTrainOnMappy : TcModule
     /// </remarks>
     public const uint DefaultDeadIconId = 60424;
 
+    /// <summary>實際會用的存活圖示編號（設定值為哨兵 0 時＝內建預設值）。</summary>
+    private uint EffectiveAliveIcon => Config.AliveIconId is 0 ? DefaultAliveIconId : Config.AliveIconId;
+
+    /// <summary>實際會用的已擊殺圖示編號（設定值為哨兵 0 時＝內建預設值）。</summary>
+    private uint EffectiveDeadIcon => Config.DeadIconId is 0 ? DefaultDeadIconId : Config.DeadIconId;
+
     /// <summary>橋接目前的狀態。<b>「不知道」是零值</b>，模組列上要看得見。</summary>
     private enum BridgeState
     {
@@ -182,7 +188,8 @@ public sealed class HuntTrainOnMappy : TcModule
 
         Svc.Log.Information(
             $"[{InternalName}] 模組啟用：同步間隔 {Config.RefreshSeconds} 秒、"
-            + $"顯示已擊殺＝{Config.ShowDead}、圖示 存活 {Config.AliveIconId}／已擊殺 {Config.DeadIconId}、"
+            + $"顯示已擊殺＝{Config.ShowDead}、圖示 存活 {EffectiveAliveIcon}／已擊殺 {EffectiveDeadIcon}"
+            + $"（設定值 {Config.AliveIconId}／{Config.DeadIconId}，0＝跟隨內建預設）、"
             + $"MarkSeen 訂閱＝{subscribedToMarkSeen}");
     }
 
@@ -329,8 +336,8 @@ public sealed class HuntTrainOnMappy : TcModule
         var skippedDead = 0;
         var skippedInvalid = 0;
 
-        var aliveIcon = Config.AliveIconId is 0 ? DefaultAliveIconId : Config.AliveIconId;
-        var deadIcon = Config.DeadIconId is 0 ? DefaultDeadIconId : Config.DeadIconId;
+        var aliveIcon = EffectiveAliveIcon;
+        var deadIcon = EffectiveDeadIcon;
 
         pending.Clear();
 
@@ -394,8 +401,8 @@ public sealed class HuntTrainOnMappy : TcModule
         var sb = new StringBuilder();
 
         sb.Append(Config.ShowDead ? '1' : '0').Append('|')
-          .Append(Config.AliveIconId).Append('|')
-          .Append(Config.DeadIconId).Append('|');
+          .Append(EffectiveAliveIcon).Append('|')
+          .Append(EffectiveDeadIcon).Append('|');
 
         foreach (var mob in train)
         {
@@ -612,7 +619,10 @@ public sealed class HuntTrainOnMappy : TcModule
     {
         using var id = ImRaii.PushId(label);
 
-        var wrap = GameIcons.TryGet(current is 0 ? defaultValue : current);
+        // 哨兵 0 ＝ 跟隨內建預設值；畫圖與輸入框一律顯示「實際會用的編號」，不要讓使用者看到 0。
+        var effective = current is 0 ? defaultValue : current;
+
+        var wrap = GameIcons.TryGet(effective);
         if (wrap != null)
         {
             ImGui.Image(wrap.Handle, new Vector2(24f, 24f));
@@ -620,13 +630,22 @@ public sealed class HuntTrainOnMappy : TcModule
         }
 
         ImGui.SetNextItemWidth(120f);
-        var value = (int)current;
+        var value = (int)effective;
         if (ImGui.InputInt(label, ref value))
         {
-            apply(value <= 0 ? defaultValue : (uint)value);
+            // 🔴 清空／輸入 0 一律寫回哨兵 0，不要寫具體常數：寫具體常數＝把編號烙死，
+            //    日後修正 Default…IconId 對這個人靜默無效。
+            apply(value <= 0 ? 0u : (uint)value);
         }
 
         ImGui.SameLine();
-        if (ImGui.SmallButton("預設")) apply(defaultValue);
+        if (ImGui.SmallButton($"預設（目前 {defaultValue}）")) apply(0);
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                $"寫回「跟隨內建預設值」（目前是 {defaultValue}）。\n"
+                + "跟隨的意思是：日後內建預設值若有修正，你會自動吃到。");
+        }
     }
 }

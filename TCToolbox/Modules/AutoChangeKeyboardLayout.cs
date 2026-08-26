@@ -30,7 +30,18 @@ namespace TCToolbox.Modules;
 /// 不像 DR 那樣讓位址回 0 之後照樣去 hook。
 /// </para>
 /// <para>
-/// 📌 預設兩個配置都補成「目前的配置」＝完全不切換，沿用現行行為；要生效請到設定畫面各挑一個。
+/// 📌 <b>預設 0 ＝「不切換」</b>，是一個持久的哨兵值：<see cref="SwitchTo"/> 看到 0 直接不動作。
+/// 要生效請到設定畫面各挑一個配置。
+/// </para>
+/// <para>
+/// 🔴 <b>以前的做法是啟用當下把「目前配置」烙進設定檔並存檔</b>，然後每次 focus／unfocus
+/// 都無條件強制切到那個值。那讓「預設不切換」這個承諾在實務上不成立：
+/// 使用者裝有多個配置（台服玩家常態是注音＋英數）而啟用模組時停在 A，
+/// 之後手動切到 B 再點任何文字輸入框，就會被強制切回 A ——
+/// 一個什麼都沒設定過的人拿到的是主動干預，而不是承諾的 no-op。
+/// 而且烙死的值永久持久化，連「回到未設定」的路都沒有（UI 只能選具體配置）。
+/// ⇒ 現在：不烙印、0 保持哨兵、<b>兩欄相同也視為不切換</b>（這一條同時把既有使用者
+/// 已經烙上的值救回來——烙印一定是把兩欄設成同一個值），UI 另外提供「（不切換）」選項。
 /// </para>
 /// </remarks>
 public sealed unsafe class AutoChangeKeyboardLayout : TcModule
@@ -40,7 +51,8 @@ public sealed unsafe class AutoChangeKeyboardLayout : TcModule
 
     public override string Description =>
         "文字輸入框取得焦點時切到指定的輸入配置（如注音），失去焦點時切回操作配置（如英數）；" +
-        "焦點瞬間已是斜線指令則保持操作配置。預設不切換，需在設定裡各挑一個配置才生效。";
+        "焦點瞬間已是斜線指令則保持操作配置。預設不切換（兩邊都是「（不切換）」或挑成同一個時完全不動作），" +
+        "需在設定裡各挑一個不同的配置才生效。";
 
     public override ModuleCategory Category => ModuleCategory.Misc;
 
@@ -62,13 +74,10 @@ public sealed unsafe class AutoChangeKeyboardLayout : TcModule
 
     protected override void OnEnable()
     {
-        // 預設值：0 一律補成目前配置 ＝ 兩邊相同 ＝ 不切換，沿用現行行為。
-        var current = InputMethod.CurrentLangId();
-        var changed = false;
-        if (Config.FocusLayoutLangID == 0) { Config.FocusLayoutLangID = current; changed = true; }
-        if (Config.UnfocusLayoutLangID == 0) { Config.UnfocusLayoutLangID = current; changed = true; }
-        if (changed) Plugin.Instance.Config.Save();
-
+        // 🔴 這裡刻意什麼都不寫回設定檔。以前是「0 一律補成目前配置並存檔」，
+        //    那等於把啟用當下的配置烙死，之後每次 focus／unfocus 都強制切回去
+        //    ——與 Description 承諾的「預設不切換」相反，而且沒有回到未設定的路。
+        //    0 現在是持久的哨兵，由 SwitchTo 判掉。
         if (!Svc.SigScanner.TryScanText(SetTextInputTargetSignature, out var address) || address == nint.Zero)
         {
             Svc.Log.Information(
@@ -102,6 +111,10 @@ public sealed unsafe class AutoChangeKeyboardLayout : TcModule
 
         try
         {
+            // 兩邊相同（含兩邊都是 0）＝ 使用者要的就是「不切換」，這裡直接收工。
+            // 🔑 這一條同時救回既有使用者：舊版的烙印一定是把兩欄設成同一個值。
+            if (Config.FocusLayoutLangID == Config.UnfocusLayoutLangID) return;
+
             switch (eventType)
             {
                 case AtkEventType.FocusStart:
@@ -131,8 +144,15 @@ public sealed unsafe class AutoChangeKeyboardLayout : TcModule
         return !string.IsNullOrEmpty(text) && text.StartsWith('/');
     }
 
+    /// <summary>切到指定配置。<c>0</c>＝未設定，不動作；已經在該配置上也不動作。</summary>
     private static void SwitchTo(ushort langId)
     {
+        // 0 是「未設定」的哨兵，永遠不動作（Description 承諾的預設行為就是這個）。
+        if (langId == 0) return;
+
+        // 已經在這個配置上就不要再送一次切換：那是對使用者當下狀態的無謂干預。
+        if (InputMethod.CurrentLangId() == langId) return;
+
         var hkl = InputMethod.FindLayout(langId);
         if (hkl != nint.Zero)
             InputMethod.SwitchToLayout(hkl);
@@ -140,7 +160,8 @@ public sealed unsafe class AutoChangeKeyboardLayout : TcModule
 
     public override void DrawConfig()
     {
-        ImGui.TextDisabled("兩邊挑一樣＝不切換。常見用法：輸入配置挑注音／中文，操作配置挑英數。");
+        ImGui.TextDisabled("兩邊挑一樣（或任一邊挑「（不切換）」）＝完全不動作。");
+        ImGui.TextDisabled("常見用法：輸入配置挑注音／中文，操作配置挑英數。");
 
         if (Throttle.Pass("AutoChangeKeyboardLayout-Refresh", 1000))
             cachedLayouts = InputMethod.GetAllKeyboardLayouts();
@@ -162,13 +183,30 @@ public sealed unsafe class AutoChangeKeyboardLayout : TcModule
         ImGui.TextDisabled($"目前系統配置：{currentName}");
     }
 
+    /// <summary>「不切換」在下拉選單裡的顯示名（對應哨兵值 <c>0</c>）。</summary>
+    private const string NoSwitchLabel = "（不切換）";
+
     private void DrawLayoutCombo(string label, string id,
                                  Dictionary<ushort, KeyboardLayoutInfo> layouts, ref ushort selected)
     {
         ImGui.Text(label);
-        var currentName = layouts.TryGetValue(selected, out var info) ? info.Name : "（未知）";
+
+        var currentName = selected == 0
+                              ? NoSwitchLabel
+                              : layouts.TryGetValue(selected, out var info) ? info.Name : "（未知）";
+
         using var combo = ImRaii.Combo(id, currentName);
         if (!combo) return;
+
+        // 🔴 這個選項必須存在：已經被舊版烙上具體配置的使用者，沒有它就沒有路回到「未設定」
+        //    （改預設值對既有設定檔一律無效——JSON 有那個鍵就會覆蓋欄位初始值）。
+        var noneSelected = selected == 0;
+        if (ImGui.Selectable(NoSwitchLabel, noneSelected))
+        {
+            selected = 0;
+            Plugin.Instance.Config.Save();
+        }
+        if (noneSelected) ImGui.SetItemDefaultFocus();
 
         foreach (var (langId, layout) in layouts)
         {

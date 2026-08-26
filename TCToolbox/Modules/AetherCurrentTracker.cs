@@ -1355,23 +1355,32 @@ public sealed unsafe class AetherCurrentTracker : TcModule
         }
 
         ImGui.SetNextItemWidth(120f);
+
+        // 輸入框顯示的是「實際會用的編號」（哨兵 0 時顯示內建預設值），不要讓使用者看到一個 0。
         var value = (int)current;
         if (ImGui.InputInt("地圖圖示編號", ref value))
         {
-            Config.MappyIconId = value <= 0 ? DefaultMappyIconId : (uint)value;
+            // 🔴 清空／輸入 0 一律寫回哨兵 0，不要寫具體常數：寫具體常數＝把編號烙死，
+            //    日後修正 DefaultMappyIconId 對這個人靜默無效。
+            Config.MappyIconId = value <= 0 ? 0u : (uint)value;
             Plugin.Instance.Config.Save();
             lastMappySignature = string.Empty;
         }
 
         ImGui.SameLine();
-        if (ImGui.SmallButton("預設"))
+        if (ImGui.SmallButton($"預設（目前 {DefaultMappyIconId}）"))
         {
-            Config.MappyIconId = DefaultMappyIconId;
+            Config.MappyIconId = 0;
             Plugin.Instance.Config.Save();
             lastMappySignature = string.Empty;
         }
 
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip($"預設 {DefaultMappyIconId}＝Mappy 畫「已經在視野內的風脈泉」時用的同一顆圖示。");
+        {
+            ImGui.SetTooltip(
+                $"寫回「跟隨內建預設值」（目前是 {DefaultMappyIconId}"
+                + "＝Mappy 畫「已經在視野內的風脈泉」時用的同一顆圖示）。\n"
+                + "跟隨的意思是：日後內建預設值若有修正，你會自動吃到。");
+        }
     }
 }

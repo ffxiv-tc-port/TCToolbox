@@ -6,6 +6,15 @@ namespace TCToolbox;
 
 public sealed class Configuration : IPluginConfiguration
 {
+    /// <summary>目前的設定結構版本。</summary>
+    /// <remarks>
+    /// v1 → v2：OptimizedEnemyList 的詠唱顯示由 <c>ShowCast</c>(bool) 換成
+    /// <c>CastDisplay</c>(enum)，同時 <c>OffsetX</c>／<c>OffsetY</c> 的<b>語意</b>也變了
+    /// （舊＝從列左上角的絕對偏移×縮放；新＝距列邊緣距離＋垂直置中），預設值 4/20 → 6/0。
+    /// 當時沒有寫遷移碼，見 <see cref="MigrateEnemyListToV2"/>。
+    /// </remarks>
+    public const int CurrentVersion = 2;
+
     public int Version { get; set; } = 1;
 
     /// <summary>已啟用模組的 InternalName 清單。</summary>
@@ -101,12 +110,84 @@ public sealed class Configuration : IPluginConfiguration
     public TriadCardRecycleConfig TriadCardRecycle { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
+
+    /// <summary>
+    /// 一次性的設定結構遷移。<b>載入之後、模組建立之前</b>呼叫。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>為什麼非做不可</b>：改欄位名而沿用舊名承接舊值時，舊鍵會變成孤兒被靜默丟掉、
+    /// 新鍵吃預設值；而<b>改欄位語意卻沿用舊欄位名</b>更糟——舊值會被原封不動當成新語意用。
+    /// 這兩件事在 OptimizedEnemyList 上同時發生了，而且對使用者完全沒有徵兆。
+    /// <para>
+    /// 🔑 <b>教訓</b>：欄位語意改變時應該<b>同時改欄位名</b>（例如 <c>EdgeOffsetX</c>／
+    /// <c>CenterOffsetY</c>），讓舊鍵自然孤兒化去吃新預設，而不是沿用舊名承接舊值。
+    /// </para>
+    /// <para>
+    /// ⚠️ 全新安裝也會走這裡，但每一條遷移都要求「舊 schema 的正面證據」才動手，
+    /// 所以對全新安裝是嚴格的無操作。
+    /// </para>
+    /// </remarks>
+    public void Migrate()
+    {
+        if (Version >= CurrentVersion) return;
+
+        var migrated = MigrateEnemyListToV2();
+
+        Version = CurrentVersion;
+        Save();
+
+        // 使用者回報用：設定被動過就一定要留下痕跡（LogLevel 2 收得到）。
+        Svc.Log.Information(
+            migrated
+                ? "[TCToolbox] 設定結構升級到 v2：已把 OptimizedEnemyList 的舊 ShowCast／偏移值遷移到新 schema。"
+                : "[TCToolbox] 設定結構升級到 v2（沒有需要遷移的舊值）。");
+    }
+
+    /// <summary>
+    /// OptimizedEnemyList 的 v1 → v2 遷移。有動到東西回 <see langword="true"/>。
+    /// </summary>
+    /// <remarks>
+    /// <b>判準是孤兒鍵 <c>ShowCast</c> 存在</b>——那是「這份設定檔是由舊 schema 寫出來的」
+    /// 唯一的正面證據（Dalamud 存設定時會把所有公開成員都寫出去，所以跑過舊版並存過設定的人
+    /// 一定有這個鍵）。沒有它就什麼都不做，全新安裝與早已是新 schema 的人都不受影響。
+    /// </remarks>
+    private bool MigrateEnemyListToV2()
+    {
+        if (EnemyList.ShowCast is not { } legacyShowCast) return false;
+
+        // ① 舊 ShowCast(bool) → 新 CastDisplay(enum)。
+        //    關掉過的人升級後詠唱顯示會被靜默重新打開（舊鍵孤兒、新鍵吃預設 Auto），這條就是修那個。
+        EnemyList.CastDisplay = legacyShowCast ? CastDisplayMode.Auto : CastDisplayMode.Off;
+
+        // ② 偏移值：語意變了，自訂過的值換算不回來，所以<b>只</b>處理「剛好等於舊預設」的組合
+        //    ——那一族（絕大多數人）直接給新預設；自訂過的視為刻意版面，一律不動。
+        //    舊預設在新語意下會把疊圖畫在垂直置中再往下 20px（貼列底／出列），與全新安裝差 20px。
+        if (EnemyList.OffsetX == LegacyEnemyListOffsetX && EnemyList.OffsetY == LegacyEnemyListOffsetY)
+        {
+            EnemyList.OffsetX = OptimizedEnemyListConfig.DefaultOffsetX;
+            EnemyList.OffsetY = OptimizedEnemyListConfig.DefaultOffsetY;
+        }
+
+        // 孤兒鍵用完就丟，不要再寫回設定檔。
+        EnemyList.ShowCast = null;
+        return true;
+    }
+
+    /// <summary>v1 時代 OptimizedEnemyList 的 <c>OffsetX</c> 預設值。</summary>
+    private const float LegacyEnemyListOffsetX = 4f;
+
+    /// <summary>v1 時代 OptimizedEnemyList 的 <c>OffsetY</c> 預設值。</summary>
+    private const float LegacyEnemyListOffsetY = 20f;
 }
 
 /// <summary><see cref="Modules.AutoChangeKeyboardLayout"/> 的設定。</summary>
 /// <remarks>
 /// ⚠️ 兩個欄位都是 <c>ushort</c> 的鍵盤配置語言 id（HKL 低字組）。
-/// 🔴 預設 0＝「尚未設定」，模組啟用時會把 0 補成目前系統配置＝兩邊相同＝不切換，沿用現行行為。
+/// 🔴 預設 0＝「不切換」，而且是<b>持久的哨兵值</b>：模組看到 0 就不動作。
+/// ⚠️ 以前是「模組啟用時把 0 補成目前系統配置並存檔」——那等於把啟用當刻的配置烙死，
+/// 之後每次 focus／unfocus 都強制切回去，與「預設不切換」的承諾相反，而且沒有回到未設定的路。
+/// 現在不烙印；<b>兩欄相同（含都是 0）也一律視為不切換</b>，所以已經被舊版烙上值的人
+/// 自動回到 no-op（烙印必然是把兩欄設成同一個值），設定畫面另有「（不切換）」選項可寫回 0。
 /// 舊設定檔沒有這兩個鍵，反序列化不會覆寫初始值，所以升級不會讓人突然被切輸入法。
 /// </remarks>
 public sealed class AutoChangeKeyboardLayoutConfig
@@ -212,9 +293,15 @@ public sealed class AetherCurrentTrackerConfig
     /// <summary>Mappy 上的風脈泉圖示 id。0＝用內建預設值。</summary>
     /// <remarks>
     /// ⚠️ 做成可設定的理由：圖示的<b>存在</b>可以離線驗證，<b>長什麼樣子</b>不行。
-    /// 預設值取自 Mappy 畫「已經在視野內的風脈泉」時用的編號。
+    /// 預設值取自 Mappy 畫「已經在視野內的風脈泉」時用的編號
+    /// （<see cref="Modules.AetherCurrentTracker.DefaultMappyIconId"/>）。
+    /// 🔴 <b>初始器一定要是 0，不能寫具體常數。</b>寫具體常數的話「0＝用內建預設值」這個契約
+    /// 在實務上永遠不成立：任何一次 Save 就把當下的編號烙死，之後若修正
+    /// <c>Default…IconId</c>（那正是這個欄位做成可設定的理由——「萬一在台服看起來不對」），
+    /// 修正對<b>所有既有使用者靜默無效</b>，哨兵機制形同虛設。
+    /// 📌 已經被舊版烙上具體值的人：在設定畫面按一下「預設」就會寫回 0，重新跟隨內建預設值。
     /// </remarks>
-    public uint MappyIconId { get; set; } = Modules.AetherCurrentTracker.DefaultMappyIconId;
+    public uint MappyIconId { get; set; }
 }
 
 /// <summary><see cref="Modules.CabinetStoreAll"/> 的設定。</summary>
@@ -716,11 +803,16 @@ public sealed class HuntTrainOnMappyConfig
     /// ⚠️ 做成可設定的理由：圖示的<b>存在</b>可以離線驗證，<b>長什麼樣子</b>不行。
     /// 預設值取自 Mappy 畫同類目標時用的編號，但萬一在台服看起來不對，
     /// 使用者可以自己換而不必等改版（設定畫面上會把圖示直接畫出來對照）。
+    /// 🔴 <b>初始器一定要是 0，不能寫具體常數。</b>寫具體常數的話「0＝用內建預設值」這個契約
+    /// 在實務上永遠不成立：任何一次 Save 就把當下的編號烙死，之後若修正
+    /// <c>Default…IconId</c>（那正是這個欄位做成可設定的理由——「萬一在台服看起來不對」），
+    /// 修正對<b>所有既有使用者靜默無效</b>，哨兵機制形同虛設。
+    /// 📌 已經被舊版烙上具體值的人：在設定畫面按一下「預設」就會寫回 0，重新跟隨內建預設值。
     /// </remarks>
-    public uint AliveIconId { get; set; } = Modules.HuntTrainOnMappy.DefaultAliveIconId;
+    public uint AliveIconId { get; set; }
 
-    /// <summary>已擊殺目標的圖示 id。0＝用內建預設值。</summary>
-    public uint DeadIconId { get; set; } = Modules.HuntTrainOnMappy.DefaultDeadIconId;
+    /// <summary>已擊殺目標的圖示 id。0＝用內建預設值（理由同 <see cref="AliveIconId"/>）。</summary>
+    public uint DeadIconId { get; set; }
 }
 
 /// <summary>老主顧交易總覽。</summary>
@@ -749,8 +841,13 @@ public sealed class CustomDeliveriesOverviewConfig
     /// <remarks>
     /// 📌 預設值不是猜的：<c>MapSymbol</c> 表第 69 列的 <c>Icon</c> 欄就是它，
     /// 對應的 <c>PlaceName</c> 台服繁中逐字是「老主顧交易」。
+    /// 🔴 <b>初始器一定要是 0，不能寫具體常數。</b>寫具體常數的話「0＝用內建預設值」這個契約
+    /// 在實務上永遠不成立：任何一次 Save 就把當下的編號烙死，之後若修正
+    /// <c>Default…IconId</c>（那正是這個欄位做成可設定的理由——「萬一在台服看起來不對」），
+    /// 修正對<b>所有既有使用者靜默無效</b>，哨兵機制形同虛設。
+    /// 📌 已經被舊版烙上具體值的人：在設定畫面按一下「預設」就會寫回 0，重新跟隨內建預設值。
     /// </remarks>
-    public uint MappyIconId { get; set; } = Modules.CustomDeliveriesOverview.DefaultMappyIconId;
+    public uint MappyIconId { get; set; }
 }
 
 /// <summary>聊天座標自動開地圖。</summary>
@@ -1211,10 +1308,27 @@ public sealed class OptimizedEnemyListConfig
     public bool AnchorRight = true;
 
     /// <summary>離開列邊緣的距離（兩側都是正值往外）。</summary>
-    public float OffsetX = 6f;
+    public float OffsetX = DefaultOffsetX;
 
     /// <summary>相對垂直置中的微調。</summary>
-    public float OffsetY;
+    public float OffsetY = DefaultOffsetY;
+
+    public const float DefaultOffsetX = 6f;
+    public const float DefaultOffsetY = 0f;
+
+    /// <summary>
+    /// v1 時代的 <c>ShowCast</c>(bool)。<b>只為了遷移而存在</b>；<c>null</c>＝設定檔裡沒有這個鍵。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 沒有這個成員的話，舊鍵在反序列化時會被 Newtonsoft <b>靜默丟掉</b>，
+    /// 「使用者當初有沒有把詠唱顯示關掉」這件事就再也讀不回來了。
+    /// 📌 <c>ShouldSerializeShowCast()</c> 回 false ⇒ 只讀不寫，不會把孤兒鍵再寫回設定檔。
+    /// 遷移完成後（<see cref="Configuration.Migrate"/>）會被設回 <c>null</c>。
+    /// </remarks>
+    public bool? ShowCast { get; set; }
+
+    /// <summary>Newtonsoft 的慣例方法：讓 <see cref="ShowCast"/> 只讀不寫。</summary>
+    public bool ShouldSerializeShowCast() => false;
 }
 
 public sealed class MarkerInPartyListConfig

@@ -33,6 +33,9 @@ public sealed class Plugin : IDalamudPlugin
 
         Config = Svc.PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
 
+        // 🔴 一定要在建立模組之前：模組的建構子／OnEnable 會讀設定，遷移晚一步就讀到舊值。
+        Config.Migrate();
+
         // 🔴 這裡的順序就是主視窗上的顯示順序：分類分頁與「全部」分頁都直接照 Modules 的
         //    順序畫，沒有第二份排序表。要調整某個模組在頁面上的位置就搬這裡的行，
         //    但「分組」必須和該模組的 Category 一致，否則分類分頁裡會出現插隊的模組。
