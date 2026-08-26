@@ -32,6 +32,27 @@ internal static class YesAlreadyIpc
     /// <summary>目前是否處於「被我們暫停」狀態。</summary>
     public static bool IsSuppressed => suppressed;
 
+    /// <summary>
+    /// 問 YesAlready 現在開著沒。<c>null</c>＝沒裝／IPC 不在／問不到。
+    /// </summary>
+    /// <remarks>
+    /// 📌 純查詢，<b>不會去改它的狀態</b>——給「要提醒使用者 YesAlready 可能會接手某個對話框」用。
+    /// ⚠️ 問得到的只有「這個外掛整體開著沒」，<b>問不到它個別功能的開關</b>
+    /// （那些只存在它自己的設定檔裡，沒有 IPC）。
+    /// </remarks>
+    public static bool? QueryActive()
+    {
+        try
+        {
+            return IsEnabledGate.Value.InvokeFunc();
+        }
+        catch (Exception)
+        {
+            // 沒裝／版本不合／gate 不存在：回「不知道」，呼叫端只是少顯示一句提醒。
+            return null;
+        }
+    }
+
     /// <summary>把 YesAlready 暫停（只在它原本開著時）。沒裝／IPC 不在＝no-op。</summary>
     public static void Suppress()
     {
