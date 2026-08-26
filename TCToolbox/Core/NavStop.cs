@@ -39,8 +39,31 @@ internal static class NavStop
     /// </remarks>
     private static readonly TimeSpan EnforceWindow = TimeSpan.FromSeconds(3);
 
+    /// <summary>
+    /// 補送停止的<b>絕對</b>上限（自第一次 <see cref="RequestStop"/> 起算）。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 為什麼需要：窗口到期時只要 vnavmesh 還在算路徑就會延展（見
+    /// <see cref="OnFrameworkUpdate"/>），若 IPC 端點因故永遠卡在 true，看門狗就會
+    /// 永久補送。這條上限保證它一定會收工。
+    /// 📌 正常情況遠遠用不到——<c>IsVnavmeshPathfindInProgress</c> 在 IPC 出錯時回 false，
+    /// vnavmesh 中途被拆掉也會自然走到「兩個都 false」的提早收工分支。
+    /// </remarks>
+    private static readonly TimeSpan AbsoluteCap = TimeSpan.FromSeconds(30);
+
     private static int refCount;
     private static DateTime enforceUntil = DateTime.MinValue;
+
+    /// <summary>本輪補送是從什麼時候開始的（算 <see cref="AbsoluteCap"/> 用）。</summary>
+    private static DateTime enforceStartedAt = DateTime.MinValue;
+
+    private static bool watchdogSubscribed;
+    private static bool commandRegistered;
+
+    /// <summary>
+    /// 最後一個使用者已經離開，但補送窗口還沒關 —— 窗口一關就自己拆掉看門狗。
+    /// </summary>
+    private static bool pendingTeardown;
 
     /// <summary>目前是不是還在確保「真的停下來了」。</summary>
     public static bool IsEnforcing => enforceUntil != DateTime.MinValue;
@@ -51,15 +74,36 @@ internal static class NavStop
         refCount++;
         if (refCount != 1) return;
 
-        Svc.Commands.AddHandler(Command, new CommandInfo(OnStopCommand)
-        {
-            HelpMessage = "停止 TC Toolbox 發起的自動移動",
-        });
+        // 前一輪的延後拆卸還沒執行就又有人進來了——撤銷它，繼續共用同一個看門狗。
+        pendingTeardown = false;
 
-        Svc.Framework.Update += OnFrameworkUpdate;
+        if (!commandRegistered)
+        {
+            Svc.Commands.AddHandler(Command, new CommandInfo(OnStopCommand)
+            {
+                HelpMessage = "停止 TC Toolbox 發起的自動移動",
+            });
+            commandRegistered = true;
+        }
+
+        if (!watchdogSubscribed)
+        {
+            Svc.Framework.Update += OnFrameworkUpdate;
+            watchdogSubscribed = true;
+        }
     }
 
     /// <summary>登出一個使用者（模組停用時呼叫）。最後一個離開時收掉指令與看門狗。</summary>
+    /// <remarks>
+    /// 🔴 <b>補送窗口必須活過最後一個 Release</b>：模組的 <c>OnDisable</c> 標準寫法是
+    /// 「先 <see cref="RequestStop"/> 再 Release」，若 Release 當場拆掉看門狗，那個
+    /// 3 秒補送窗口就只剩下 RequestStop 裡的<b>單獨一發</b> —— 而這個類別存在的唯一
+    /// 理由就是「單獨一發攔不住還在背景計算的路徑」。於是使用者關掉模組後，角色
+    /// 幾秒後自己走起來，而 <c>/tcstop</c> 這時也已經登出了。
+    /// ⇒ 指令照舊立刻登出（模組停用了就不該還留著指令），但看門狗改成延後拆：
+    /// 交給 <see cref="OnFrameworkUpdate"/> 在窗口收掉的那一刻自行退訂。
+    /// ⚠️ 外掛整個卸載走的是 <see cref="ForceTeardown"/>（不能留訂閱給已卸載的組件）。
+    /// </remarks>
     public static void Release()
     {
         refCount--;
@@ -68,9 +112,62 @@ internal static class NavStop
         // 防禦：不管怎麼失衡都不要讓計數變成負的，否則下一次 Acquire 不會註冊指令。
         refCount = 0;
 
-        Svc.Framework.Update -= OnFrameworkUpdate;
-        Svc.Commands.RemoveHandler(Command);
+        if (commandRegistered)
+        {
+            Svc.Commands.RemoveHandler(Command);
+            commandRegistered = false;
+        }
+
+        if (IsEnforcing)
+        {
+            pendingTeardown = true;
+            return;
+        }
+
+        Teardown();
+    }
+
+    /// <summary>
+    /// 硬拆：無論補送窗口是否還開著，一律退訂看門狗並清空狀態。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 只給外掛整個卸載的路徑用（<c>Plugin.Dispose</c>）。組件都要被卸載了，
+    /// 絕對不能留一個指向本組件的 <c>Framework.Update</c> 訂閱。
+    /// </remarks>
+    public static void ForceTeardown()
+    {
+        refCount = 0;
+
+        if (commandRegistered)
+        {
+            Svc.Commands.RemoveHandler(Command);
+            commandRegistered = false;
+        }
+
+        Teardown();
+    }
+
+    private static void Teardown()
+    {
+        if (watchdogSubscribed)
+        {
+            Svc.Framework.Update -= OnFrameworkUpdate;
+            watchdogSubscribed = false;
+        }
+
         enforceUntil = DateTime.MinValue;
+        enforceStartedAt = DateTime.MinValue;
+        pendingTeardown = false;
+    }
+
+    /// <summary>關掉補送窗口；若拆卸還欠著就順手拆掉。</summary>
+    private static void CloseWindow()
+    {
+        enforceUntil = DateTime.MinValue;
+        enforceStartedAt = DateTime.MinValue;
+
+        if (pendingTeardown)
+            Teardown();
     }
 
     /// <summary>
@@ -80,7 +177,14 @@ internal static class NavStop
     public static void RequestStop()
     {
         ExternalNav.TryStopMovement();
-        enforceUntil = DateTime.UtcNow + EnforceWindow;
+
+        var now = DateTime.UtcNow;
+
+        // 絕對上限自「這一輪的第一次要求停止」起算：連按停止不會把上限一直往後推。
+        if (enforceStartedAt == DateTime.MinValue)
+            enforceStartedAt = now;
+
+        enforceUntil = now + EnforceWindow;
         Throttle.Reset("NavStop-Enforce");
     }
 
@@ -94,11 +198,35 @@ internal static class NavStop
     /// <summary>沒開補送窗口時，這裡就只是一行比較後直接返回。</summary>
     private static void OnFrameworkUpdate(IFramework framework)
     {
-        if (enforceUntil == DateTime.MinValue) return;
-
-        if (DateTime.UtcNow >= enforceUntil)
+        if (enforceUntil == DateTime.MinValue)
         {
-            enforceUntil = DateTime.MinValue;
+            // 窗口早就關了、只欠拆卸（Release 已經走過延後路徑）。
+            if (pendingTeardown) Teardown();
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+
+        if (now >= enforceUntil)
+        {
+            // 🔴 到期不能無條件放棄：路徑計算超過窗口長度（大地圖遠距離目標很常見）時，
+            //    vnavmesh 算完照樣把路徑交給 FollowPath 開走 —— 那正是這個類別要修掉的
+            //    「按了停止、幾秒後角色自己走起來」原樣復發。
+            //    「它存在的唯一理由仍然成立」時要延展窗口，不是到期即棄。
+            if (ExternalNav.IsVnavmeshPathfindInProgress() && now - enforceStartedAt < AbsoluteCap)
+            {
+                enforceUntil = now + EnforceWindow;
+                return;
+            }
+
+            if (now - enforceStartedAt >= AbsoluteCap)
+            {
+                // 使用者回報用：走到這裡代表 vnavmesh 的 pathfinding 狀態卡在 true 沒下來。
+                Svc.Log.Information(
+                    $"[NavStop] 補送停止已達絕對上限 {AbsoluteCap.TotalSeconds:0} 秒（vnavmesh 仍回報正在計算路徑），停止補送。");
+            }
+
+            CloseWindow();
             return;
         }
 
@@ -112,6 +240,6 @@ internal static class NavStop
 
         // 既沒在算路徑也沒在走＝真的停了，提早收工。
         if (!pathfinding && !running)
-            enforceUntil = DateTime.MinValue;
+            CloseWindow();
     }
 }

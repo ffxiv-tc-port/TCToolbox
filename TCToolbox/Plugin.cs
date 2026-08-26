@@ -289,5 +289,10 @@ public sealed class Plugin : IDalamudPlugin
 
         foreach (var module in Modules)
             module.Disable();
+
+        // 🔴 硬拆共用的停止移動看門狗：模組停用路徑的 NavStop.Release 會「延後拆卸」
+        //    讓補送窗口活到最後（見 NavStop.Release 的說明），但外掛整個卸載時
+        //    絕對不能留一個指向本組件的 Framework.Update 訂閱。
+        NavStop.ForceTeardown();
     }
 }

@@ -118,6 +118,8 @@ public sealed unsafe class ClickToMove : TcModule
 
         // 使用者在我們發起的移動還在跑的時候關掉模組——是我們讓他跑起來的，就由我們收掉。
         // 📌 沒發起過就不呼叫：不要在拆卸路徑上對別的外掛做沒必要的 IPC。
+        // 📌 這個順序（先停再放）是對的，而且 NavStop.Release 會讓補送窗口活過最後一次
+        //    Release（延後拆看門狗）——否則這裡等於只送出單獨一發，攔不住還在計算中的路徑。
         if (hasLastDestination)
             NavStop.RequestStop();
 

@@ -77,9 +77,20 @@ public sealed unsafe class FlagCommands : TcModule
     /// </remarks>
     private readonly Dictionary<uint, Vector3?> positionCache = [];
 
+    /// <summary>本次啟用期間有沒有真的用 <c>/tcgoto</c> 發起過移動。</summary>
+    /// <remarks>
+    /// 🔴 停用模組時要據此把自己發起的移動收掉：<c>OnDisable</c> 同時把
+    /// <c>/tcstop</c> 登出（<see cref="NavStop.Release"/>），若不主動停下，
+    /// 使用者會落到「角色繼續自動走、停止指令同時消失」的狀態。
+    /// 📌 沒發起過就不呼叫：不要在拆卸路徑上對別的外掛做沒必要的 IPC
+    /// （做法同 ClickToMove／FateTracker）。
+    /// </remarks>
+    private bool hasStartedNav;
+
     protected override void OnEnable()
     {
         positionCache.Clear();
+        hasStartedNav = false;
         NavStop.Acquire();
 
         Svc.Commands.AddHandler(TeleportCommand, new CommandInfo(OnTeleportFlag)
@@ -112,7 +123,14 @@ public sealed unsafe class FlagCommands : TcModule
         Svc.Commands.RemoveHandler(GotoCommand);
         Svc.Commands.RemoveHandler(GotoAlias);
 
+        // 使用者在我們發起的移動還在跑的時候關掉模組——是我們讓他跑起來的，就由我們收掉。
+        // 🔴 順序不能顛倒：Release 會把 /tcstop 登出，先停再放才不會留下
+        //    「還在走、但停不了」的狀態。（補送窗口本身會活過 Release，見 NavStop.Release。）
+        if (hasStartedNav)
+            NavStop.RequestStop();
+
         NavStop.Release();
+        hasStartedNav = false;
         positionCache.Clear();
     }
 
@@ -392,6 +410,9 @@ public sealed unsafe class FlagCommands : TcModule
             Svc.Chat.PrintError("[TC Toolbox] vnavmesh 拒絕了這次導航（多半是上一個路徑還在計算中），請稍候再試。");
             return;
         }
+
+        // 走到這裡＝vnavmesh 真的收下了這趟移動，停用模組時要負責收掉。
+        hasStartedNav = true;
 
         Svc.Log.Information(
             $"[{InternalName}] 使用者以 {command} 導航 → 旗標 {destination:F1}" +

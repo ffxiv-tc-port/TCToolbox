@@ -69,6 +69,15 @@ public sealed class FateTracker : TcModule
     /// </remarks>
     private static readonly TimeSpan StopEnforceWindow = TimeSpan.FromSeconds(15);
 
+    /// <summary>
+    /// 補送停止的<b>絕對</b>上限（自按下停止起算）。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 窗口到期時只要 vnavmesh 還在算路徑就會延展（見 <see cref="OnFrameworkUpdate"/>），
+    /// 這條上限保證 IPC 端點若卡在 true 也一定會收工。與 <see cref="Core.NavStop"/> 同值。
+    /// </remarks>
+    private static readonly TimeSpan StopEnforceAbsoluteCap = TimeSpan.FromSeconds(30);
+
     private static readonly Vector4 WarnColor = new(1f, 0.65f, 0.25f, 1f);
     private static readonly Vector4 UnknownColor = new(0.68f, 0.68f, 0.68f, 1f);
     private static readonly Vector4 BonusColor = new(1f, 0.80f, 0.30f, 1f);
@@ -110,6 +119,9 @@ public sealed class FateTracker : TcModule
     /// <summary>補送停止指令的截止時刻；<see cref="DateTime.MinValue"/>＝沒有在補送。</summary>
     private DateTime stopEnforceUntil = DateTime.MinValue;
 
+    /// <summary>本輪補送是從什麼時候開始的（算 <see cref="StopEnforceAbsoluteCap"/> 用）。</summary>
+    private DateTime stopEnforceStartedAt = DateTime.MinValue;
+
     // ── vnavmesh 探測的快取 ────────────────────────────────────────────────
     // ⚠️ 這裡快取是為了成本不是為了正確性：vnavmesh 沒安裝時每次 InvokeFunc 都會擲
     //    IpcNotReadyError，而「每幀擲一次例外」是實打實的開銷（例外建構＋堆疊擷取）。
@@ -127,6 +139,7 @@ public sealed class FateTracker : TcModule
         navTargetFateId = 0;
         navTargetName = string.Empty;
         stopEnforceUntil = DateTime.MinValue;
+        stopEnforceStartedAt = DateTime.MinValue;
 
         Svc.PluginInterface.UiBuilder.Draw += DrawWindow;
         Svc.Framework.Update += OnFrameworkUpdate;
@@ -147,6 +160,7 @@ public sealed class FateTracker : TcModule
         navTargetFateId = 0;
         navTargetName = string.Empty;
         stopEnforceUntil = DateTime.MinValue;
+        stopEnforceStartedAt = DateTime.MinValue;
         windowOpen = false;
     }
 
@@ -160,7 +174,25 @@ public sealed class FateTracker : TcModule
         var now = DateTime.UtcNow;
         if (now >= stopEnforceUntil)
         {
+            // 🔴 到期不能無條件放棄：路徑計算超過窗口長度時，vnavmesh 算完照樣把路徑交給
+            //    FollowPath 開走 —— 就是這個補送窗口要修掉的那個 bug 原樣復發。
+            //    「它存在的唯一理由仍然成立」時要延展，不是到期即棄。
+            //    （同一道修法也套在共用的 Core/NavStop 上。）
+            if (ExternalNav.IsVnavmeshPathfindInProgress() && now - stopEnforceStartedAt < StopEnforceAbsoluteCap)
+            {
+                stopEnforceUntil = now + StopEnforceWindow;
+                return;
+            }
+
+            if (now - stopEnforceStartedAt >= StopEnforceAbsoluteCap)
+            {
+                Svc.Log.Information(
+                    $"[FateTracker] 補送停止已達絕對上限 {StopEnforceAbsoluteCap.TotalSeconds:0} 秒"
+                    + "（vnavmesh 仍回報正在計算路徑），停止補送。");
+            }
+
             stopEnforceUntil = DateTime.MinValue;
+            stopEnforceStartedAt = DateTime.MinValue;
             return;
         }
 
@@ -174,7 +206,10 @@ public sealed class FateTracker : TcModule
 
         // 既沒在算路徑也沒在走＝真的停了，提早收工。
         if (!pathfinding && !running)
+        {
             stopEnforceUntil = DateTime.MinValue;
+            stopEnforceStartedAt = DateTime.MinValue;
+        }
     }
 
     public override void DrawConfig()
@@ -617,6 +652,7 @@ public sealed class FateTracker : TcModule
     {
         // 先前那趟（如果有）就此作廢：使用者按了新的目標，意思就是不要舊的了。
         stopEnforceUntil = DateTime.MinValue;
+        stopEnforceStartedAt = DateTime.MinValue;
 
         var config = Plugin.Instance.Config.FateTracker;
 
@@ -654,7 +690,13 @@ public sealed class FateTracker : TcModule
         ExternalNav.TryStopMovement();
 
         // 開啟補送窗口：光送一次擋不住還在計算中的路徑（見 StopEnforceWindow 的說明）。
-        stopEnforceUntil = DateTime.UtcNow + StopEnforceWindow;
+        var stopNow = DateTime.UtcNow;
+
+        // 絕對上限自「這一輪的第一次停止」起算：連按停止不會把上限一直往後推。
+        if (stopEnforceStartedAt == DateTime.MinValue)
+            stopEnforceStartedAt = stopNow;
+
+        stopEnforceUntil = stopNow + StopEnforceWindow;
         Throttle.Reset("FateTracker-StopEnforce");
         Throttle.Reset("FateTracker-VnavProbe");
 
