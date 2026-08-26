@@ -92,7 +92,12 @@ public sealed unsafe class OptimizedFreeShop : TcModule
         Svc.Log.Information(
             $"[{InternalName}] 領取確認框判準 {claimPrompts.Count}/{ClaimPromptRows.Length} 條：{AddonPrompt.Describe(claimPrompts)}");
 
+        // 🔴 PostSetup ＋ PostDraw 兩條都掛（慣例同 AutoRequestItemSubmit／LetterCollectAll）：
+        //    PostSetup 那一刻確認框不一定已經可以互動（IsVisible／LoadedState 還沒到位），
+        //    只掛 PostSetup 的話錯過就沒有第二次機會 —— 而我們在下面要讀它的提示文字。
+        //    兩者共用同一個節流器，所以 PostDraw 不會變成每幀重發事件。
         Svc.AddonLifecycle.RegisterListener(AddonEvent.PostSetup, "SelectYesno", OnSelectYesno);
+        Svc.AddonLifecycle.RegisterListener(AddonEvent.PostDraw, "SelectYesno", OnSelectYesno);
         Svc.AddonLifecycle.RegisterListener(AddonEvent.PreFinalize, AddonName, OnFreeShopClosed);
         Svc.Framework.Update += OnUpdate;
         Svc.PluginInterface.UiBuilder.Draw += DrawOverlay;
@@ -134,6 +139,10 @@ public sealed unsafe class OptimizedFreeShop : TcModule
     private void OnSelectYesno(AddonEvent type, AddonArgs args)
     {
         if (!Config.SkipConfirmation) return;
+
+        // PostDraw 每幀都會進來，所以節流放最前面——後面每一步都要取 addon、讀字串。
+        if (!Throttle.Pass($"{InternalName}-Yesno", 200)) return;
+
         if (!UiHelper.IsAddonReady(AddonName)) return;
 
         var addon = (AtkUnitBase*)args.Addon.Address;
