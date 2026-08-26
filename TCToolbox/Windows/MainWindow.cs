@@ -232,7 +232,7 @@ public sealed class MainWindow : Window
             {
                 if (ImGui.TreeNodeEx($"設定###cfg-{module.InternalName}", ImGuiTreeNodeFlags.None))
                 {
-                    module.DrawConfig();
+                    DrawModuleConfig(module);
                     ImGui.TreePop();
                 }
             }
@@ -241,6 +241,44 @@ public sealed class MainWindow : Window
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
+    }
+
+    /// <summary>模組設定畫面繪製失敗時，那一列顯示的紅字。</summary>
+    private static readonly Vector4 ConfigErrorColor = new(1f, 0.35f, 0.35f, 1f);
+
+    /// <summary>
+    /// 畫單一模組的設定內容，並把它的例外隔離在這一列裡。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>這是最後一道，不是模組的免責條款。</b>所有模組的 <c>DrawConfig</c> 都在同一個
+    /// <c>Window.Draw</c> 路徑上：任何一個擲例外（展開設定樹狀節點時會<b>每幀重擲</b>），
+    /// Dalamud 的視窗錯誤閂鎖（10 秒內兩次）就會把主視窗<b>永久關閉到外掛重載為止</b>；
+    /// 而模組的啟用／停用勾選框就在同一扇視窗裡 —— 使用者會連「關掉肇事模組」的入口
+    /// 一起失去。這道 try 讓故障留在單一模組列，其餘模組與勾選框照常可用。
+    /// <para>
+    /// 🔴 <c>TreePop()</c> 由呼叫端負責，所以這裡<b>絕對不能把例外往外丟</b>：
+    /// <c>TreeNodeEx</c> 回 true 之後若跳過 <c>TreePop</c>，ImGui 的 ID 堆疊就會失衡。
+    /// </para>
+    /// <para>
+    /// ⚠️ 這裡攔的是<b>一般例外</b>。AccessViolationException 在 .NET Core 屬 corrupted-state
+    /// exception，<c>try/catch</c> 本來就攔不到 —— 原生指標的安全仍然只能靠事前判空。
+    /// </para>
+    /// </remarks>
+    private static void DrawModuleConfig(TcModule module)
+    {
+        try
+        {
+            module.DrawConfig();
+        }
+        catch (Exception ex)
+        {
+            ImGui.TextColored(ConfigErrorColor, $"「{module.DisplayName}」的設定畫面繪製失敗，本次不顯示。");
+            ImGui.TextDisabled(ex.Message);
+
+            // 使用者回報用（LogLevel 2 收得到）。節流：展開節點時這裡每幀都會進來。
+            if (Throttle.Pass($"MainWindow-DrawConfig-{module.InternalName}", 60_000))
+                Svc.Log.Information($"[TCToolbox] 模組 {module.InternalName} 的設定畫面繪製失敗：{ex}");
+        }
     }
 
     private static readonly Vector4 NoticeWarnColor = new(1f, 0.65f, 0.25f, 1f);

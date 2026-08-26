@@ -115,6 +115,14 @@ public abstract class TcModule
     protected abstract void OnDisable();
 
     /// <summary>模組設定 UI（在主視窗中展開繪製）。</summary>
+    /// <remarks>
+    /// 🔴 與 <see cref="RowNotice"/> 同一份契約：這是 ImGui 的 Draw 路徑，<b>實作不得擲例外</b>。
+    /// 設定樹狀節點展開著的時候這裡<b>每幀都會被呼叫</b>，所以一個會擲例外的實作就是每幀重擲
+    /// ⇒ Dalamud 的視窗錯誤閂鎖（10 秒內兩次）把主視窗永久關閉到外掛重載為止，
+    /// 而模組的啟用／停用勾選框就在同一扇視窗裡 —— 使用者連關掉肇事模組的入口都一起失去。
+    /// 呼叫端（<c>MainWindow.DrawModuleConfig</c>）會再包一層 try 把故障隔離在單一模組列，
+    /// 但那是最後一道，<b>不是免責</b>。
+    /// </remarks>
     public virtual void DrawConfig()
     {
     }
