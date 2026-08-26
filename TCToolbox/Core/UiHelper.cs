@@ -177,7 +177,12 @@ public static unsafe class UiHelper
     /// <summary>讀 addon AtkValues 裡第一個字串值（沒有就空字串）。錄製／診斷用。</summary>
     public static string GetFirstStringValue(AtkUnitBase* addon)
     {
-        if (addon == null) return string.Empty;
+        // 🔴 判 addon 與長度都不夠：addon 拆解時 AtkValues 這個欄位會先被釋放成 null，
+        //    AtkValuesCount 卻可能還留著殘值 —— 這個組合會讓下面的迴圈對位址 0 解參考，
+        //    ＝ AccessViolationException（corrupted-state exception，try/catch 攔不到）。
+        //    樣板同 FastGrandCompanyExchange.ReadAtkString／AutoFCWSDeliver.ParseDeliverables。
+        //    讀不到回空字串——呼叫端本來就把空字串當「沒描述」，語意零變更。
+        if (addon == null || addon->AtkValues == null) return string.Empty;
         var count = addon->AtkValuesCount;
         for (var i = 0; i < count; i++)
         {
@@ -230,8 +235,16 @@ public static unsafe class UiHelper
         raceText = string.Empty;
         var addon = GetAddon(addonName);
         // 🔴 CharaMake 根 addon 的 IsReady（IsVisible + LoadedState）在實機恆 false（隱形容器），
-        //    這裡只判空——AtkValues 是 addon 存活期間有效的受控讀取。
+        //    所以這裡拿不到 IsReady 當閘門，只能逐欄自判。
+        // 🔴 AtkValues **不是**「addon 存活期間必然有效」——addon 拆解時它會先被釋放成 null，
+        //    而 AtkValuesCount 可能還留著殘值，於是長度檢查通過、索引下去卻對位址 0 解參考
+        //    ＝ AccessViolationException（corrupted-state exception，try/catch 攔不到）。
+        //    本模組正好被 RetainerBatchRename 在 CharaMake 視窗開／關的過渡期反覆輪詢，
+        //    那正是殘值組合出現的時刻 ⇒ 必須先自判 AtkValues 欄位。
+        //    （同一道檢查的既有樣板：AutoFCWSDeliver.ParseDeliverables、FastGrandCompanyExchange.ReadUInt）
+        //    回 false ＝「判定不到」，落入呼叫端既有的下一 tick 重試路徑，語意零變更。
         if (addon == null) return false;
+        if (addon->AtkValues == null) return false;
         if (addon->AtkValuesCount < 3) return false;
 
         var state = addon->AtkValues[0];

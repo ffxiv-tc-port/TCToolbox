@@ -151,7 +151,12 @@ public sealed unsafe class DiscardList : TcModule
         foreach (var bag in ScannedBags)
         {
             var container = manager->GetInventoryContainer(bag);
-            if (container == null || container->IsLoaded == false) continue;
+
+            // 🔴 判的是 Items 不是 GetInventorySlot 的回傳值：Items 為 null 而 Size > 0 時，
+            //    GetInventorySlot 回的是「null + 偏移」這種非 null 的假指標，下面的
+            //    slot != null 一定通過，讀 slot->ItemId 就是攔不到的 AVE。
+            //    樣板同 TriadCardRecycle.cs 的兩處背包掃描。
+            if (container == null || !container->IsLoaded || container->Items == null) continue;
 
             var size = container->Size;
             for (var i = 0; i < size; i++)
