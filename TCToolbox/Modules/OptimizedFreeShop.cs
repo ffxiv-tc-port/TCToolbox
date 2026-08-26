@@ -56,6 +56,26 @@ public sealed unsafe class OptimizedFreeShop : TcModule
     /// <summary>單次批次領取的上限，避免 addon 版面改動時無限跑。</summary>
     private const int MaxBatchItems = 200;
 
+    /// <summary>
+    /// 判定「這個 SelectYesno 是不是報酬視窗的領取確認框」用的 <c>Addon</c> 列。
+    /// </summary>
+    /// <remarks>
+    /// 🔑 台服 7.20 實查：<c>Addon#11431~11437</c> 正是報酬視窗自己的字串區塊
+    /// （「可領取道具」「可領取」「已獲得」「無可領取道具」「領取條件：達成成就」），
+    /// 其中 <c>#11437</c>＝「確定要領取＿道具＿×＿數量＿嗎？」就是領取確認句；
+    /// <c>#11506/#11507/#11508/#11515</c> 是四句「確定要領取嗎？＋這件你穿不了／已學會」的變體
+    /// （它們的「用不了也要領」按鈕文字在相鄰的 <c>#11509/#11516</c>，同一個區塊）。
+    /// 用列號查客戶端自己的字串，所以跟語言無關。
+    /// ❌ <b>不能整句逐字比對</b>：句子裡的道具名與數量是 placeholder。
+    /// 比對規則見 <see cref="AddonPrompt"/>（只留固定片段、全部依序出現才算命中）。
+    /// ⚠️ 台服實機到底跳哪一句無法離線證明 —— 所以未命中時會把原句寫進 log（見
+    /// <see cref="OnSelectYesno"/>），照那行補列號即可。
+    /// </remarks>
+    private static readonly uint[] ClaimPromptRows = [11437, 11506, 11507, 11508, 11515];
+
+    /// <summary>解析好的領取確認框樣板；<see cref="OnEnable"/> 時建一次。</summary>
+    private readonly List<List<string>> claimPrompts = [];
+
     private readonly TaskQueue queue = new() { DefaultTimeoutMs = 15_000 };
 
     private OptimizedFreeShopConfig Config => Plugin.Instance.Config.FreeShop;
@@ -63,6 +83,14 @@ public sealed unsafe class OptimizedFreeShop : TcModule
     protected override void OnEnable()
     {
         queue.OnTimeout = step => Svc.Chat.PrintError($"[TC Toolbox] 批次領取逾時，已停止：{step}");
+
+        claimPrompts.Clear();
+        claimPrompts.AddRange(AddonPrompt.GetTemplates(ClaimPromptRows));
+
+        // 使用者回報用：樣板一條都解不出來的話「自動按掉確認框」會完全失效，
+        // 而那個徵兆在畫面上跟「這個選項沒打開」分不出來。
+        Svc.Log.Information(
+            $"[{InternalName}] 領取確認框判準 {claimPrompts.Count}/{ClaimPromptRows.Length} 條：{AddonPrompt.Describe(claimPrompts)}");
 
         Svc.AddonLifecycle.RegisterListener(AddonEvent.PostSetup, "SelectYesno", OnSelectYesno);
         Svc.AddonLifecycle.RegisterListener(AddonEvent.PreFinalize, AddonName, OnFreeShopClosed);
@@ -77,6 +105,7 @@ public sealed unsafe class OptimizedFreeShop : TcModule
         Svc.Framework.Update -= OnUpdate;
         Svc.PluginInterface.UiBuilder.Draw -= DrawOverlay;
         queue.Abort();
+        claimPrompts.Clear();
     }
 
     private void OnUpdate(IFramework framework) => queue.Tick();
@@ -90,14 +119,38 @@ public sealed unsafe class OptimizedFreeShop : TcModule
         Svc.Chat.Print("[TC Toolbox] 報酬視窗已關閉，停止批次領取。");
     }
 
-    /// <summary>只在報酬視窗開著時才自動確認——其他地方的 Yes/No 一律不碰。</summary>
+    /// <summary>
+    /// 只在報酬視窗開著、<b>而且提示文字真的是領取確認句</b>時才自動確認。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>光靠「報酬視窗開著」不夠</b>：使用者開著報酬視窗瀏覽（沒按任何領取鈕）時，
+    /// 任何來源的 SelectYesno 都會落進這裡 —— 最具體的是<b>別的玩家的交易申請確認框</b>，
+    /// 或其他外掛（AutoRetainer 之類）此刻彈出的確認框。少了文字閘門就等於「看到 Yes/No 就按是」。
+    /// 📌 <b>也不能改用 <c>queue.IsBusy</c> 當閘門</b>：本模組的賣點包含「手動點領取也跳過確認」，
+    /// 手動路徑根本不經過佇列 —— 文字白名單才是必要且充分的那一道。
+    /// ⚠️ 未命中一律不動作並寫一行 Information 級 log（使用者跑 LogLevel 2 收得到），
+    /// 那行同時是「台服實際跳的是哪一句」的唯一線索。
+    /// </remarks>
     private void OnSelectYesno(AddonEvent type, AddonArgs args)
     {
         if (!Config.SkipConfirmation) return;
         if (!UiHelper.IsAddonReady(AddonName)) return;
 
         var addon = (AtkUnitBase*)args.Addon.Address;
-        if (addon == null) return;
+        if (!UiHelper.IsReady(addon)) return;
+
+        var prompt = AddonPrompt.ReadSelectYesnoText(addon);
+        if (!AddonPrompt.MatchesAny(prompt, claimPrompts))
+        {
+            if (Throttle.Pass($"{InternalName}-PromptMiss", 10_000))
+            {
+                Svc.Log.Information(
+                    $"[{InternalName}] 報酬視窗開著時出現未認得的確認框，不動作：「{prompt}」" +
+                    $"（目前判準：{AddonPrompt.Describe(claimPrompts)}）");
+            }
+
+            return;
+        }
 
         UiHelper.FireCallback(addon, true, 0);
     }
@@ -336,6 +389,9 @@ public sealed unsafe class OptimizedFreeShop : TcModule
         }
 
         using (ImRaii.PushIndent())
-            ImGui.TextDisabled("只在「報酬」視窗開著時生效，其他地方的是／否對話框不受影響。");
+        {
+            ImGui.TextDisabled("只在「報酬」視窗開著、而且提示文字確實是領取確認句時才按。");
+            ImGui.TextDisabled("視窗開著時冒出來的交易申請或其他外掛的對話框一律不碰。");
+        }
     }
 }

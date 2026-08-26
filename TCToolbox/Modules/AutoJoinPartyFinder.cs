@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.Addon.Lifecycle;
@@ -38,9 +39,15 @@ namespace TCToolbox.Modules;
 /// </list>
 /// </para>
 /// <para>
-/// 🔴 <b>確認框只在「我們剛剛按過加入」之後才代按。</b>判準是三個條件同時成立：
+/// 🔴 <b>確認框只在「我們剛剛按過加入」之後才代按。</b>判準是四個條件同時成立：
 /// 我們按下加入 <see cref="ConfirmWindowMs"/> 毫秒以內、當時畫面上<b>沒有</b>確認框、
-/// 而且詳細視窗還開著。少了因果連結就變成「看到 Yes/No 就按是」，那是完全不同的風險等級。
+/// 詳細視窗還開著、<b>而且提示文字真的是「加入招募」那一句</b>。
+/// </para>
+/// <para>
+/// 🔴 <b>為什麼光靠時間窗不夠</b>：前三個條件排掉的只有「按下加入<b>那一刻</b>已經存在的框」，
+/// 蓋不住按下之後才冒出來的<b>外來</b>框（交易申請、別的外掛的確認框）——
+/// 那是一個 5 秒的盲窗，而且失敗形式是靜默的（別人的對話框被按下「是」）。
+/// → 按之前另外拿 <c>Addon</c> 表的加入確認句做比對（見 <see cref="JoinPromptRows"/>）。
 /// </para>
 /// </remarks>
 public sealed unsafe class AutoJoinPartyFinder : TcModule
@@ -61,6 +68,21 @@ public sealed unsafe class AutoJoinPartyFinder : TcModule
 
     /// <summary>按下加入之後，多久以內出現的確認框才算是我們造成的（毫秒）。</summary>
     private const int ConfirmWindowMs = 5_000;
+
+    /// <summary>
+    /// 判定「這個 SelectYesno 是不是加入招募的確認框」用的 <c>Addon</c> 列。
+    /// </summary>
+    /// <remarks>
+    /// 🔑 台服 7.20 實查：<c>Addon#11115</c> ＝「確定要加入任務「＿UNKNOWN＿」的＿UNKNOWN＿嗎？\n招募人為＿UNKNOWN＿。」
+    /// —— 全表 14850 列裡只有這一列含「招募人為」。
+    /// 用列號查客戶端自己的字串，所以跟語言無關，也不會因為台服用全形標點而失效。
+    /// ❌ <b>不能整句逐字比對</b>：句子裡的任務名、隨募類型、招募人名全都是 placeholder。
+    /// 比對規則見 <see cref="AddonPrompt"/>（只留固定片段、全部依序出現才算命中）。
+    /// </remarks>
+    private static readonly uint[] JoinPromptRows = [11115];
+
+    /// <summary>解析好的確認框樣板；<see cref="OnEnable"/> 時建一次。</summary>
+    private readonly List<List<string>> joinPrompts = [];
 
     /// <summary>可選的取消鍵（0＝不使用）。</summary>
     private static readonly (int Code, string Label)[] SelectableKeys =
@@ -89,6 +111,14 @@ public sealed unsafe class AutoJoinPartyFinder : TcModule
 
     protected override void OnEnable()
     {
+        joinPrompts.Clear();
+        joinPrompts.AddRange(AddonPrompt.GetTemplates(JoinPromptRows));
+
+        // 使用者回報用：樣板解不出來（台服沒有這列）的話，确認框就完全不會被代按，
+        // 而那個征兆在畫面上跟「沒開這個功能」分不出來。
+        Svc.Log.Information(
+            $"[{InternalName}] 加入確認框判準 {joinPrompts.Count}/{JoinPromptRows.Length} 條：{AddonPrompt.Describe(joinPrompts)}");
+
         Svc.AddonLifecycle.RegisterListener(AddonEvent.PostSetup, DetailAddon, OnDetailSetup);
         Svc.AddonLifecycle.RegisterListener(AddonEvent.PreFinalize, DetailAddon, OnDetailFinalize);
         Svc.Framework.Update += OnFrameworkUpdate;
@@ -109,6 +139,7 @@ public sealed unsafe class AutoJoinPartyFinder : TcModule
         handledThisOpen = false;
         joinClickTick = 0;
         lastAction = string.Empty;
+        joinPrompts.Clear();
     }
 
     private void OnDetailSetup(AddonEvent type, AddonArgs args)
@@ -223,12 +254,16 @@ public sealed unsafe class AutoJoinPartyFinder : TcModule
     /// 代按加入之後的確認框。
     /// </summary>
     /// <remarks>
-    /// 🔴 三個條件同時成立才按，缺一不可：
+    /// 🔴 四個條件同時成立才按，缺一不可：
     /// <list type="bullet">
     /// <item>是我們按過加入之後 <see cref="ConfirmWindowMs"/> 毫秒以內；</item>
     /// <item>按下加入的那一刻畫面上<b>沒有</b>確認框（否則這個框跟我們無關）；</item>
-    /// <item>招募詳細視窗還開著。</item>
+    /// <item>招募詳細視窗還開著；</item>
+    /// <item><b>提示文字命中 <see cref="JoinPromptRows"/> 的加入確認句。</b></item>
     /// </list>
+    /// 前三個只能排掉「按下那一刻已經在的框」；第四個才排得掉「按下之後才冒出來的外來框」。
+    /// 不命中一律不按，<b>也不把 <c>joinClickTick</c> 歸零</b>——外來的框留給使用者自己按，
+    /// 真正的加入確認框如果隨後才出現，窗口還在就還接得到（fail-closed）。
     /// </remarks>
     private void TryConfirm()
     {
@@ -242,12 +277,28 @@ public sealed unsafe class AutoJoinPartyFinder : TcModule
 
         if (!Config.ConfirmYesNo || yesnoAlreadyOpenAtClick) return;
         if (!UiHelper.IsAddonReady(DetailAddon)) return;
-        if (!UiHelper.IsAddonReady("SelectYesno")) return;
+
+        var yesno = UiHelper.GetAddon("SelectYesno");
+        if (!UiHelper.IsReady(yesno)) return;
+
+        var prompt = AddonPrompt.ReadSelectYesnoText(yesno);
+        if (!AddonPrompt.MatchesAny(prompt, joinPrompts))
+        {
+            // ⚠️ 這行是「比對假設失效」與「真的有別的框冒出來」兩種情況唯一的征兆。
+            if (Throttle.Pass($"{InternalName}-PromptMiss", 10_000))
+            {
+                Svc.Log.Information(
+                    $"[{InternalName}] 加入窗口內出現未認得的確認框，不代按：「{prompt}」" +
+                    $"（目前判準：{AddonPrompt.Describe(joinPrompts)}）");
+            }
+
+            return;
+        }
 
         if (UiHelper.ClickSelectYesnoYes())
         {
             joinClickTick = 0;
-            Svc.Log.Information($"[{InternalName}] 已代按加入的確認框。");
+            Svc.Log.Information($"[{InternalName}] 已代按加入的確認框：「{prompt}」");
         }
     }
 
