@@ -96,6 +96,7 @@ public sealed class Configuration : IPluginConfiguration
     public AutoCheckFoodUsageConfig CheckFoodUsage { get; set; } = new();
     public QueueCombatTeleportConfig QueueCombatTeleport { get; set; } = new();
     public BetterFateProgressConfig BetterFateProgress { get; set; } = new();
+    public HuntTrainOnMappyConfig HuntTrainOnMappy { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
 }
@@ -671,6 +672,38 @@ public sealed class BetterFateProgressConfig
 
     /// <summary>每筆成就進度查詢之間的最短間隔（毫秒）。台服速率限制未知，預設保守。</summary>
     public int RequestIntervalMs { get; set; } = 1000;
+}
+
+/// <summary>狩獵列車顯示到 Mappy。</summary>
+/// <remarks>
+/// 📌 這裡沒有「總開關」欄位——<b>模組本身的啟用狀態就是總開關</b>
+/// （與 TC Toolbox 其他模組一致：預設關閉，由使用者自己勾）。
+/// </remarks>
+public sealed class HuntTrainOnMappyConfig
+{
+    /// <summary>已擊殺的目標也畫出來（用另一顆圖示）。</summary>
+    /// <remarks>
+    /// 📌 預設 <c>false</c>：地圖上只留「還沒打的」最好認。想看列車進度的人再自己打開。
+    /// </remarks>
+    public bool ShowDead { get; set; }
+
+    /// <summary>向 Hunt Helper 重新拉一次清單的間隔（秒）。</summary>
+    /// <remarks>
+    /// 📌 Hunt Helper 每標記一隻怪都會廣播 <c>HH.channel.MarkSeen</c>，本模組收到就會即時重拉，
+    /// 所以這個值只是「沒有任何通知時的保底」，不必調小。
+    /// </remarks>
+    public int RefreshSeconds { get; set; } = 5;
+
+    /// <summary>存活目標的圖示 id。0＝用內建預設值。</summary>
+    /// <remarks>
+    /// ⚠️ 做成可設定的理由：圖示的<b>存在</b>可以離線驗證，<b>長什麼樣子</b>不行。
+    /// 預設值取自 Mappy 畫同類目標時用的編號，但萬一在台服看起來不對，
+    /// 使用者可以自己換而不必等改版（設定畫面上會把圖示直接畫出來對照）。
+    /// </remarks>
+    public uint AliveIconId { get; set; } = Modules.HuntTrainOnMappy.DefaultAliveIconId;
+
+    /// <summary>已擊殺目標的圖示 id。0＝用內建預設值。</summary>
+    public uint DeadIconId { get; set; } = Modules.HuntTrainOnMappy.DefaultDeadIconId;
 }
 
 /// <summary>聊天座標自動開地圖。</summary>

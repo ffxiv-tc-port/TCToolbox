@@ -92,6 +92,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new FateLevelSync());
         Modules.Add(new QueueCombatTeleport());
         Modules.Add(new BetterFateProgressUI());
+        Modules.Add(new HuntTrainOnMappy());
 
         // ③ 部隊 · 生活
         Modules.Add(new AutoFCWSDeliver());
