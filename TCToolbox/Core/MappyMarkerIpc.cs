@@ -14,7 +14,7 @@ namespace TCToolbox.Core;
 /// <list type="bullet">
 /// <item><c>Mappy.GetVersion() -&gt; int</c>（目前 1）</item>
 /// <item><c>Mappy.AddMarker(string source, uint mapId, Vector2 mapCoords, uint iconId, string tooltip) -&gt; uint</c></item>
-/// <item><c>Mappy.RemoveMarker(string source, uint handle) -&gt; bool</c>（本外掛用不到，刻意不包）</item>
+/// <item><c>Mappy.RemoveMarker(string source, uint handle) -&gt; bool</c></item>
 /// <item><c>Mappy.ClearSource(string source) -&gt; bool</c></item>
 /// </list>
 /// </para>
@@ -55,6 +55,9 @@ internal static class MappyMarkerIpc
 
     private static readonly Lazy<ICallGateSubscriber<string, uint, Vector2, uint, string, uint>> AddMarkerGate =
         new(() => Svc.PluginInterface.GetIpcSubscriber<string, uint, Vector2, uint, string, uint>("Mappy.AddMarker"));
+
+    private static readonly Lazy<ICallGateSubscriber<string, uint, bool>> RemoveMarkerGate =
+        new(() => Svc.PluginInterface.GetIpcSubscriber<string, uint, bool>("Mappy.RemoveMarker"));
 
     private static readonly Lazy<ICallGateSubscriber<string, bool>> ClearSourceGate =
         new(() => Svc.PluginInterface.GetIpcSubscriber<string, bool>("Mappy.ClearSource"));
@@ -99,7 +102,34 @@ internal static class MappyMarkerIpc
         }
     }
 
+    /// <summary>
+    /// 移除單一標記。找不到（含 Mappy 中途重載過）時回 <see langword="false"/>，那也是正常的。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>週期性重推一定要走這支，不要走 <see cref="ClearSource"/>。</b>
+    /// <c>ClearSource</c> 是把整個來源從 Mappy 的表裡拿掉，下一次 <c>AddMarker</c> 會讓 Mappy 端
+    /// 判定成「新的標記來源」而寫一行 <c>Information</c> 記錄——每分鐘重推一次、又有好幾個來源的話，
+    /// 那些行會把使用者的記錄檔洗到看不見別的東西。<c>ClearSource</c> 只在<b>模組停用／卸載</b>時用。
+    /// </remarks>
+    public static bool RemoveMarker(string source, uint handle)
+    {
+        try
+        {
+            return RemoveMarkerGate.Value.InvokeFunc(source, handle);
+        }
+        catch (IpcError)
+        {
+            return false;
+        }
+        catch (Exception ex)
+        {
+            LogUnexpected("Mappy.RemoveMarker", ex);
+            return false;
+        }
+    }
+
     /// <summary>清掉某個來源的全部標記。來源不存在時 Mappy 回 <see langword="false"/>，那也是正常的。</summary>
+    /// <remarks>⚠️ 只在模組停用／卸載時用，理由見 <see cref="RemoveMarker"/>。</remarks>
     public static bool ClearSource(string source)
     {
         try

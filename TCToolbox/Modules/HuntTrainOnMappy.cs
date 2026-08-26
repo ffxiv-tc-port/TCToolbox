@@ -27,8 +27,14 @@ namespace TCToolbox.Modules;
 /// </para>
 /// <para>
 /// 🔑 <b>同步策略</b>：每隔幾秒（可設定）拉一次清單，算出一個內容簽章；簽章沒變就什麼都不做。
-/// 有變動時走 <c>ClearSource</c> ＋ 全部重加——列車上限本來就只有幾十隻，
-/// 而 Mappy 端每個來源可放 512 筆，全量重建遠比維護 handle 對應表單純，也不會漏刪。
+/// 有變動時交給 <see cref="MappyMarkerPublisher"/> 做<b>增量</b>比對（只加新的、只刪不要的、
+/// 內容沒變的原地不動）。
+/// <para>
+/// 🔴 <b>週期性重推刻意不用 <c>ClearSource</c>。</b>那支是把整個來源從 Mappy 的表裡拿掉，
+/// 下一次 <c>AddMarker</c> 會被判成「新的標記來源」而寫一行 <c>Information</c> 記錄；
+/// 每分鐘保險重推一次、又有好幾個來源的話，那些沒有資訊量的行會把使用者的記錄檔淹掉。
+/// <c>ClearSource</c> 只留給模組停用／卸載。
+/// </para>
 /// </para>
 /// <para>
 /// 🔴 <b>為什麼還要定期強制重建</b>：Mappy 被重新載入時它的標記表是空的，而我們的簽章還記得
@@ -129,6 +135,12 @@ public sealed class HuntTrainOnMappy : TcModule
 
     private HuntTrainOnMappyConfig Config => Plugin.Instance.Config.HuntTrainOnMappy;
 
+    /// <summary>增量同步到 Mappy 的那一層（追蹤 handle、只動有變的那幾筆）。</summary>
+    private readonly MappyMarkerPublisher publisher = new(MarkerSource);
+
+    /// <summary>重複使用的緩衝區，免得每次同步都配一個新的 List。</summary>
+    private readonly List<MappyMarkerPublisher.Marker> pending = [];
+
     /// <summary>上一次成功同步的內容簽章；空字串＝還沒同步過或已被作廢。</summary>
     private string lastSignature = string.Empty;
 
@@ -188,7 +200,7 @@ public sealed class HuntTrainOnMappy : TcModule
 
         // 🔴 停用（含外掛卸載，Plugin.Dispose 會把每個模組 Disable 一次）時一定要把標記收乾淨，
         //    否則 Mappy 會一直畫著一組沒有人再更新的舊標記。
-        MappyMarkerIpc.ClearSource(MarkerSource);
+        publisher.Clear();
 
         lastSignature = string.Empty;
         mappyWasAvailable = false;
@@ -254,7 +266,7 @@ public sealed class HuntTrainOnMappy : TcModule
         if (!HuntHelperIpc.TryGetVersion(out var huntVersion))
         {
             // Hunt Helper 不在了：把標記收掉，不要留一組沒有人維護的舊資料在地圖上。
-            if (state != BridgeState.HuntHelperMissing) MappyMarkerIpc.ClearSource(MarkerSource);
+            if (state != BridgeState.HuntHelperMissing) publisher.Clear();
 
             state = BridgeState.HuntHelperMissing;
             lastSignature = string.Empty;
@@ -266,8 +278,10 @@ public sealed class HuntTrainOnMappy : TcModule
             state = BridgeState.MappyMissing;
             mappyWasAvailable = false;
 
-            // 🔴 作廢簽章：Mappy 回來的時候它的標記表是空的，必須重放一次。
+            // 🔴 作廢簽章＋忘掉 handle：Mappy 回來的時候它的標記表是空的，必須重放一次。
+            //    手上的 handle 全部失效，留著會讓下一次同步以為「已經放上去了」。
             lastSignature = string.Empty;
+            publisher.Forget();
             return;
         }
 
@@ -275,6 +289,7 @@ public sealed class HuntTrainOnMappy : TcModule
         if (!mappyWasAvailable)
         {
             lastSignature = string.Empty;
+            publisher.Forget();
             mappyWasAvailable = true;
         }
 
@@ -301,24 +316,23 @@ public sealed class HuntTrainOnMappy : TcModule
 
         // 📌 只有「內容真的變了」才寫記錄：定期的保險重放每分鐘一次，
         //    全部都寫的話會把使用者的 log 洗掉，而那些行沒有任何新資訊。
-        Republish(train, contentChanged);
+        Republish(train, contentChanged, forceFull);
         lastSignature = signature;
     }
 
-    /// <summary>整組清掉重放。</summary>
+    /// <summary>把清單同步到 Mappy（增量；<paramref name="forceFull"/> 時整組刪掉重加）。</summary>
     /// <param name="train">要放上去的清單。</param>
     /// <param name="log">是否寫一行記錄（只有內容變動時才寫，見呼叫端）。</param>
-    private void Republish(List<HuntHelperIpc.TrainMob> train, bool log)
+    /// <param name="forceFull">保險用的全量重推（Mappy 可能在我們沒看見的時候被重載過）。</param>
+    private void Republish(List<HuntHelperIpc.TrainMob> train, bool log, bool forceFull)
     {
-        MappyMarkerIpc.ClearSource(MarkerSource);
-
-        var placed = 0;
-        var rejected = 0;
         var skippedDead = 0;
         var skippedInvalid = 0;
 
         var aliveIcon = Config.AliveIconId is 0 ? DefaultAliveIconId : Config.AliveIconId;
         var deadIcon = Config.DeadIconId is 0 ? DefaultDeadIconId : Config.DeadIconId;
+
+        pending.Clear();
 
         foreach (var mob in train)
         {
@@ -335,21 +349,23 @@ public sealed class HuntTrainOnMappy : TcModule
                 continue;
             }
 
-            var handle = MappyMarkerIpc.AddMarker(
-                MarkerSource,
+            // 🔑 鍵要跨次穩定：同一隻怪在同一張圖的同一個分區永遠是同一個鍵，
+            //    這樣「只有死活狀態變了」就只會動到那一筆。
+            pending.Add(new MappyMarkerPublisher.Marker(
+                $"{mob.MapID}:{mob.MobID}:{mob.Instance}",
                 mob.MapID,
                 mob.Position,
                 mob.Dead ? deadIcon : aliveIcon,
-                BuildTooltip(mob));
-
-            if (handle is 0) rejected++;
-            else placed++;
+                BuildTooltip(mob)));
         }
 
-        lastPlaced = placed;
-        lastRejected = rejected;
+        publisher.Publish(pending, forceFull);
+        pending.Clear();
+
+        lastPlaced = publisher.Placed;
+        lastRejected = publisher.LastRejected;
         lastSkippedDead = skippedDead;
-        lastSkippedInvalid = skippedInvalid;
+        lastSkippedInvalid = skippedInvalid + publisher.LastDuplicateKeys;
         lastTotal = train.Count;
         lastSyncLocal = DateTime.Now;
         state = BridgeState.Ok;
@@ -359,10 +375,11 @@ public sealed class HuntTrainOnMappy : TcModule
         // 🔴 Information 級：使用者跑 LogLevel 2，Debug／Verbose 收不到，
         //    而「到底同步了幾筆、被拒絕幾筆」是事後看實機記錄時唯一問得到的地方。
         Svc.Log.Information(
-            $"[{InternalName}] 同步狩獵列車：清單 {lastTotal} 筆 → 放上 {placed} 筆"
-            + (skippedDead > 0 ? $"、略過已擊殺 {skippedDead} 筆" : string.Empty)
-            + (skippedInvalid > 0 ? $"、資料不完整 {skippedInvalid} 筆" : string.Empty)
-            + (rejected > 0 ? $"、被 Mappy 拒絕 {rejected} 筆" : string.Empty));
+            $"[{InternalName}] 同步狩獵列車：清單 {lastTotal} 筆 → 地圖上 {lastPlaced} 筆"
+            + $"（本次異動 {publisher.LastIpcCalls} 次）"
+            + (lastSkippedDead > 0 ? $"、略過已擊殺 {lastSkippedDead} 筆" : string.Empty)
+            + (lastSkippedInvalid > 0 ? $"、資料不完整 {lastSkippedInvalid} 筆" : string.Empty)
+            + (lastRejected > 0 ? $"、被 Mappy 拒絕 {lastRejected} 筆" : string.Empty));
     }
 
     /// <summary>

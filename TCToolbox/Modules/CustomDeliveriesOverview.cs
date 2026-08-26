@@ -1,7 +1,10 @@
 using System.Collections.Generic;
+using System.Globalization;
 using System.Numerics;
+using System.Text;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Conditions;
+using Dalamud.Interface.Utility.Raii;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
@@ -20,6 +23,8 @@ namespace TCToolbox.Modules;
 /// 等級欄位，不呼叫 GetUsedAllowances／IsQuestComplete）。唯一的外部作用只在使用者
 /// 右鍵點選導航選單那一刻發生（IPC 呼叫／原生 SetFlagMapMarker），且一律走 IPC、
 /// 絕不透過聊天指令（`/li` 空參數＝跨世界傳送，是明確紅線）。
+/// 另外會（可關）把老主顧的位置推給 Mappy 畫在地圖上——那條路是純粹的唯讀 IPC 呼叫，
+/// 詳見 <see cref="SyncMappy"/>。
 /// ⚠️ DR 的 FastCustomDeliveriesInfo 描述寫「顯示本週報酬增加的老主顧」但根本沒實作，
 /// 本模組不承接那個承諾——範圍就是誠實的狀態總覽（外加手動觸發的導航捷徑）。
 /// </summary>
@@ -27,7 +32,10 @@ public sealed class CustomDeliveriesOverview : TcModule
 {
     public override string InternalName => "CustomDeliveriesOverview";
     public override string DisplayName => "老主顧交易總覽";
-    public override string Description => "唯讀總覽視窗：列出各老主顧的滿意度等級、當前等級進度、本週已交易次數與全體共用的週上限。資料只讀不寫，零 hook。";
+    public override string Description =>
+        "唯讀總覽視窗：列出各老主顧的滿意度等級、當前等級進度、本週已交易次數與全體共用的週上限。" +
+        "裝了 Mappy 的話還會把「本週還交得了」的老主顧畫到地圖上，提示文字直接寫出上面那幾個數字（可關）。" +
+        "資料只讀不寫，零 hook。";
 
     public override ModuleCategory Category => ModuleCategory.Company;
 
@@ -42,6 +50,47 @@ public sealed class CustomDeliveriesOverview : TcModule
 
     /// <summary>滿意度等級上限（遊戲 UI 的五顆心）。</summary>
     private const int MaxRank = 5;
+
+    /// <summary>
+    /// 放到 Mappy 的標記來源名稱。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>不要改。</b>Mappy 端拿這個字串當鍵記住「這個來源要不要顯示」，
+    /// 改了之後使用者原本關掉的來源會變成孤兒，而新來源會以「開」的狀態冒出來。
+    /// </remarks>
+    public const string MarkerSource = "TCToolbox.CustomDeliveries";
+
+    /// <summary>
+    /// 老主顧在 Mappy 上的圖示。
+    /// </summary>
+    /// <remarks>
+    /// 📌 <b>這個編號不是猜的，是查遊戲資料表查出來的</b>：<c>MapSymbol</c> 第 69 列的
+    /// <c>Icon</c> 欄＝60927，該列的 <c>PlaceName</c>（1298）在台服繁中逐字是<b>「老主顧交易」</b>。
+    /// 也就是說這是遊戲自己拿來標示老主顧交易地點的那顆圖示。
+    /// <para>
+    /// ✅ 2026-08-26 以 <c>tools/sqpack/path_exists.py</c> 離線直讀台服 <c>060000.win32.index</c>
+    /// 確認 <c>ui/icon/060000/060927.tex</c> 存在（校準閘門通過，另附必不存在的負對照）。
+    /// </para>
+    /// <para>
+    /// ⚠️ 仍然做成可設定的：圖示的「存在」與「長什麼樣子」是兩件事，後者離線證不了。
+    /// </para>
+    /// </remarks>
+    public const uint DefaultMappyIconId = 60927;
+
+    /// <summary>向 Mappy 重新同步的間隔（毫秒）。</summary>
+    private const int MappySyncIntervalMs = 5_000;
+
+    /// <summary>無條件全量重推的間隔（毫秒）。理由見 <see cref="MappyMarkerPublisher"/>。</summary>
+    private const int MappyForceResyncIntervalMs = 60_000;
+
+    /// <summary>偵測到 Mappy 不在時，下一次重探之前先退避多久（毫秒）。</summary>
+    /// <remarks>
+    /// ⚠️ Dalamud 的 IPC 在對方沒註冊時是<b>擲例外</b>，不是回 null。沒裝 Mappy 的人本來就佔多數，
+    /// 讓他們每 5 秒付一次「擲＋接」的代價沒有意義（而且永遠不會停）。
+    /// 🔴 退避要用 <see cref="Throttle.Block"/> 不能用 <see cref="Throttle.Pass"/>——
+    /// <c>Pass</c> 在鍵還在冷卻中時根本不寫入，而那正是我們想設退避的那一刻。
+    /// </remarks>
+    private const int MappyMissingBackoffMs = 60_000;
 
     /// <summary>
     /// NPC 在世界中的落點：座標＋所在區域／地圖直接讀自 Lumina <c>Level</c> 表
@@ -71,6 +120,43 @@ public sealed class CustomDeliveriesOverview : TcModule
     private readonly List<NpcStaticInfo> npcs = [];
     private readonly TaskQueue navQueue = new();
     private bool windowOpen;
+
+    // ── Mappy 標記（增量同步）─────────────────────────────────────────────
+    private readonly MappyMarkerPublisher mappy = new(MarkerSource);
+
+    /// <summary>重複使用的緩衝區，免得每次同步都配一個新的 List。</summary>
+    private readonly List<MappyMarkerPublisher.Marker> mappyPending = [];
+
+    /// <summary>上一次成功推給 Mappy 的內容簽章；空字串＝還沒推過或已被作廢。</summary>
+    private string lastMappySignature = string.Empty;
+
+    private bool mappyWasAvailable;
+    private bool mappyHasMarkers;
+    private MappyState mappyState = MappyState.Unknown;
+    private int lastMappyPlaced;
+    private int lastMappyRejected;
+    private int lastMappySkippedNoCoords;
+
+    private CustomDeliveriesOverviewConfig Config => Plugin.Instance.Config.CustomDeliveriesOverview;
+
+    /// <summary>Mappy 橋接的狀態。<b>「不知道」是零值</b>。</summary>
+    private enum MappyState
+    {
+        /// <summary>還沒探測過。</summary>
+        Unknown = 0,
+
+        /// <summary>使用者把「也顯示到 Mappy」關掉了。</summary>
+        Disabled,
+
+        /// <summary>Mappy 沒裝或還沒載入。</summary>
+        Missing,
+
+        /// <summary>Mappy 回報的 IPC 版本比本模組寫的時候還舊。</summary>
+        VersionTooOld,
+
+        /// <summary>一切正常。</summary>
+        Ok,
+    }
 
     protected override void OnEnable()
     {
@@ -115,6 +201,13 @@ public sealed class CustomDeliveriesOverview : TcModule
 
         Svc.PluginInterface.UiBuilder.Draw += DrawWindow;
         Svc.Framework.Update += OnFrameworkUpdate;
+
+        // 啟用後立刻同步一次，不要讓使用者等一個節流週期。
+        Throttle.Reset(MappySyncThrottleKey);
+        Throttle.Reset(MappyForceResyncThrottleKey);
+        lastMappySignature = string.Empty;
+        mappyWasAvailable = false;
+        mappy.Forget();
     }
 
     protected override void OnDisable()
@@ -122,11 +215,200 @@ public sealed class CustomDeliveriesOverview : TcModule
         Svc.Framework.Update -= OnFrameworkUpdate;
         Svc.PluginInterface.UiBuilder.Draw -= DrawWindow;
         navQueue.Abort();
+
+        // 🔴 停用（含外掛卸載）時一定要把標記收乾淨，否則 Mappy 會一直畫著一組沒有人再更新的舊標記。
+        mappy.Clear();
+        mappyHasMarkers = false;
+        mappyWasAvailable = false;
+        mappyState = MappyState.Unknown;
+        lastMappySignature = string.Empty;
+        lastMappyPlaced = 0;
+        lastMappyRejected = 0;
+        lastMappySkippedNoCoords = 0;
+
         npcs.Clear();
         windowOpen = false;
     }
 
-    private void OnFrameworkUpdate(IFramework framework) => navQueue.Tick();
+    private string MappySyncThrottleKey => $"TCToolbox.{InternalName}.MappySync";
+
+    private string MappyForceResyncThrottleKey => $"TCToolbox.{InternalName}.MappyForce";
+
+    private void OnFrameworkUpdate(IFramework framework)
+    {
+        navQueue.Tick();
+        SyncMappy();
+    }
+
+    // ───────────────────────── Mappy 標記 ─────────────────────────
+
+    /// <summary>
+    /// 把已解鎖的老主顧同步成 Mappy 地圖上的標記。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔑 <b>加值在提示文字而不是位置本身。</b>遊戲自己在地圖上就會標老主顧的所在地，
+    /// 這裡多給的是「滿意度幾等、本週交過幾次、共用額度還剩幾次」——那三個數字要開視窗才看得到。
+    /// 預設<b>只畫本週還交得了的</b>（見 <see cref="CustomDeliveriesOverviewConfig.OnlyWithRemainingDeliveries"/>），
+    /// 已經交滿的畫出來只會讓人白跑一趟。
+    /// </para>
+    /// <para>
+    /// 🔴 <b>未解鎖的一律不畫</b>，兩種設定下都一樣：那不是「今天還沒去」，是根本還去不了。
+    /// </para>
+    /// <para>
+    /// 🔴 <b>不解參考可疑指標。</b>索引超出遊戲端陣列（未來改版陣列縮短）時整筆跳過，
+    /// 與 <see cref="DrawContent"/> 的處理一致。
+    /// </para>
+    /// </remarks>
+    private unsafe void SyncMappy()
+    {
+        if (!Throttle.Pass(MappySyncThrottleKey, MappySyncIntervalMs)) return;
+
+        if (!Config.ShowOnMappy)
+        {
+            if (mappyHasMarkers)
+            {
+                mappy.Clear();
+                mappyHasMarkers = false;
+                lastMappySignature = string.Empty;
+                lastMappyPlaced = 0;
+            }
+
+            mappyState = MappyState.Disabled;
+            return;
+        }
+
+        // 未登入時讀不到老主顧狀態；已放上去的標記留著不動。
+        if (!Svc.ClientState.IsLoggedIn) return;
+
+        if (!MappyMarkerIpc.TryGetVersion(out var version))
+        {
+            if (mappyWasAvailable || mappyState != MappyState.Missing)
+            {
+                // 🔴 手上的 handle 全部失效了，留著會讓下一次同步以為「已經放上去了」。
+                mappy.Forget();
+                lastMappySignature = string.Empty;
+            }
+
+            mappyWasAvailable = false;
+            mappyHasMarkers = false;
+            mappyState = MappyState.Missing;
+
+            // 沒裝 Mappy 是常態，退避到一分鐘一次（理由見 MappyMissingBackoffMs）。
+            Throttle.Block(MappySyncThrottleKey, MappyMissingBackoffMs);
+            return;
+        }
+
+        if (version < MappyMarkerIpc.SupportedVersion)
+        {
+            mappyState = MappyState.VersionTooOld;
+            return;
+        }
+
+        if (!mappyWasAvailable)
+        {
+            mappy.Forget();
+            lastMappySignature = string.Empty;
+            mappyWasAvailable = true;
+        }
+
+        var mgr = SatisfactionSupplyManager.Instance();
+        if (mgr == null) return;
+
+        // 三個固定陣列都是唯讀欄位；span 只在本次呼叫內使用、不跨幀保存。
+        var ranks = mgr->SatisfactionRanks;
+        var used = mgr->UsedAllowances;
+
+        var totalUsed = 0;
+        foreach (var u in used) totalUsed += u;
+        var remaining = WeeklyTotalCap - totalUsed;
+        if (remaining < 0) remaining = 0;
+
+        var iconId = Config.MappyIconId is 0 ? DefaultMappyIconId : Config.MappyIconId;
+
+        mappyPending.Clear();
+        var skippedNoCoords = 0;
+
+        var signature = new StringBuilder();
+        signature.Append(iconId).Append('|')
+                 .Append(Config.OnlyWithRemainingDeliveries ? '1' : '0').Append('|')
+                 .Append(remaining).Append('|');
+
+        foreach (var npc in npcs)
+        {
+            if (npc.Location is not { } loc) continue;
+
+            var idx = npc.Index;
+            if (idx < 0 || idx >= ranks.Length || idx >= used.Length) continue;
+
+            var rank = ranks[idx];
+            if (rank == 0) continue; // 未解鎖
+
+            var usedN = used[idx];
+            var perWeekDone = npc.DeliveriesPerWeek > 0 && usedN >= npc.DeliveriesPerWeek;
+            var done = perWeekDone || remaining == 0;
+
+            if (done && Config.OnlyWithRemainingDeliveries) continue;
+
+            if (!MapCoords.TryWorldToMap(loc.Map, loc.WorldPosition, out var coords))
+            {
+                skippedNoCoords++;
+                continue;
+            }
+
+            mappyPending.Add(new MappyMarkerPublisher.Marker(
+                idx.ToString(CultureInfo.InvariantCulture),
+                loc.Map,
+                coords,
+                iconId,
+                BuildMappyTooltip(npc, rank, usedN, remaining, done)));
+
+            signature.Append(idx).Append(':').Append(rank).Append(':').Append(usedN).Append(',');
+        }
+
+        var newSignature = signature.ToString();
+
+        var forceFull = Throttle.Pass(MappyForceResyncThrottleKey, MappyForceResyncIntervalMs);
+        var contentChanged = newSignature != lastMappySignature;
+
+        if (!forceFull && !contentChanged && mappyState == MappyState.Ok)
+        {
+            mappyPending.Clear();
+            return;
+        }
+
+        mappy.Publish(mappyPending, forceFull);
+        mappyPending.Clear();
+
+        lastMappyPlaced = mappy.Placed;
+        lastMappyRejected = mappy.LastRejected;
+        lastMappySkippedNoCoords = skippedNoCoords;
+        lastMappySignature = newSignature;
+        mappyHasMarkers = mappy.Placed > 0;
+        mappyState = MappyState.Ok;
+
+        if (!contentChanged) return;
+
+        // 🔴 Information 級：使用者跑 LogLevel 2，Debug／Verbose 收不到。
+        Svc.Log.Information(
+            $"[{InternalName}] 同步老主顧到 Mappy：放上 {lastMappyPlaced} 個"
+            + $"（本次異動 {mappy.LastIpcCalls} 次、圖示 {iconId}、共用額度剩 {remaining}／{WeeklyTotalCap}）"
+            + (skippedNoCoords > 0 ? $"、座標換算不出來 {skippedNoCoords} 個" : string.Empty)
+            + (lastMappyRejected > 0 ? $"、被 Mappy 拒絕 {lastMappyRejected} 個" : string.Empty));
+    }
+
+    private static string BuildMappyTooltip(NpcStaticInfo npc, byte rank, byte usedN, int remaining, bool done)
+    {
+        var sb = new StringBuilder();
+        sb.Append("老主顧：").Append(npc.Name);
+        sb.Append('\n').Append("滿意度：").Append(rank).Append('／').Append(MaxRank);
+        sb.Append('\n').Append("本週交易：").Append(usedN).Append('／').Append(npc.DeliveriesPerWeek);
+        sb.Append('\n').Append("共用額度剩餘：").Append(remaining).Append('／').Append(WeeklyTotalCap);
+
+        if (done) sb.Append('\n').Append("本週已經交不了了。");
+
+        return sb.ToString();
+    }
 
     /// <summary>
     /// 掃一次 Level 表，把 NPC（Type 8，Object 連到 ENpcBase）與乙太之光（Type 12，
@@ -207,6 +489,122 @@ public sealed class CustomDeliveriesOverview : TcModule
         if (ImGui.Button(windowOpen ? "關閉總覽視窗" : "開啟總覽視窗"))
             windowOpen = !windowOpen;
         ImGui.TextDisabled("純唯讀顯示；額度與滿意度由伺服器每週重置，本模組不做任何操作。");
+
+        ImGui.Spacing();
+        DrawMappyConfig();
+    }
+
+    /// <summary>設定畫面上的 Mappy 區塊。</summary>
+    /// <remarks>
+    /// 📌 模組沒啟用時 <see cref="SyncMappy"/> 沒在跑，<see cref="mappyState"/> 是死的——
+    /// 這裡自己（節流地）探一次，讓使用者在還沒啟用之前就看得出來「Mappy 在不在」。
+    /// </remarks>
+    private void DrawMappyConfig()
+    {
+        var onMappy = Config.ShowOnMappy;
+        if (ImGui.Checkbox("也顯示到 Mappy 地圖", ref onMappy))
+        {
+            Config.ShowOnMappy = onMappy;
+            Plugin.Instance.Config.Save();
+            lastMappySignature = string.Empty;
+            Throttle.Reset(MappySyncThrottleKey);
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "把老主顧畫到 Mappy 的地圖上，提示文字直接寫滿意度、本週交過幾次、共用額度剩幾次。\n" +
+                "未解鎖的老主顧不畫。沒裝 Mappy 就靜靜地什麼都不做，不會有錯誤訊息。");
+        }
+
+        if (!Config.ShowOnMappy) return;
+
+        using var indent = ImRaii.PushIndent();
+
+        var onlyRemaining = Config.OnlyWithRemainingDeliveries;
+        if (ImGui.Checkbox("只畫本週還交得了的", ref onlyRemaining))
+        {
+            Config.OnlyWithRemainingDeliveries = onlyRemaining;
+            Plugin.Instance.Config.Save();
+            lastMappySignature = string.Empty;
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "本週已經交滿的老主顧、或全體共用額度已經用完時，就不畫在地圖上（走過去也沒用）。\n" +
+                "取消這格的話會全部畫出來，交不了的在提示文字裡會註明。");
+        }
+
+        if (!IsEnabled && Throttle.Pass($"TCToolbox.{InternalName}.MappyUiProbe", 2_000))
+            mappyState = MappyMarkerIpc.TryGetVersion(out _) ? MappyState.Unknown : MappyState.Missing;
+
+        switch (mappyState)
+        {
+            case MappyState.Missing:
+                ImGui.TextDisabled("Mappy 未載入——標記沒有地方可以放。");
+                break;
+
+            case MappyState.VersionTooOld:
+                ImGui.TextDisabled("Mappy 回報的 IPC 版本過舊，同步已停下來。");
+                break;
+
+            case MappyState.Ok:
+                ImGui.TextDisabled($"目前放上 {lastMappyPlaced} 個老主顧。");
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip(
+                        $"座標換算不出來：{lastMappySkippedNoCoords} 個\n" +
+                        $"被 Mappy 拒絕：{lastMappyRejected} 個\n" +
+                        $"標記來源：{MarkerSource}（可在 Mappy 的設定裡單獨關掉）");
+                }
+
+                break;
+
+            default:
+                ImGui.TextDisabled(IsEnabled ? "尚未完成第一次同步。" : "Mappy 在，啟用模組後開始同步。");
+                break;
+        }
+
+        DrawMappyIconSetting();
+    }
+
+    /// <summary>
+    /// 圖示編號設定。
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ 做成可設定的理由：圖示的<b>存在</b>可以離線驗證，<b>長什麼樣子</b>不行。
+    /// </remarks>
+    private void DrawMappyIconSetting()
+    {
+        var current = Config.MappyIconId is 0 ? DefaultMappyIconId : Config.MappyIconId;
+
+        var wrap = GameIcons.TryGet(current);
+        if (wrap != null)
+        {
+            ImGui.Image(wrap.Handle, new Vector2(24f, 24f));
+            ImGui.SameLine();
+        }
+
+        ImGui.SetNextItemWidth(120f);
+        var value = (int)current;
+        if (ImGui.InputInt("地圖圖示編號", ref value))
+        {
+            Config.MappyIconId = value <= 0 ? DefaultMappyIconId : (uint)value;
+            Plugin.Instance.Config.Save();
+            lastMappySignature = string.Empty;
+        }
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("預設"))
+        {
+            Config.MappyIconId = DefaultMappyIconId;
+            Plugin.Instance.Config.Save();
+            lastMappySignature = string.Empty;
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip($"預設 {DefaultMappyIconId}＝遊戲 MapSymbol 表裡「老主顧交易」那一列的圖示。");
     }
 
     private void DrawWindow()

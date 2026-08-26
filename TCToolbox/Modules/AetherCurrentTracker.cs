@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Numerics;
+using System.Text;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Interface.Utility.Raii;
@@ -53,6 +55,7 @@ public sealed unsafe class AetherCurrentTracker : TcModule
     public override string Description =>
         "列出目前所在區域的每一個風脈泉與是否已共鳴，可以標旗、插場地標記、或直接導航過去。" +
         "任務給的風脈泉會另外標明（那種沒有地圖實體，走過去也拿不到）。" +
+        "裝了 Mappy 的話還會把全部區域「還沒共鳴」的風脈泉畫到地圖上（可關）。" +
         "移動只走「Lifestream 傳送最近水晶 ＋ vnavmesh 走過去」，不做任何瞬移。唯讀顯示，不會自己動作。";
 
     public override ModuleCategory Category => ModuleCategory.Misc;
@@ -64,6 +67,55 @@ public sealed unsafe class AetherCurrentTracker : TcModule
 
     /// <summary>場地標記的數量上限。</summary>
     private const int FieldMarkerSlots = 8;
+
+    /// <summary>
+    /// 放到 Mappy 的標記來源名稱。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>不要改。</b>Mappy 端拿這個字串當鍵記住「這個來源要不要顯示」，
+    /// 改了之後使用者原本關掉的來源會變成孤兒，而新來源會以「開」的狀態冒出來。
+    /// </remarks>
+    public const string MarkerSource = "TCToolbox.AetherCurrents";
+
+    /// <summary>
+    /// 風脈泉在 Mappy 上的圖示。
+    /// </summary>
+    /// <remarks>
+    /// 📌 <b>來源＝Mappy 自己</b>：<c>Mappy/MapRenderer/MapRenderer.GameObject.cs</c> 對
+    /// <c>ObjectKind.EventObj</c> 且事件內容是 <c>EventHandlerContent.AetherCurrent</c> 的物件
+    /// 畫的就是 60653。換句話說<b>風脈泉只要進了 ObjectTable，Mappy 本來就用這顆圖示畫它</b>——
+    /// 本模組做的事情是把「還沒走到附近、所以不在 ObjectTable 裡」的那些也用同一顆畫出來，
+    /// 視覺上完全一致。
+    /// <para>
+    /// ✅ 2026-08-26 以 <c>tools/sqpack/path_exists.py</c> 離線直讀台服 <c>060000.win32.index</c>
+    /// 確認 <c>ui/icon/060000/060653.tex</c> 存在（校準閘門通過，另附一個必不存在的負對照）。
+    /// </para>
+    /// <para>
+    /// ⚠️ <b>沒有離線驗證過的部分＝這顆圖示長什麼樣子。</b>圖示的「存在」與「語意」是兩件事，
+    /// 而 <c>MapSymbol</c> 表（地圖圖示的官方名稱對照）只收地標類圖示，查不到 606xx 這段。
+    /// ⇒ 做成可設定的，設定畫面也直接把圖示畫出來讓使用者自己看。
+    /// </para>
+    /// </remarks>
+    public const uint DefaultMappyIconId = 60653;
+
+    /// <summary>向 Mappy 重新同步的間隔（毫秒）。</summary>
+    /// <remarks>
+    /// 📌 共鳴狀態只會在玩家親自走過去互動的那一刻改變，所以這個值不需要很小；
+    /// 而且比對本身是「算簽章 → 沒變就直接 return」，沒變時的成本只有一次表掃描。
+    /// </remarks>
+    private const int MappySyncIntervalMs = 5_000;
+
+    /// <summary>無條件全量重推的間隔（毫秒）。理由見 <see cref="MappyMarkerPublisher"/>。</summary>
+    private const int MappyForceResyncIntervalMs = 60_000;
+
+    /// <summary>偵測到 Mappy 不在時，下一次重探之前先退避多久（毫秒）。</summary>
+    /// <remarks>
+    /// ⚠️ Dalamud 的 IPC 在對方沒註冊時是<b>擲例外</b>，不是回 null。沒裝 Mappy 的人本來就佔多數，
+    /// 讓他們每 5 秒付一次「擲＋接」的代價沒有意義（而且永遠不會停）。
+    /// 🔴 退避要用 <see cref="Throttle.Block"/> 不能用 <see cref="Throttle.Pass"/>——
+    /// <c>Pass</c> 在鍵還在冷卻中時根本不寫入，而那正是我們想設退避的那一刻。
+    /// </remarks>
+    private const int MappyMissingBackoffMs = 60_000;
 
     /// <summary>一個風脈泉的靜態資料。</summary>
     /// <param name="AetherCurrentId"><c>AetherCurrent</c> 列號（EventId）。</param>
@@ -82,6 +134,9 @@ public sealed unsafe class AetherCurrentTracker : TcModule
         public int IndexInZone { get; init; }
 
         public string QuestName { get; init; } = string.Empty;
+
+        /// <summary>所在區域的繁中名稱（建表時查一次；查不到就是空字串）。</summary>
+        public string ZoneName { get; init; } = string.Empty;
     }
 
     /// <summary><c>Level</c> 表單一列的落點。</summary>
@@ -130,6 +185,48 @@ public sealed unsafe class AetherCurrentTracker : TcModule
     private int totalPhysical;
     private int totalWithPosition;
 
+    // ── Mappy 標記（增量同步）─────────────────────────────────────────────
+    private readonly MappyMarkerPublisher mappy = new(MarkerSource);
+
+    /// <summary>重複使用的緩衝區，免得每次同步都配一個新的 List。</summary>
+    private readonly List<MappyMarkerPublisher.Marker> mappyPending = [];
+
+    /// <summary>上一次成功推給 Mappy 的內容簽章；空字串＝還沒推過或已被作廢。</summary>
+    private string lastMappySignature = string.Empty;
+
+    /// <summary>Mappy 上一次探測時在不在（用來偵測「從不在變成在」）。</summary>
+    private bool mappyWasAvailable;
+
+    /// <summary>目前地圖上有沒有我們放的東西（設定被關掉時要收乾淨）。</summary>
+    private bool mappyHasMarkers;
+
+    /// <summary>Mappy 端的狀態，給設定畫面顯示用。<b>零值＝「不知道」</b>。</summary>
+    private MappyState mappyState = MappyState.Unknown;
+
+    /// <summary>最後一次同步的筆數（設定畫面用）。</summary>
+    private int lastMappyPlaced;
+    private int lastMappyRejected;
+    private int lastMappySkippedNoCoords;
+
+    /// <summary>Mappy 橋接的狀態。<b>「不知道」是零值</b>。</summary>
+    private enum MappyState
+    {
+        /// <summary>還沒探測過。</summary>
+        Unknown = 0,
+
+        /// <summary>使用者把「也顯示到 Mappy」關掉了。</summary>
+        Disabled,
+
+        /// <summary>Mappy 沒裝或還沒載入。</summary>
+        Missing,
+
+        /// <summary>Mappy 回報的 IPC 版本比本模組寫的時候還舊。</summary>
+        VersionTooOld,
+
+        /// <summary>一切正常。</summary>
+        Ok,
+    }
+
     protected override void OnEnable()
     {
         BuildData();
@@ -139,6 +236,13 @@ public sealed unsafe class AetherCurrentTracker : TcModule
 
         Svc.PluginInterface.UiBuilder.Draw += DrawAll;
         Svc.Framework.Update += OnUpdate;
+
+        // 啟用後立刻同步一次，不要讓使用者等一個節流週期。
+        Throttle.Reset(MappySyncThrottleKey);
+        Throttle.Reset(MappyForceResyncThrottleKey);
+        lastMappySignature = string.Empty;
+        mappyWasAvailable = false;
+        mappy.Forget();
 
         // 🔑 「回 0」比「報錯」常見。四個數字一起印才分得出「表讀不到」與「鏈斷在中間」，
         //    所以期望值也一起印——這樣使用者回報的 log 不必再回頭查資料就看得出對不對。
@@ -160,6 +264,18 @@ public sealed unsafe class AetherCurrentTracker : TcModule
         Svc.PluginInterface.UiBuilder.Draw -= DrawAll;
 
         navQueue.Abort();
+
+        // 🔴 停用（含外掛卸載，Plugin.Dispose 會把每個模組 Disable 一次）時一定要把標記收乾淨，
+        //    否則 Mappy 會一直畫著一組沒有人再更新的舊標記。
+        mappy.Clear();
+        mappyHasMarkers = false;
+        mappyWasAvailable = false;
+        mappyState = MappyState.Unknown;
+        lastMappySignature = string.Empty;
+        lastMappyPlaced = 0;
+        lastMappyRejected = 0;
+        lastMappySkippedNoCoords = 0;
+
         byTerritory.Clear();
         windowOpen = false;
         totalPoints = 0;
@@ -167,7 +283,168 @@ public sealed unsafe class AetherCurrentTracker : TcModule
         totalWithPosition = 0;
     }
 
-    private void OnUpdate(IFramework framework) => navQueue.Tick();
+    private string MappySyncThrottleKey => $"TCToolbox.{InternalName}.MappySync";
+
+    private string MappyForceResyncThrottleKey => $"TCToolbox.{InternalName}.MappyForce";
+
+    private void OnUpdate(IFramework framework)
+    {
+        navQueue.Tick();
+        SyncMappy();
+    }
+
+    // ───────────────────────── Mappy 標記 ─────────────────────────
+
+    /// <summary>
+    /// 把「還沒共鳴、而且查得到座標」的風脈泉同步成 Mappy 地圖上的標記。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔑 <b>推的是全部區域，不是只有目前所在區域。</b>共鳴狀態是玩家層級的資料，離開該區也讀得到，
+    /// 所以在任何一張地圖上都答得出「這張圖還差哪幾個」——那正是規劃路線時最想知道的事。
+    /// 數量上也放得下：台服 7.20 全部地圖實體風脈泉共 152 個，Mappy 每個來源可放 512 筆。
+    /// </para>
+    /// <para>
+    /// 📌 <b>只推未共鳴的。</b>已共鳴的畫出來對「還差哪幾個」沒有幫助，而且要區分兩種狀態就得再挑
+    /// 一顆「已完成」的圖示——那顆<b>沒有任何資料來源可以佐證</b>（<c>MapSymbol</c> 查不到這段），
+    /// 猜一顆出來是靜默的錯。想確認已共鳴的位置請用世界疊加層的「已共鳴的也畫出來」。
+    /// </para>
+    /// <para>
+    /// 🔴 <b>任務型與查不到座標的一律不推。</b>任務型沒有地圖實體（標上去等於叫人白跑一趟）；
+    /// 查不到座標的更不能拿 <c>(0,0,0)</c> 去換算——那會在地圖角落長出一個看起來很正常的標記。
+    /// </para>
+    /// </remarks>
+    private void SyncMappy()
+    {
+        if (!Throttle.Pass(MappySyncThrottleKey, MappySyncIntervalMs)) return;
+
+        if (!Config.ShowOnMappy)
+        {
+            // 使用者剛把它關掉：收乾淨。之後就什麼都不做。
+            if (mappyHasMarkers)
+            {
+                mappy.Clear();
+                mappyHasMarkers = false;
+                lastMappySignature = string.Empty;
+                lastMappyPlaced = 0;
+            }
+
+            mappyState = MappyState.Disabled;
+            return;
+        }
+
+        // 未登入時共鳴狀態沒有意義（而且不會變），跳過。已放上去的標記留著不動。
+        if (!Svc.ClientState.IsLoggedIn) return;
+
+        if (!MappyMarkerIpc.TryGetVersion(out var version))
+        {
+            if (mappyWasAvailable || mappyState != MappyState.Missing)
+            {
+                // 🔴 手上的 handle 全部失效了。留著會讓下一次同步以為「已經放上去了」，
+                //    表現成標記再也不出現而且毫無徵兆。
+                mappy.Forget();
+                lastMappySignature = string.Empty;
+            }
+
+            mappyWasAvailable = false;
+            mappyHasMarkers = false;
+            mappyState = MappyState.Missing;
+
+            // 沒裝 Mappy 是常態，退避到一分鐘一次（理由見 MappyMissingBackoffMs）。
+            Throttle.Block(MappySyncThrottleKey, MappyMissingBackoffMs);
+            return;
+        }
+
+        if (version < MappyMarkerIpc.SupportedVersion)
+        {
+            mappyState = MappyState.VersionTooOld;
+            return;
+        }
+
+        // Mappy 從「不在」變成「在」＝它的標記表是空的，一定要重放。
+        if (!mappyWasAvailable)
+        {
+            mappy.Forget();
+            lastMappySignature = string.Empty;
+            mappyWasAvailable = true;
+        }
+
+        var iconId = Config.MappyIconId is 0 ? DefaultMappyIconId : Config.MappyIconId;
+
+        mappyPending.Clear();
+        var skippedNoCoords = 0;
+
+        var signature = new StringBuilder();
+        signature.Append(iconId).Append('|');
+
+        foreach (var list in byTerritory.Values)
+        {
+            foreach (var point in list)
+            {
+                if (point.IsQuest || !point.HasPosition) continue;
+                if (IsResonated(point.AetherCurrentId)) continue;
+
+                if (!MapCoords.TryWorldToMap(point.Map, point.Position, out var coords))
+                {
+                    skippedNoCoords++;
+                    continue;
+                }
+
+                mappyPending.Add(new MappyMarkerPublisher.Marker(
+                    point.AetherCurrentId.ToString(CultureInfo.InvariantCulture),
+                    point.Map,
+                    coords,
+                    iconId,
+                    BuildMappyTooltip(point)));
+
+                signature.Append(point.AetherCurrentId).Append(',');
+            }
+        }
+
+        var newSignature = signature.ToString();
+
+        // 保險：即使簽章沒變也定期整組重推一次（Mappy 可能在我們沒看見的時候被重載過）。
+        var forceFull = Throttle.Pass(MappyForceResyncThrottleKey, MappyForceResyncIntervalMs);
+        var contentChanged = newSignature != lastMappySignature;
+
+        if (!forceFull && !contentChanged && mappyState == MappyState.Ok)
+        {
+            mappyPending.Clear();
+            return;
+        }
+
+        mappy.Publish(mappyPending, forceFull);
+        mappyPending.Clear();
+
+        lastMappyPlaced = mappy.Placed;
+        lastMappyRejected = mappy.LastRejected;
+        lastMappySkippedNoCoords = skippedNoCoords;
+        lastMappySignature = newSignature;
+        mappyHasMarkers = mappy.Placed > 0;
+        mappyState = MappyState.Ok;
+
+        // 📌 只有「內容真的變了」才寫記錄：每分鐘一次的保險重推全部都寫的話會洗掉使用者的記錄，
+        //    而那些行沒有任何新資訊。
+        if (!contentChanged) return;
+
+        // 🔴 Information 級：使用者跑 LogLevel 2，Debug／Verbose 收不到。
+        Svc.Log.Information(
+            $"[{InternalName}] 同步風脈泉到 Mappy：未共鳴 {lastMappyPlaced} 個"
+            + $"（本次異動 {mappy.LastIpcCalls} 次、圖示 {iconId}）"
+            + (skippedNoCoords > 0 ? $"、座標換算不出來 {skippedNoCoords} 個" : string.Empty)
+            + (lastMappyRejected > 0 ? $"、被 Mappy 拒絕 {lastMappyRejected} 個" : string.Empty));
+    }
+
+    private static string BuildMappyTooltip(Point point)
+    {
+        var sb = new StringBuilder();
+        sb.Append("風脈泉 #").Append(point.IndexInZone);
+
+        if (point.ZoneName.Length > 0) sb.Append('\n').Append("地點：").Append(point.ZoneName);
+
+        sb.Append('\n').Append("狀態：未共鳴");
+        return sb.ToString();
+    }
 
     /// <summary>
     /// 探一次 <c>MarkingController::PlacePreset</c> 的位址。
@@ -244,6 +521,11 @@ public sealed unsafe class AetherCurrentTracker : TcModule
             if (territory == 0) continue;
 
             var mapId = set.Territory.ValueNullable?.Map.RowId ?? 0;
+
+            // 區域名稱建表時查一次就好（Mappy 標記的提示文字要用）。
+            var zoneName = set.Territory.ValueNullable?.PlaceName.ValueNullable?.Name.ExtractText()
+                           ?? string.Empty;
+
             var list = new List<Point>();
 
             foreach (var reference in set.AetherCurrents)
@@ -267,6 +549,7 @@ public sealed unsafe class AetherCurrentTracker : TcModule
                     {
                         IndexInZone = list.Count + 1,
                         QuestName = questName,
+                        ZoneName = zoneName,
                     });
                     continue;
                 }
@@ -281,6 +564,7 @@ public sealed unsafe class AetherCurrentTracker : TcModule
                     list.Add(new Point(currentId, 0, territory, mapId, Vector3.Zero, false)
                     {
                         IndexInZone = list.Count + 1,
+                        ZoneName = zoneName,
                     });
                     continue;
                 }
@@ -297,6 +581,7 @@ public sealed unsafe class AetherCurrentTracker : TcModule
                 list.Add(new Point(currentId, 0, realTerritory, realMap, found.Position, true)
                 {
                     IndexInZone = list.Count + 1,
+                    ZoneName = zoneName,
                 });
             }
 
@@ -975,6 +1260,10 @@ public sealed unsafe class AetherCurrentTracker : TcModule
         }
 
         ImGui.Spacing();
+
+        DrawMappyConfig();
+
+        ImGui.Spacing();
         ImGui.TextDisabled("移動只走「傳送最近水晶 ＋ vnavmesh 走過去」。");
         if (ImGui.IsItemHovered())
         {
@@ -983,5 +1272,106 @@ public sealed unsafe class AetherCurrentTracker : TcModule
                 "沒裝 Lifestream 就不能跨區傳送、沒裝 vnavmesh 就退化成地圖標旗，\n" +
                 "選單上的文字會直接告訴你目前是哪一種狀況。");
         }
+    }
+
+    /// <summary>設定畫面上的 Mappy 區塊。</summary>
+    /// <remarks>
+    /// 📌 模組沒啟用時 <see cref="SyncMappy"/> 沒在跑，<see cref="mappyState"/> 是死的——
+    /// 這裡自己（節流地）探一次，讓使用者在還沒啟用之前就看得出來「Mappy 在不在」。
+    /// </remarks>
+    private void DrawMappyConfig()
+    {
+        var onMappy = Config.ShowOnMappy;
+        if (ImGui.Checkbox("也顯示到 Mappy 地圖", ref onMappy))
+        {
+            Config.ShowOnMappy = onMappy;
+            Plugin.Instance.Config.Save();
+            lastMappySignature = string.Empty;
+            Throttle.Reset(MappySyncThrottleKey);
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "把「還沒共鳴」的風脈泉畫到 Mappy 的地圖上，不必人在附近也看得到。\n" +
+                "推的是全部區域，所以在任何一張地圖上都看得出那張圖還差哪幾個。\n" +
+                "已共鳴的不畫（那對「還差哪幾個」沒有幫助）；任務給的沒有地圖實體，也不畫。\n" +
+                "沒裝 Mappy 就靜靜地什麼都不做，不會有錯誤訊息。");
+        }
+
+        if (!Config.ShowOnMappy) return;
+
+        using var indent = ImRaii.PushIndent();
+
+        if (!IsEnabled && Throttle.Pass($"TCToolbox.{InternalName}.MappyUiProbe", 2_000))
+            mappyState = MappyMarkerIpc.TryGetVersion(out _) ? MappyState.Unknown : MappyState.Missing;
+
+        switch (mappyState)
+        {
+            case MappyState.Missing:
+                ImGui.TextDisabled("Mappy 未載入——標記沒有地方可以放。");
+                break;
+
+            case MappyState.VersionTooOld:
+                ImGui.TextDisabled("Mappy 回報的 IPC 版本過舊，同步已停下來。");
+                break;
+
+            case MappyState.Ok:
+                ImGui.TextDisabled($"目前放上 {lastMappyPlaced} 個未共鳴的風脈泉。");
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip(
+                        $"座標換算不出來：{lastMappySkippedNoCoords} 個\n" +
+                        $"被 Mappy 拒絕：{lastMappyRejected} 個\n" +
+                        $"標記來源：{MarkerSource}（可在 Mappy 的設定裡單獨關掉）");
+                }
+
+                break;
+
+            default:
+                ImGui.TextDisabled(IsEnabled ? "尚未完成第一次同步。" : "Mappy 在，啟用模組後開始同步。");
+                break;
+        }
+
+        DrawMappyIconSetting();
+    }
+
+    /// <summary>
+    /// 圖示編號設定。
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ 做成可設定的理由與 <see cref="HuntTrainOnMappy"/> 相同：圖示的<b>存在</b>可以離線驗證，
+    /// <b>長什麼樣子</b>不行。所以把它畫出來讓使用者自己看，不對就自己換。
+    /// </remarks>
+    private void DrawMappyIconSetting()
+    {
+        var current = Config.MappyIconId is 0 ? DefaultMappyIconId : Config.MappyIconId;
+
+        var wrap = GameIcons.TryGet(current);
+        if (wrap != null)
+        {
+            ImGui.Image(wrap.Handle, new Vector2(24f, 24f));
+            ImGui.SameLine();
+        }
+
+        ImGui.SetNextItemWidth(120f);
+        var value = (int)current;
+        if (ImGui.InputInt("地圖圖示編號", ref value))
+        {
+            Config.MappyIconId = value <= 0 ? DefaultMappyIconId : (uint)value;
+            Plugin.Instance.Config.Save();
+            lastMappySignature = string.Empty;
+        }
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("預設"))
+        {
+            Config.MappyIconId = DefaultMappyIconId;
+            Plugin.Instance.Config.Save();
+            lastMappySignature = string.Empty;
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip($"預設 {DefaultMappyIconId}＝Mappy 畫「已經在視野內的風脈泉」時用的同一顆圖示。");
     }
 }
