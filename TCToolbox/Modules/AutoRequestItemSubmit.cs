@@ -244,7 +244,11 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
 
         // HandIn 是交易視窗自己的暫存容器：已經填進格子的道具會出現在這裡。
         var container = manager->GetInventoryContainer(InventoryType.HandIn);
-        if (container == null) return false;
+        // 🔴 判的是 Items 不是 GetInventorySlot 的回傳值：Items 為 null 而 Size > 0 時，
+        //    GetInventorySlot 回的是「null + 偏移」這種非 null 的假指標，下面的判空一定通過，
+        //    解參考就是攔不到的 AVE（corrupted-state exception，try/catch 無效）。
+        //    樣板同 DiscardList.ScanMatches／TriadCardRecycle 的背包掃描。
+        if (container == null || container->Items == null) return false;
 
         var uiState = UIState.Instance();
         if (uiState == null) return false;
@@ -316,7 +320,8 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
 
         // HandIn 是交易視窗自己的暫存容器：已經填進格子的道具會出現在這裡。
         var container = manager->GetInventoryContainer(InventoryType.HandIn);
-        if (container == null) return;
+        // 🔴 Items 為 null 而 Size > 0 時，GetInventorySlot 回的是非 null 的假指標（理由同本檔上一處）。
+        if (container == null || container->Items == null) return;
 
         var uiState = UIState.Instance();
         if (uiState == null) return;
@@ -412,7 +417,8 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
         foreach (var type in CandidateSourceContainers)
         {
             var container = manager->GetInventoryContainer(type);
-            if (container == null) continue;
+            // 🔴 Items 為 null 而 Size > 0 時，GetInventorySlot 回的是非 null 的假指標（理由同本檔上一處）。
+            if (container == null || container->Items == null) continue;
 
             // 容器大小同樣是遊戲說了算；上界另外夾一次，免得壞掉的 Size 讓迴圈跑到天荒地老。
             var size = container->Size;

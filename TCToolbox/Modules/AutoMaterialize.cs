@@ -226,7 +226,11 @@ public sealed unsafe class AutoMaterialize : TcModule
         foreach (var type in SearchContainers)
         {
             var inventory = manager->GetInventoryContainer(type);
-            if (inventory == null || !inventory->IsLoaded) continue;
+            // 🔴 判的是 Items 不是 GetInventorySlot 的回傳值：Items 為 null 而 Size > 0 時，
+            //    GetInventorySlot 回的是「null + 偏移」這種非 null 的假指標，下面的判空一定通過，
+            //    解參考就是攔不到的 AVE（corrupted-state exception，try/catch 無效）。
+            //    樣板同 DiscardList.ScanMatches／TriadCardRecycle 的背包掃描。
+            if (inventory == null || !inventory->IsLoaded || inventory->Items == null) continue;
 
             for (var i = 0; i < inventory->Size; i++)
             {

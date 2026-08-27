@@ -505,7 +505,11 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         foreach (var page in FreeCompanyPages)
         {
             var container = manager->GetInventoryContainer(page);
-            if (container == null || !container->IsLoaded) continue;
+            // 🔴 判的是 Items 不是 GetInventorySlot 的回傳值：Items 為 null 而 Size > 0 時，
+            //    GetInventorySlot 回的是「null + 偏移」這種非 null 的假指標，下面的判空一定通過，
+            //    解參考就是攔不到的 AVE（corrupted-state exception，try/catch 無效）。
+            //    樣板同 DiscardList.ScanMatches／TriadCardRecycle 的背包掃描。
+            if (container == null || !container->IsLoaded || container->Items == null) continue;
 
             for (var i = 0; i < container->Size; i++)
             {
@@ -568,9 +572,10 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         }
 
         var container = manager->GetInventoryContainer(agentType);
-        if (container == null || !container->IsLoaded)
+        // 🔴 Items 為 null 而 Size > 0 時，GetInventorySlot 回的是非 null 的假指標（理由同本檔上一處）。
+        if (container == null || !container->IsLoaded || container->Items == null)
         {
-            diagnosis = $"(A) 容器 {agentType} 未載入";
+            diagnosis = $"(A) 容器 {agentType} 未載入（或格位陣列尚未配置）";
             return false;
         }
 
@@ -1242,7 +1247,8 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
             foreach (var type in candidates)
             {
                 var container = manager->GetInventoryContainer(type);
-                if (container == null || !container->IsLoaded) continue;
+                // 🔴 Items 為 null 而 Size > 0 時，GetInventorySlot 回的是非 null 的假指標（理由同本檔上一處）。
+                if (container == null || !container->IsLoaded || container->Items == null) continue;
 
                 for (var i = 0; i < container->Size; i++)
                 {
@@ -1262,7 +1268,8 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         foreach (var type in candidates)
         {
             var container = manager->GetInventoryContainer(type);
-            if (container == null || !container->IsLoaded) continue;
+            // 🔴 Items 為 null 而 Size > 0 時，GetInventorySlot 回的是非 null 的假指標（理由同本檔上一處）。
+            if (container == null || !container->IsLoaded || container->Items == null) continue;
 
             for (var i = 0; i < container->Size; i++)
             {
