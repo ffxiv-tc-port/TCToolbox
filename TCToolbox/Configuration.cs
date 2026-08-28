@@ -1487,6 +1487,24 @@ public sealed class PlayerWatchRule
     /// <summary>命中時在聊天欄顯示通知。</summary>
     public bool NotifyChat = true;
 
+    /// <summary>
+    /// 命中時請「塔塔露誇獎」(TataruPraise) 念一句（情境「玩家警示」）。
+    /// </summary>
+    /// <remarks>
+    /// 📌 預設 <c>true</c>，但這<b>不是</b>行為回退：TataruPraise 沒安裝、或它自己的總開關關著、
+    /// 或「玩家警示」情境裡沒有已合成語音的句子時，這條路是完全安靜的 no-op
+    /// （見 <see cref="TCToolbox.Core.TataruPraiseIpc"/>：每次都先問它的 <c>IsAvailable</c>）。
+    /// 換句話說，沒裝那個外掛的人感覺不到任何差別。
+    /// <para>
+    /// ⚠️ 舊設定檔沒有這個鍵，反序列化不會覆寫欄位初始值，所以升級上來的既有規則會拿到 <c>true</c>。
+    /// </para>
+    /// <para>
+    /// 🔴 出聲與否<b>完全沿用這條規則自己的觸發時機</b>（進入視野一次、離場再出現且過了
+    /// <see cref="CooldownSeconds"/> 才會再響），沒有另外的輪詢或計時器。
+    /// </para>
+    /// </remarks>
+    public bool TataruPraiseOnMatch = true;
+
     /// <summary>同一位玩家再次觸發的冷卻（秒）。</summary>
     public int CooldownSeconds = 300;
 

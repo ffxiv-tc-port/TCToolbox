@@ -451,6 +451,13 @@ public sealed class AutoCountPlayers : TcModule
         if (rule.NotifyChat)
             Svc.Chat.Print($"[TC Toolbox] 偵測到玩家：{p.Name}{(string.IsNullOrEmpty(p.World) ? "" : $" @ {p.World}")}（規則：{DescribeRuleForNotice(rule)}）");
 
+        // 🔴 接在既有的「命中→通知」同一點：完全沿用這條規則的觸發語意與 CooldownSeconds，
+        //    不另外輪詢、不另外計時。TataruPraise 沒裝／關著時是安靜的 no-op。
+        //    這裡在 Framework.Update 鏈上（OnUpdate → EvaluateWatchRules → Trigger）＝主執行緒。
+        if (rule.TataruPraiseOnMatch)
+            TataruPraiseIpc.TryPraise(TataruPraiseIpc.CategoryPlayerAlert,
+                                      $"周邊玩家統計命中（{p.Name}｜規則：{DescribeRuleForNotice(rule)}）");
+
         if (string.IsNullOrWhiteSpace(rule.Command)) return;
 
         var lines = rule.Command.Split('\n')
@@ -933,6 +940,19 @@ public sealed class AutoCountPlayers : TcModule
             rule.NotifyChat = notify;
             Plugin.Instance.Config.Save();
         }
+
+        ImGui.SameLine();
+        var praise = rule.TataruPraiseOnMatch;
+        if (ImGui.Checkbox("塔塔露提醒", ref praise))
+        {
+            rule.TataruPraiseOnMatch = praise;
+            Plugin.Instance.Config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(
+                "命中時請「塔塔露誇獎」外掛用語音念一句（情境「玩家警示」）。\n" +
+                "沒安裝那個外掛、它的總開關關著、或「玩家警示」情境還沒合成語音時，這裡不做任何事。\n" +
+                "出聲時機與這條規則完全相同，冷卻也共用下面的設定。");
 
         ImGui.SameLine();
         ImGui.SetNextItemWidth(80f);
