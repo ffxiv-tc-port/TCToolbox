@@ -130,6 +130,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoDisplayMSQProgress());
         Modules.Add(new AutoChangeKeyboardLayout());
         Modules.Add(new AutoNumericInputMax());
+        Modules.Add(new IconReference());
 
         foreach (var module in Modules)
         {
