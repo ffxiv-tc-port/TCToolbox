@@ -51,6 +51,60 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
     /// </remarks>
     private bool requestSeen;
 
+    /// <summary>這一項送出交納後，交納確認框有沒有被按過（診斷用，不影響流程）。</summary>
+    private bool yesnoAnswered;
+
+    /// <summary>「等待交納視窗」步驟開始的時刻（每項重設）。</summary>
+    private DateTime? requestWaitStartedAt;
+
+    /// <summary>交納視窗與確認框「兩扇都不在」開始的時刻，用來做交出後的沉澱等待。</summary>
+    private DateTime? requestGoneSince;
+
+    /// <summary>「等待清單更新」步驟開始的時刻（每項重設）。</summary>
+    private DateTime? listWaitStartedAt;
+
+    /// <summary>送出這一項之前的清單指紋，交完之後拿來確認清單真的變了。</summary>
+    private (uint Index, int Count)? preDeliverFingerprint;
+
+    /// <summary>
+    /// 送出合成事件之後，等交納視窗（或交納確認框）出現的上限。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>舊碼這裡是一個寫死的 <c>EnqueueDelay(500)</c>，那不是等待、是賭。</b>
+    /// 實機 log（2026-08-29 17:53／18:07）顯示交納視窗常常要 600 毫秒以上才開得起來：
+    /// 500 毫秒一到 <see cref="FillRequest"/> 就因為「視窗還沒 ready」直接回 true，
+    /// <see cref="ConfirmRequest"/> 接著在同一幀走進「兩扇視窗都不在」那條路回 true，
+    /// 於是解析步驟立刻跑下一輪、對<b>同一項</b>再送一次合成事件
+    /// ——log 裡同一項的「確定要為合建設備提供…」確認框在一秒內出現兩次就是這個。
+    /// 清單當然沒變，三輪之後零進展保險絲就把整條流程判成「交納沒有生效」。
+    /// ⚠️ 這個值只有在事件<b>真的</b>沒生效時才會被等滿，調大只是讓保險絲晚一點觸發，不會漏交。
+    /// </remarks>
+    private const int RequestAppearWaitMs = 3_000;
+
+    /// <summary>
+    /// 交納視窗與確認框都消失之後，還要再確認多久沒有東西冒出來才算交完。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 按下「交出」到確認框冒出來之間有好幾幀是「兩扇視窗都不在」的空窗期，
+    /// 舊碼在那一幀就判定這一項完成並往下跑，等於在自己的確認框還沒按掉時
+    /// 就去送下一項的合成事件。
+    /// </remarks>
+    private const int ConfirmSettleMs = 1_000;
+
+    /// <summary>
+    /// 交完一項之後，等合建視窗的素材清單反映出去的上限。
+    /// </summary>
+    /// <remarks>
+    /// 📌 實機 log 顯示 <c>SubmarinePartsMenu</c> 在單項交納後<b>並不會</b>被 Finalize 重建
+    /// （整趟只有結束時那一次 Finalize），它是原地更新 AtkValues 的
+    /// ——所以「等重建」等不到東西，真正該等的是<b>清單指紋變了</b>。
+    /// 等不到就照樣往下走，讓零進展保險絲去判，不會因此卡死。
+    /// </remarks>
+    private const int ListUpdateWaitMs = 3_000;
+
+    /// <summary>交納確認框的辨識錨（台服 7.20：「確定要為合建設備提供○○×N嗎？」）。</summary>
+    private const string FcwsPromptAnchor = "合建設備";
+
     /// <summary>
     /// 上一輪解析結果的指紋（首項 Index ＋ 清單長度），用來偵測「零進展」。
     /// </summary>
@@ -122,10 +176,12 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
 
     private void OnMenuFinalize(AddonEvent type, AddonArgs args)
     {
-        // 交完一項之後遊戲會把這個 addon 整個重建，而重建的第一步就是 Finalize。
-        // 舊碼在這裡直接 Abort，於是每次交納都在跟重建賽跑——實機 log 顯示同一批素材
-        // 交到第 2、5、8、11、33 項都可能停，數字沒有規律，正是這種競態的樣子。
+        // 舊碼在這裡直接 Abort，於是每次 Finalize 都在跟「是不是要重建」賽跑——實機 log 顯示
+        // 同一批素材交到第 2、5、8、11、33 項都可能停，數字沒有規律，正是這種競態的樣子。
         // 這裡只記錄時刻，真正的判斷交給下面的等待邏輯：回得來就繼續，回不來才算關閉。
+        // ⚠️ 2026-08-29 實機修正：單項交納後這個 addon 其實「不會」被重建（整趟只在最後
+        //    Finalize 一次，它是原地更新 AtkValues），所以「等清單更新」用的是指紋比對
+        //    而不是等重建，見 WaitListRefreshed。這條寬限只剩「使用者關掉視窗」那條路在用。
         if (!queue.IsBusy) return;
 
         menuGoneSince ??= DateTime.UtcNow;
@@ -187,9 +243,15 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
         deliveredCount = 0;
         menuGoneSince = null;
         requestSeen = false;
+        yesnoAnswered = false;
+        requestWaitStartedAt = null;
+        requestGoneSince = null;
+        listWaitStartedAt = null;
+        preDeliverFingerprint = null;
         lastParseFingerprint = null;
         noProgressRounds = 0;
         enqueuedItems = 0;
+        Svc.Log.Information("[AutoFCWSDeliver] 開始批次交納。");
         EnqueueNextItem();
     }
 
@@ -213,6 +275,17 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
             }
 
             menuGoneSince = null; // 回來了，重新計時
+
+            // 🔴 上一項的交納視窗還開著就送下一項的合成事件，兩項會互相蓋掉
+            //    （而且第二次的確認框會被算到第一項頭上）。等它關掉再說；
+            //    真的關不掉的話由本步驟的 10 秒逾時收口，訊息看得見。
+            if (UiHelper.IsAddonReady("Request"))
+            {
+                if (Throttle.Pass("AutoFCWSDeliver-WaitPrevRequest", 1_000))
+                    Svc.Log.Information("[AutoFCWSDeliver] 上一扇交納視窗還開著，先等它關閉再送下一項。");
+                return false;
+            }
+
             var items = ParseDeliverables(addon);
             if (items.Count == 0)
             {
@@ -264,25 +337,99 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
             };
             UiHelper.SendAgentEvent(AgentId.CompanyCraftMaterial, 0, 0, item.Index, item.Count, hidden);
 
+            Svc.Log.Information(
+                $"[AutoFCWSDeliver] 送出合成事件：Index={item.Index}、道具 {item.ItemId}×{item.Count}" +
+                $"（清單剩 {items.Count} 項，本輪已交 {deliveredCount} 項）。");
+
             fillSlotCursor = 1;
             requestSeen = false;
-            queue.EnqueueDelay(500, "等待交納視窗");
+            yesnoAnswered = false;
+            requestWaitStartedAt = null;
+            requestGoneSince = null;
+            listWaitStartedAt = null;
+            preDeliverFingerprint = fingerprint;
+
+            // 每一步都是真的等待，不是固定延遲：等交納視窗 → 填 → 交出並等確認框處理完 → 等清單更新。
+            // 步驟逾時給的是「等待上限 ＋ 一段緩衝」，讓步驟自己印出診斷後乾淨收尾，
+            // 而不是讓 TaskQueue 的逾時把整條佇列砍掉。
+            queue.Enqueue("等待交納視窗", WaitForRequest, RequestAppearWaitMs + 9_000);
             queue.Enqueue("填入交納視窗", FillRequest, 10_000);
             queue.Enqueue("送出交納並等待完成", ConfirmRequest, 15_000);
+            queue.Enqueue("等待合建清單更新", WaitListRefreshed, ListUpdateWaitMs + 9_000);
             EnqueueNextItem();
             return true;
         }, 10_000);
     }
 
+    /// <summary>
+    /// 送出合成事件之後，真的等到交納視窗出現為止。
+    /// </summary>
+    /// <remarks>
+    /// 📌 台服 7.20 實機順序（2026-08-29 log 直證）是
+    /// <b>送事件 → <c>Request</c> 交納視窗直接開啟 → 填完按「交出」之後才出現
+    /// 「確定要為合建設備提供○○×N嗎？」確認框</b>——確認框在<b>後面</b>，不在前面。
+    /// 但確認框先出現的順序這裡照樣擋得住：看到就按「是」，按完<b>繼續等</b>交納視窗，
+    /// 不會像舊碼那樣把「確認框按掉了」誤當成「這一項交完了」。
+    /// <para>
+    /// ⚠️ 只認帶「合建設備」字樣的確認框。這裡是交納視窗<b>還沒開</b>的時段，
+    /// 無差別按「是」等於幫任何路過的確認框做決定。
+    /// </para>
+    /// </remarks>
+    private bool? WaitForRequest()
+    {
+        requestWaitStartedAt ??= DateTime.UtcNow;
+
+        // 🔴 每一步都重新取 addon：原生指標一律不跨幀保存。
+        if (UiHelper.IsAddonReady("Request"))
+        {
+            requestSeen = true;
+            var waited = (int)(DateTime.UtcNow - requestWaitStartedAt.Value).TotalMilliseconds;
+            Svc.Log.Information($"[AutoFCWSDeliver] 交納視窗已出現（等了 {waited} 毫秒），開始填入。");
+            return true;
+        }
+
+        var yesno = UiHelper.GetAddon("SelectYesno");
+        if (UiHelper.IsReady(yesno))
+        {
+            var prompt = UiHelper.GetSelectYesnoText();
+            if (prompt.Contains(FcwsPromptAnchor, StringComparison.Ordinal))
+            {
+                if (Throttle.Pass("AutoFCWSDeliver-PreYesno", 300))
+                {
+                    UiHelper.FireCallback(yesno, true, 0);
+                    yesnoAnswered = true;
+                    Svc.Log.Information(
+                        $"[AutoFCWSDeliver] 交納視窗之前先按下確認框「是」：「{prompt}」，繼續等待交納視窗。");
+                }
+
+                return false;
+            }
+        }
+
+        if ((DateTime.UtcNow - requestWaitStartedAt.Value).TotalMilliseconds < RequestAppearWaitMs)
+            return false;
+
+        // requestSeen 維持 false ⇒ 後面兩步會直接跳過，這一項不計入已交納，
+        // 連續數輪都這樣才由零進展保險絲中止。
+        Svc.Log.Information(
+            $"[AutoFCWSDeliver] 等了 {RequestAppearWaitMs} 毫秒仍沒有交納視窗、也沒有合建確認框，" +
+            "判定這一項的合成事件沒有生效。");
+        return true;
+    }
+
     /// <summary>把 Request 交納視窗的每個欄位填入對應道具（TextAdvance ExecRequestFill 同款事件形狀）。</summary>
     private bool? FillRequest()
     {
-        var request = UiHelper.GetAddon("Request");
-        if (!UiHelper.IsReady(request)) return true; // 沒出現交納視窗（或已被交出）
+        // 等待步驟已經判定事件沒生效（交納視窗從頭到尾沒開）——這一項整段跳過。
+        if (!requestSeen) return true;
 
-        // 記下「這一項的交納視窗真的出現過」——ConfirmRequest 靠它區分
-        // 「交完了所以視窗關了」與「從頭到尾沒開過」。這兩件事在那裡長得一模一樣。
-        requestSeen = true;
+        var request = UiHelper.GetAddon("Request");
+        if (!UiHelper.IsReady(request))
+        {
+            // 出現過又不見了 ＝ 已經交出去（或使用者自己關了），交給 ConfirmRequest 收尾。
+            Svc.Log.Information("[AutoFCWSDeliver] 填入途中交納視窗已關閉，直接進入送出／收尾判定。");
+            return true;
+        }
 
         var contextIcon = UiHelper.GetAddon("ContextIconMenu");
         if (UiHelper.IsReady(contextIcon))
@@ -294,7 +441,11 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
         }
 
         var entryCount = ((AddonRequest*)request)->EntryCount;
-        if (fillSlotCursor > entryCount) return true;
+        if (fillSlotCursor > entryCount)
+        {
+            Svc.Log.Information($"[AutoFCWSDeliver] 交納視窗 {entryCount} 格已填完，準備按下「交出」。");
+            return true;
+        }
 
         if (Throttle.Pass("AutoFCWSDeliver-FillSlot", 150))
             UiHelper.FireCallback(request, false, 2, fillSlotCursor - 1, 0, 0);
@@ -309,15 +460,27 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
         var yesno = UiHelper.GetAddon("SelectYesno");
         if (UiHelper.IsReady(yesno))
         {
-            // 交納確認（例如包含 HQ 道具）
+            // 交納確認。台服按下「交出」之後最多會連著出現兩扇：
+            // 「確定要交易優質道具嗎？」（含 HQ 時）與「確定要為合建設備提供○○×N嗎？」。
+            // ⚠️ 這裡刻意不做文字過濾（維持既有行為）：這個時點交納視窗是我們自己開的，
+            //    冒出來的確認框就是這條流程的，漏按任何一扇都會讓這一項卡住。
+            requestGoneSince = null; // 還有確認框要處理，沉澱計時重來
             if (Throttle.Pass("AutoFCWSDeliver-Yesno", 300))
+            {
+                var prompt = UiHelper.GetSelectYesnoText();
                 UiHelper.FireCallback(yesno, true, 0);
+                yesnoAnswered = true;
+                if (Throttle.Pass("AutoFCWSDeliver-YesnoLog", 1_000))
+                    Svc.Log.Information($"[AutoFCWSDeliver] 交納確認框按下「是」：「{prompt}」。");
+            }
+
             return false;
         }
 
         var request = UiHelper.GetAddon("Request");
         if (UiHelper.IsReady(request))
         {
+            requestGoneSince = null;
             if (Throttle.Pass("AutoFCWSDeliver-HandOver", 500))
                 UiHelper.ClickButton(request, ((AddonRequest*)request)->HandOverButton);
             return false;
@@ -338,7 +501,64 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
             return true;
         }
 
+        // 🔴 兩扇視窗都不在，還不能立刻算完成。
+        //    按下「交出」到確認框冒出來之間有好幾幀是「兩扇都不在」的空窗，
+        //    舊碼在那一幀就回 true ⇒ 解析步驟馬上跑下一輪、對同一項再送一次合成事件
+        //    （實機 log 裡同一項確認框一秒內出現兩次就是這個），清單當然沒變 ⇒ 保險絲誤觸。
+        //    ⇒ 要求「連續 ConfirmSettleMs 都沒有任何一扇冒出來」才收。
+        requestGoneSince ??= DateTime.UtcNow;
+        if ((DateTime.UtcNow - requestGoneSince.Value).TotalMilliseconds < ConfirmSettleMs)
+            return false;
+
         deliveredCount++;
+        Svc.Log.Information(
+            $"[AutoFCWSDeliver] 第 {deliveredCount} 項交納完成（確認框{(yesnoAnswered ? "已" : "未")}出現）。");
+        return true;
+    }
+
+    /// <summary>
+    /// 交完一項之後，等合建視窗的素材清單真的更新了再去解析下一項。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 沒有這一步的話，下一輪解析讀到的是<b>交納前</b>的 AtkValues：指紋沒變
+    /// ⇒ 零進展保險絲把「還沒更新」誤判成「交納沒有生效」，而且會對同一項再送一次合成事件。
+    /// 📌 <c>SubmarinePartsMenu</c> 單項交納後不會被重建（整趟只有結束時一次 Finalize，
+    /// 2026-08-29 實機 log 直證），所以判準是<b>指紋變了</b>而不是「重建完成」。
+    /// </remarks>
+    private bool? WaitListRefreshed()
+    {
+        // 這一項根本沒交出去，不必等清單——讓保險絲盡快算完它的三輪。
+        if (!requestSeen) return true;
+
+        listWaitStartedAt ??= DateTime.UtcNow;
+
+        var addon = UiHelper.GetAddon("SubmarinePartsMenu");
+        if (!UiHelper.IsReady(addon))
+        {
+            // 視窗不在：可能真的被重建、也可能被使用者關掉。寬限之內就等，
+            // 超過寬限就往下走，由解析步驟既有的「視窗已關閉」判定收口（訊息也在那裡）。
+            menuGoneSince ??= DateTime.UtcNow;
+            return (DateTime.UtcNow - menuGoneSince.Value).TotalSeconds < MenuRebuildGraceSeconds ? false : true;
+        }
+
+        menuGoneSince = null; // 視窗在，重新計時（與解析步驟同一條規則）
+        var items = ParseDeliverables(addon);
+        var fingerprint = items.Count == 0 ? ((uint)0, 0) : (items[0].Index, items.Count);
+        if (preDeliverFingerprint != fingerprint)
+        {
+            Svc.Log.Information(
+                $"[AutoFCWSDeliver] 合建清單已更新（首項 Index={preDeliverFingerprint?.Index}、長度 " +
+                $"{preDeliverFingerprint?.Count} → 首項 Index={fingerprint.Item1}、長度 {fingerprint.Item2}），" +
+                "進入下一項。");
+            return true;
+        }
+
+        if ((DateTime.UtcNow - listWaitStartedAt.Value).TotalMilliseconds < ListUpdateWaitMs)
+            return false;
+
+        Svc.Log.Information(
+            $"[AutoFCWSDeliver] 等了 {ListUpdateWaitMs} 毫秒合建清單仍沒有變化，" +
+            "交給零進展保險絲判斷是不是真的沒交出去。");
         return true;
     }
 
