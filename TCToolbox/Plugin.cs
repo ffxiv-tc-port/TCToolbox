@@ -131,6 +131,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoChangeKeyboardLayout());
         Modules.Add(new AutoNumericInputMax());
         Modules.Add(new IconReference());
+        Modules.Add(new MovementSpeedMultiplier());
 
         foreach (var module in Modules)
         {

@@ -108,6 +108,7 @@ public sealed class Configuration : IPluginConfiguration
     public HuntTrainOnMappyConfig HuntTrainOnMappy { get; set; } = new();
     public CustomDeliveriesOverviewConfig CustomDeliveriesOverview { get; set; } = new();
     public TriadCardRecycleConfig TriadCardRecycle { get; set; } = new();
+    public MovementSpeedMultiplierConfig MovementSpeedMultiplier { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
 
@@ -1772,4 +1773,38 @@ public sealed class TriadCardRecycleConfig
     /// 回收按鈕送出的一律是遊戲自己在回收視窗上選定的那一張。
     /// </remarks>
     public bool ShowUnrecorded { get; set; }
+}
+
+/// <summary>移動速度倍率（限白名單副本）。</summary>
+/// <remarks>
+/// 🔴 <b>三道預設全部是「不動作」</b>：模組本身預設關（不在 <c>EnabledModules</c> 裡）、
+/// 倍率預設 1.00（＝原速）、白名單預設是空集合。三者任一沒被使用者主動改過，
+/// 這個模組對遊戲就是完全無影響的。
+/// </remarks>
+public sealed class MovementSpeedMultiplierConfig
+{
+    /// <summary>移動速度倍率。1.00 ＝ 原速。</summary>
+    /// <remarks>
+    /// 🔴 讀取端一律會夾在 <c>MovementSpeedMultiplier.MinMultiplier</c>～<c>MaxMultiplier</c>
+    /// （1.00～1.50）之間，所以就算有人手改設定檔寫了 10，實際生效的仍然是 1.50。
+    /// <b>夾限不能只做在 UI 上</b>——滑桿擋得住使用者，擋不住文字檔。
+    /// </remarks>
+    public float Multiplier { get; set; } = 1.0f;
+
+    /// <summary>
+    /// 允許生效的副本（<c>ContentFinderCondition</c> 列號）。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>空集合＝任何副本都不生效</b>，這是刻意的預設，不要改成「空＝全部」。
+    /// 「沒設定就到處生效」正是使用者裁決裡要避免的東西（原話：「使用在白名單副本才做修改」）。
+    /// <para>📌 只在副本內判定：不在副本裡（<c>BoundByDuty</c> 全部為假）時一律原速，不看這份清單。</para>
+    /// </remarks>
+    public HashSet<uint> DutyWhitelist { get; set; } = [];
+
+    /// <summary>只在非戰鬥中生效。</summary>
+    /// <remarks>
+    /// 📌 預設 <c>true</c>：戰鬥中的位移最容易被伺服器端注意到，
+    /// 而副本裡真正想跑快的多半是打完之後趕路的那一段。
+    /// </remarks>
+    public bool OnlyOutOfCombat { get; set; } = true;
 }
