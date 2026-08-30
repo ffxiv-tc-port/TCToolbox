@@ -1,5 +1,6 @@
 using System;
 using System.Numerics;
+using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Plugin.Ipc;
 using Dalamud.Plugin.Ipc.Exceptions;
 
@@ -243,9 +244,65 @@ internal static class ExternalNav
         }
     }
 
+    /// <summary>
+    /// 現在這一刻「飛得起來」嗎（已乘坐騎／已在飛行中／正在潛水）。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 這道判斷存在的唯一理由是 <b>vnavmesh 對這件事的失敗是完全靜默的</b>：
+    /// <c>PathfindAndMoveTo(pos, fly: true)</c> 在玩家沒乘坐騎時照樣回傳 true、路徑也真的算得出來，
+    /// 但 <c>FollowPath.Update</c> 走到第一個「比目前高」的路徑點時判定需要起飛，
+    /// 而沒乘坐騎就直接 <c>_movement.Enabled = false; return</c>
+    /// （vnavmesh/Movement/FollowPath.cs:183-192 直證）——角色站在原地不動，<b>沒有任何訊息</b>。
+    /// <para>
+    /// 📌 三個條件與 vnavmesh 那段<b>逐項對齊</b>：已在飛行中（<c>InFlight</c>）或潛水中
+    /// （<c>Diving</c>）根本不需要起飛動作，這時候把 fly 降級反而是幫倒忙。
+    /// </para>
+    /// <para>
+    /// ⚠️ <b>刻意不看 <c>ConditionFlag.Mounted2</c></b>（本 pin 已改名 <c>RidingPillion</c>，
+    /// 語意是「坐在別人的坐騎後座」）。那個狀態下 <c>Mounted</c> 是 false，
+    /// vnavmesh 照樣會卡在起飛判斷上——把它算成「飛得起來」等於重新製造這個 bug。
+    /// </para>
+    /// <para>
+    /// ⚠️ 這<b>不</b>檢查該區域有沒有解鎖飛行——那是另一回事，而且沒有便宜可靠的判法。
+    /// 解鎖與否的失敗形式是 vnavmesh 自己算不出飛行路徑，那條路徑上它會回報失敗，不是靜默的。
+    /// </para>
+    /// </remarks>
+    private static bool CanFly()
+        => Svc.Condition[ConditionFlag.Mounted]
+           || Svc.Condition[ConditionFlag.InFlight]
+           || Svc.Condition[ConditionFlag.Diving];
+
     /// <summary>呼叫 vnavmesh 就地導航到世界座標；只下指令，不等待走到、不接後續互動。</summary>
-    public static bool TryMoveTo(Vector3 destination, bool fly, out bool started)
+    /// <param name="destination">目的地世界座標。</param>
+    /// <param name="fly">是否允許飛行路線。⚠️ 沒乘坐騎時會在這裡被就地降級成地面路線（見備註）。</param>
+    /// <param name="started">vnavmesh 是否收下了這次導航（不代表走得到）。</param>
+    /// <param name="source">呼叫端模組名，只用在降級訊息裡指名；null＝不指名。</param>
+    /// <remarks>
+    /// 🔴 <b>刻意不替使用者自動乘坐騎</b>——本外掛不新增自動化。降級成地面路線是保守處置：
+    /// 走得到就走過去，走不到 vnavmesh 自己會拒絕或半路停下，兩種都比「站著不動又零訊息」好。
+    /// </remarks>
+    public static bool TryMoveTo(Vector3 destination, bool fly, out bool started, string? source = null)
     {
+        if (fly && !CanFly())
+        {
+            fly = false;
+
+            // 節流的理由：目前三個會傳 fly:true 的呼叫端都是離散的使用者動作
+            // （點擊放開、按鈕、聊天指令），這道閘門幾乎一定放行，節流形同不存在。
+            // 它在的目的是保險——將來若接上每幀重試的呼叫端，沒有它就會把聊天視窗與 log 洗爆。
+            if (Throttle.Pass("ExternalNav-FlyNeedsMount", 2_000))
+            {
+                var tag = string.IsNullOrEmpty(source) ? string.Empty : $"{source}：";
+                Svc.Chat.Print(
+                    $"[TC Toolbox] {tag}目的地需飛行但未乘坐騎，改走地面路線；請先乘上坐騎再下指令。");
+
+                // 使用者回報用的定錨點：出事時這一行是唯一能證明「飛行被降級了、是誰要求的」的證據。
+                Svc.Log.Information(
+                    $"[ExternalNav] 飛行降級為地面路線（未乘坐騎）：呼叫端={source ?? "未指名"}"
+                    + $" 目的地={destination:F1}");
+            }
+        }
+
         try
         {
             started = VnavMoveToGate.Value.InvokeFunc(destination, fly);

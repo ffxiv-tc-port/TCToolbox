@@ -656,7 +656,7 @@ public sealed class FateTracker : TcModule
 
         var config = Plugin.Instance.Config.FateTracker;
 
-        if (!ExternalNav.TryMoveTo(fate.Position, config.AllowFly, out var started))
+        if (!ExternalNav.TryMoveTo(fate.Position, config.AllowFly, out var started, DisplayName))
         {
             // IPC 整個打不通（外掛剛被拆掉之類）。快取狀態顯然過期了，強制下一幀重探。
             Throttle.Reset("FateTracker-VnavProbe");

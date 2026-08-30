@@ -399,7 +399,7 @@ public sealed unsafe class FlagCommands : TcModule
         if (ExternalNav.IsVnavmeshPathRunning() || ExternalNav.IsVnavmeshPathfindInProgress())
             NavStop.RequestStop();
 
-        if (!ExternalNav.TryMoveTo(destination, Config.AllowFly, out var started))
+        if (!ExternalNav.TryMoveTo(destination, Config.AllowFly, out var started, DisplayName))
         {
             Svc.Chat.PrintError("[TC Toolbox] 無法呼叫 vnavmesh，沒有開始移動。");
             return;

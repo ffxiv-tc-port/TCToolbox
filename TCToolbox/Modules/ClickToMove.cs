@@ -245,7 +245,7 @@ public sealed unsafe class ClickToMove : TcModule
         if (vnavPathRunning || vnavPathfinding)
             NavStop.RequestStop();
 
-        if (!ExternalNav.TryMoveTo(worldPos, Config.AllowFly, out var started))
+        if (!ExternalNav.TryMoveTo(worldPos, Config.AllowFly, out var started, DisplayName))
         {
             Throttle.Reset("ClickToMove-VnavProbe");
             Svc.Chat.Print("[TC Toolbox] 點擊移動：無法呼叫 vnavmesh，沒有開始移動。");
