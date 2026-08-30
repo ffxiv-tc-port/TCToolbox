@@ -10,6 +10,7 @@ using Dalamud.Hooking;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game;
+using FFXIVClientStructs.FFXIV.Client.Game.Control;
 using Lumina.Excel.Sheets;
 using TCToolbox.Core;
 
@@ -48,14 +49,22 @@ namespace TCToolbox.Modules;
 /// </item>
 /// <item>
 /// 參數 <c>a1</c> 是一個容器結構：函式一進去就 <c>mov rcx,[rcx+8]</c> 取出角色指標再打它的虛表
-/// （<c>[vtbl+0x270]</c>／<c>[vtbl+0x278]</c>）。<b>我們完全不碰它</b>，見下面的 detour 契約。
+/// （<c>[vtbl+0x270]</c>／<c>[vtbl+0x278]</c>）。這一點被用來做<b>本地玩家身分閘門</b>，見 <see cref="IsLocalPlayer"/>。
+/// </item>
+/// <item>
+/// 這支函式<b>有 8 個呼叫點，而且無法離線證明它只為本地玩家執行</b>
+/// （其中幾個落在 4557／6148 位元組的巨大鏈結函式裡）。所以 detour <b>不假設</b>它只跑本地玩家，
+/// 而是每一次呼叫都拿 <c>a1+8</c> 的角色指標與 <c>Control.Instance()-&gt;LocalPlayer</c> 比對，
+/// 不是本人就原值放行。<b>這把「假設」換成了「每次都檢查」。</b>
 /// </item>
 /// </list>
 /// <para>
-/// 🔴🔴 <b>detour 契約：只做 float 運算，一個指標都不解參。</b>
-/// <c>a1</c> 原封不動轉給原函式，我們只把它的<b>回傳值</b>乘上一個早就算好的純量。
-/// 這不是「小心一點」而是結構上的保證——AccessViolationException 在 .NET Core 是
-/// corrupted-state exception，<c>try/catch</c> 攔不到，所以唯一有效的防護是<b>根本不解參</b>。
+/// 🔴🔴 <b>detour 契約：不做任何「沒有被原函式證明過」的解參考。</b>
+/// <c>a1</c> 原封不動轉給原函式；唯一一處解參考是 <c>a1+8</c>，而且<b>只在原函式成功返回之後</b>才做
+/// ——原函式自己進門就無條件解參考同一個位址，所以它順利返回就是那個位址可讀的證明
+/// （詳見 <see cref="IsLocalPlayer"/>）。除此之外只有 float 運算。
+/// AccessViolationException 在 .NET Core 是 corrupted-state exception，<c>try/catch</c> 攔不到，
+/// 所以防護不能靠例外隔離，只能靠<b>不做沒有被證明過的解參考</b>。
 /// 要不要生效的判斷（在不在副本、在不在白名單、有沒有在戰鬥）<b>全部在 framework 執行緒上每幀算完</b>，
 /// 結果寫進 <see cref="activeMultiplier"/> 這個 <c>volatile float</c>，detour 只讀它。
 /// </para>
@@ -66,8 +75,9 @@ namespace TCToolbox.Modules;
 /// </para>
 /// <para>
 /// ⚠️ <b>與 BossModReborn 的關係</b>：BMR 用<b>同一條特徵碼</b>每幀呼叫這支函式來估玩家速度
-/// （<c>WorldStateGameSync</c>）。我們掛 hook 之後它讀到的是<b>放大後</b>的倍率，
-/// 對它的尋路是正確的方向（它會知道角色跑比較快）。
+/// （<c>WorldStateGameSync</c>）。它自己組的 <c>CharacterContainer</c> 是
+/// <c>[FieldOffset(0x8)] Character*</c> 且填本地玩家，<b>通得過</b>我們的身分閘門，
+/// 所以它讀到的是<b>放大後</b>的倍率——對它的尋路是正確的方向（它會知道角色跑比較快）。
 /// </para>
 /// <para>
 /// 🔴 <b>使用者裁決：預設關、白名單預設空。</b>開了模組但一個副本都沒加＝完全不動作。
@@ -138,6 +148,24 @@ public sealed unsafe class MovementSpeedMultiplier : TcModule
     /// <summary>上一次寫進記錄的倍率，用來只在<b>變化時</b>記一行，而不是每幀洗記錄。</summary>
     private float lastLoggedMultiplier = 1f;
 
+    /// <summary>detour 曾經真的對<b>本地玩家</b>套用過放大（只由 detour 寫入，framework 執行緒讀）。</summary>
+    private volatile bool sawLocalPlayerApply;
+
+    /// <summary>detour 曾經在「本來要放大」時擋下<b>非本地玩家</b>的呼叫。</summary>
+    /// <remarks>
+    /// 🔑 這兩個旗標存在的唯一目的是把「這支函式到底會不會為別的角色跑」這個
+    /// <b>離線證明不了</b>的問題，變成使用者記錄裡看得到的事實。
+    /// <para>
+    /// 🔴 型別是 <c>volatile bool</c> 而不是計數器：detour 裡只准做「存一個常數」這種
+    /// 不配置記憶體、不會擲例外的動作。記錄要寫在 framework 執行緒上，<b>不准寫在 detour 裡</b>
+    /// ——那是每幀都會走的路徑，而且 <c>Svc.Log</c> 會配置字串。
+    /// </para>
+    /// </remarks>
+    private volatile bool sawOtherCharacter;
+
+    private bool reportedLocalPlayerApply;
+    private bool reportedOtherCharacter;
+
     private MovementSpeedMultiplierConfig Config => Plugin.Instance.Config.MovementSpeedMultiplier;
 
     // ── UI 狀態 ──
@@ -173,6 +201,7 @@ public sealed unsafe class MovementSpeedMultiplier : TcModule
     {
         activeMultiplier = 1f;
         lastLoggedMultiplier = 1f;
+        ResetIdentityGateDiagnostics();
 
         // 🔴 解不到特徵碼就整個不掛 hook。這裡刻意<b>不</b>擲例外、也不記 Error：
         //    這不是故障而是「這一版遊戲我認不得」，正確的行為是安靜地什麼都不做。
@@ -223,6 +252,15 @@ public sealed unsafe class MovementSpeedMultiplier : TcModule
 
         sigResolved = false;
         lastLoggedMultiplier = 1f;
+        ResetIdentityGateDiagnostics();
+    }
+
+    private void ResetIdentityGateDiagnostics()
+    {
+        sawLocalPlayerApply = false;
+        sawOtherCharacter = false;
+        reportedLocalPlayerApply = false;
+        reportedOtherCharacter = false;
     }
 
     /// <summary>
@@ -252,13 +290,65 @@ public sealed unsafe class MovementSpeedMultiplier : TcModule
         //    而一個 NaN 乘出去就是角色再也不會動——成本一個比較，不值得省。
         if (!float.IsFinite(original)) return original;
 
+        if (!IsLocalPlayer(a1))
+        {
+            sawOtherCharacter = true;
+            return original;
+        }
+
+        sawLocalPlayerApply = true;
         return original * multiplier;
+    }
+
+    /// <summary>
+    /// 這一次呼叫的對象是不是<b>本地玩家</b>。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>為什麼這裡的解參考是安全的（而且只有這個順序安全）</b>：
+    /// 這個方法只在 <c>OriginalDisposeSafe</c> <b>成功返回之後</b>才被呼叫。
+    /// 原函式（<c>0x1408903B0</c>）進去的前三條指令就是
+    /// <c>mov rdi,rcx</c> ／ <c>mov rcx,[rcx+8]</c> ／ <c>mov rax,[rcx]</c>——
+    /// 它<b>無條件地</b>解參考 <c>a1+8</c>，而且還接著解參考那個角色指標去打它的虛表。
+    /// 所以「原函式已經順利返回」本身就是「<c>a1+8</c> 這一刻讀得到」的<b>證明</b>，
+    /// 同一條呼叫、同一個執行緒、中間沒有讓出。我們沒有引進任何新的解參考風險。
+    /// <para>
+    /// 🔴 <b>不可以把這個呼叫搬到 <c>original</c> 之前。</b>搬了就變成我們自己先賭一把，
+    /// 而 AccessViolationException 在 .NET Core 是 corrupted-state exception，<c>try/catch</c> 根本攔不到。
+    /// </para>
+    /// <para>
+    /// 📌 比對的是<b>位址</b>：CS 的 <c>BattleChara</c> 帶 <c>[Inherits&lt;Character&gt;]</c>，
+    /// 基底型別就在偏移 0，所以同一個物件的 <c>BattleChara*</c> 與 <c>Character*</c> 是同一個位址。
+    /// </para>
+    /// <para>
+    /// 📌 BossModReborn 自己組的 <c>CharacterContainer</c> 也是 <c>[FieldOffset(0x8)] Character*</c>
+    /// 且填的是本地玩家，所以它每幀那一發<b>仍然</b>拿得到放大後的倍率，不受這道閘門影響。
+    /// </para>
+    /// <para>
+    /// 🔑 讀不到就回 <c>false</c>（＝不放大）。這個方向的錯誤是「該加速時沒加速」，
+    /// 反方向是「對不該碰的角色改了速度」。
+    /// </para>
+    /// </remarks>
+    private static bool IsLocalPlayer(nint a1)
+    {
+        if (a1 == nint.Zero) return false;
+
+        // ⚠️ 這個判空不是多餘的：Control.Instance() 是 lea 型的 [StaticAddress]，
+        //    正常情況下永遠不是 null——但特徵碼解不開時 CS 會讓它回 0。
+        var control = Control.Instance();
+        if (control == null) return false;
+
+        var localPlayer = (nint)control->LocalPlayer;
+        if (localPlayer == nint.Zero) return false;
+
+        return *(nint*)(a1 + 8) == localPlayer;
     }
 
     private void OnFrameworkUpdate(IFramework framework)
     {
         var desired = ComputeMultiplier();
         activeMultiplier = desired;
+
+        LogIdentityGateOnce();
 
         if (Math.Abs(desired - lastLoggedMultiplier) <= Epsilon) return;
 
@@ -277,6 +367,31 @@ public sealed unsafe class MovementSpeedMultiplier : TcModule
     /// 🔑 每一個「不確定」都回 1（＝原速）。這個方向的錯誤是「該加速時沒加速」，
     /// 反方向是「在不該生效的地方偷偷改了移動速度」——後者才是會出事的那個。
     /// </remarks>
+    /// <summary>
+    /// 把「這支函式到底只為本地玩家跑、還是也為別的角色跑」寫進記錄，<b>各只寫一次</b>。
+    /// </summary>
+    /// <remarks>
+    /// 🔑 這件事<b>離線證明不了</b>（那支函式有 8 個呼叫點，其中幾個落在數千位元組的巨大鏈結函式裡）。
+    /// 與其寫一句「假設只有本地玩家會走到」，不如讓使用者的記錄直接回答它。
+    /// <para>📌 一律 <c>Information</c>：使用者的記錄等級會濾掉 Debug／Verbose。</para>
+    /// </remarks>
+    private void LogIdentityGateOnce()
+    {
+        if (sawLocalPlayerApply && !reportedLocalPlayerApply)
+        {
+            reportedLocalPlayerApply = true;
+            Svc.Log.Information($"[{InternalName}] 本地玩家身分閘門：已對本地玩家套用放大（閘門運作正常）。");
+        }
+
+        if (sawOtherCharacter && !reportedOtherCharacter)
+        {
+            reportedOtherCharacter = true;
+            Svc.Log.Information(
+                $"[{InternalName}] 本地玩家身分閘門：擋下了一次非本地玩家的呼叫" +
+                "（證實這支函式也會為其他角色執行，閘門有實際作用）。");
+        }
+    }
+
     private float ComputeMultiplier()
     {
         var configured = ClampedConfigMultiplier();
