@@ -838,10 +838,14 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
 
         // 2026-08-01：這行救了一次診斷——部隊置物櫃右鍵時它**完全沒出現**，
         // 而它記在修飾鍵檢查之前，所以直接證明是「hook 根本沒被呼叫」而不是「修飾鍵沒按到」，
-        // 才找到 OpenForItemSlot 不是置物櫃入口這件事。留著，並改成 Information
-        // （使用者的記錄等級會濾掉 DBG，DBG 只是這台機器剛好開著）。只有右鍵才觸發，不會洗版。
+        // 才找到 OpenForItemSlot 不是置物櫃入口這件事。位置要留著，它的價值就在「記得比什麼都早」。
+        // 🔴 2026-08-30 修正：原註解宣稱「只有右鍵才觸發，不會洗版」——實機 log 打臉。
+        // 08-23~30 這一行印了 10,200 次、峰值 244 筆/分：同一格在 10ms 內就會重複觸發，
+        // 而它記在下面那道「略過重複觸發」去重**之前**，所以去重擋得住動作、擋不住這行記錄。
+        // ⇒ 這裡降成 Debug（保住「hook 有沒有被呼叫」的診斷），Information 移到去重之後，
+        //   只有真的要處理那一格時才印一筆。
         var modifierHeld = Svc.Keys[(VirtualKey)Config.ModifierKeyCode];
-        Svc.Log.Information($"[{InternalName}] 右鍵選單開啟：{source}#{slot} 修飾鍵={(modifierHeld ? "有按" : "沒按")}");
+        Svc.Log.Debug($"[{InternalName}] 右鍵選單開啟：{source}#{slot} 修飾鍵={(modifierHeld ? "有按" : "沒按")}");
 
         if (!modifierHeld) return;
 
@@ -905,6 +909,11 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         lastHandledSlot = slot;
         lastHandledItemId = itemId;
         lastHandledTick = Environment.TickCount64;
+
+        // 過了去重才印：一次右鍵＝一筆 Information（使用者跑 LogLevel 2，收得到的就是這筆）。
+        // 修飾鍵沒按、或同格 500ms 內的重複觸發都已經在上面 return 掉了。
+        Svc.Log.Information(
+            $"[{InternalName}] 右鍵轉移觸發：{source}#{slot} itemId={itemId}「{displayName}」");
 
         // 🔴 雇員方向優先走遊戲自己的道具命令（見 RetainerItemCommandDelegate 的說明）。
         // 這條路徑由遊戲決定落點，所以不需要我們自己挑目的地格。

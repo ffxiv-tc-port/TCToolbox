@@ -63,13 +63,27 @@ public sealed unsafe class AutoGysahlGreens : TcModule
 
         var uiState = UIState.Instance();
 
-        // 診斷（Information 級，使用者 LogLevel 2 收得到）：TimeLeft 是這條鏈唯一的原生讀值，
-        // 讀到 0 或垃圾值都會走靜默返回 —— 週期性印出來，「沒效果」時 log 才有東西可查。
-        // 實機回報「沒效果」（2026-08-18）就是因為整條鏈沒有任何可見輸出，無從分辨死在哪段。
+        // 診斷：TimeLeft 是這條鏈唯一的原生讀值，讀到 0 或垃圾值都會走靜默返回 ——
+        // 印出來，「沒效果」時 log 才有東西可查。實機回報「沒效果」（2026-08-18）
+        // 就是因為整條鏈沒有任何可見輸出，無從分辨死在哪段。
+        // 🔴 2026-08-30：但這是**純輪詢**，跟有沒有事情發生無關，實機 08-23~30 印了 1,004 次。
+        // ⇒ 週期性那筆降 Debug；Information 只留給「真的該餵了卻沒餵成」的現場（見下面那筆），
+        //   因為使用者跑 LogLevel 2，會被回報的只有那種時刻。餵食結果本身維持 Information／聊天訊息。
+        var timeLeftNow = uiState != null ? uiState->Buddy.CompanionInfo.TimeLeft : 0f;
+        var thresholdSeconds = Config.ThresholdMinutes * 60f;
+
         if (Throttle.Pass("AutoGysahlGreens-Diag", 120_000))
         {
-            var tl = uiState != null ? $"{uiState->Buddy.CompanionInfo.TimeLeft:F1}s" : "uiState=null";
-            Svc.Log.Information($"[AutoGysahlGreens] 狀態：TimeLeft={tl} 門檻={Config.ThresholdMinutes * 60}s 條件擋下={blocked}");
+            var tl = uiState != null ? $"{timeLeftNow:F1}s" : "uiState=null";
+            Svc.Log.Debug($"[AutoGysahlGreens] 狀態：TimeLeft={tl} 門檻={Config.ThresholdMinutes * 60}s 條件擋下={blocked}");
+        }
+
+        // 已經進入該餵的區間、卻被條件擋下 —— 這就是「開了卻沒作用」的可回報現場，維持 Information。
+        if (blocked && timeLeftNow > 0 && timeLeftNow <= thresholdSeconds &&
+            Throttle.Pass("AutoGysahlGreens-Blocked", 60_000))
+        {
+            Svc.Log.Information(
+                $"[AutoGysahlGreens] 已達門檻但被條件擋下，這次不餵：TimeLeft={timeLeftNow:F1}s 門檻={thresholdSeconds:F0}s");
         }
 
         if (blocked) return;

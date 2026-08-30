@@ -42,6 +42,12 @@ public sealed unsafe class AutoIgnoreLoginLock : TcModule
 
     private static readonly string LockMessage = ResolveLockMessage();
 
+    /// <summary>
+    /// 這趟大廳停留是否已經記過一筆 Information。登入成功後歸零，下次回到大廳再記一次。
+    /// 純粹用來壓記錄量，不影響清旗標的行為（旗標照樣每 500ms 檢查、每次都清）。
+    /// </summary>
+    private bool loggedClearThisLobbyVisit;
+
     protected override void OnEnable() => Svc.Framework.Update += OnUpdate;
 
     protected override void OnDisable() => Svc.Framework.Update -= OnUpdate;
@@ -58,7 +64,12 @@ public sealed unsafe class AutoIgnoreLoginLock : TcModule
     private void OnUpdate(IFramework framework)
     {
         // 進遊戲之後大廳 agent 不再管這件事，直接不做事
-        if (Svc.ClientState.IsLoggedIn) return;
+        if (Svc.ClientState.IsLoggedIn)
+        {
+            loggedClearThisLobbyVisit = false;
+            return;
+        }
+
         if (!Throttle.Pass("AutoIgnoreLoginLock-Clear", 500)) return;
 
         var agent = AgentLobby.Instance();
@@ -67,8 +78,20 @@ public sealed unsafe class AutoIgnoreLoginLock : TcModule
 
         agent->TemporaryLocked = false;
 
-        if (Throttle.Pass("AutoIgnoreLoginLock-Log", 10_000))
+        // 🔴 2026-08-30：這行原本是 10 秒節流的 Information，實機 08-23~30 印了 1,374 次。
+        // 成因不是「每次登入一筆」——待在角色選擇畫面時遊戲會把旗標反覆設回來，
+        // 我們每 500ms 就清一次，於是 10 秒節流等於「每 10 秒穩定印一筆」。
+        // ⇒ 每趟大廳停留只留第一筆 Information（使用者跑 LogLevel 2，那筆就夠證明模組有在動），
+        //   同一趟裡後續的重複清除降 Debug。清旗標的行為完全沒動。
+        if (!loggedClearThisLobbyVisit)
+        {
+            loggedClearThisLobbyVisit = true;
             Svc.Log.Information($"[{InternalName}] 已清除大廳的重登冷卻旗標。");
+        }
+        else if (Throttle.Pass("AutoIgnoreLoginLock-Log", 10_000))
+        {
+            Svc.Log.Debug($"[{InternalName}] 已清除大廳的重登冷卻旗標（本趟重複）。");
+        }
     }
 
     public override void DrawConfig()
