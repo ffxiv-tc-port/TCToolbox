@@ -54,6 +54,15 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
     /// <summary>這一項送出交納後，交納確認框有沒有被按過（診斷用，不影響流程）。</summary>
     private bool yesnoAnswered;
 
+    /// <summary>
+    /// 🔴 已對某扇確認框按過「是」、但還沒觀察到它消失過。
+    /// 2026-08-31 崩潰修正（crash-20260831205734）：SelectYesno 按下後「正在關閉」的那幾幀，
+    /// GetAddonByName 仍回實例且 IsVisible＋Loaded 全過——此時再 FireCallback＝原生 AVE
+    /// （堆疊：ConfirmRequest→FireCallback→ffxiv_dx11+5BE756，C0000005）。
+    /// 這面旗立起時一律不再按任何確認框；觀察到「窗不在」就自動清（無需專門重設點，殘留無害）。
+    /// </summary>
+    private bool yesnoWaitingToClose;
+
     /// <summary>「等待交納視窗」步驟開始的時刻（每項重設）。</summary>
     private DateTime? requestWaitStartedAt;
 
@@ -286,6 +295,15 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
                 return false;
             }
 
+            // 🔴 2026-08-31 崩潰的另一半：上一項的確認框遲到彈出時，這裡照樣送下一項的合成事件，
+            //    兩條窗鏈同幀重疊——之後對「正在關閉」的確認框重按就 AVE。確認框還在就不送。
+            if (UiHelper.IsAddonReady("SelectYesno"))
+            {
+                if (Throttle.Pass("AutoFCWSDeliver-WaitPrevYesno", 1_000))
+                    Svc.Log.Information("[AutoFCWSDeliver] 上一項的確認框還開著，先等它收掉再送下一項。");
+                return false;
+            }
+
             var items = ParseDeliverables(addon);
             if (items.Count == 0)
             {
@@ -389,14 +407,26 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
         }
 
         var yesno = UiHelper.GetAddon("SelectYesno");
-        if (UiHelper.IsReady(yesno))
+        if (!UiHelper.IsReady(yesno))
+        {
+            yesnoWaitingToClose = false; // 窗不在＝上一按已收效，解除「等消失」
+        }
+        else if (yesnoWaitingToClose)
+        {
+            return false; // 🔴 按過的那扇還在關閉途中，這幾幀絕不再碰它（AVE 路徑）
+        }
+        else
         {
             var prompt = UiHelper.GetSelectYesnoText();
+            // 🔴 讀出替換字元＝窗的記憶體正在變動（崩潰前實機 log 的亂碼 prompt 就是這徵兆），這幀不碰。
+            if (prompt.Contains('�'))
+                return false;
             if (prompt.Contains(FcwsPromptAnchor, StringComparison.Ordinal))
             {
                 if (Throttle.Pass("AutoFCWSDeliver-PreYesno", 300))
                 {
                     UiHelper.FireCallback(yesno, true, 0);
+                    yesnoWaitingToClose = true;
                     yesnoAnswered = true;
                     Svc.Log.Information(
                         $"[AutoFCWSDeliver] 交納視窗之前先按下確認框「是」：「{prompt}」，繼續等待交納視窗。");
@@ -458,17 +488,30 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
         if (GetWorkshopTerritory() == null) return null;
 
         var yesno = UiHelper.GetAddon("SelectYesno");
-        if (UiHelper.IsReady(yesno))
+        if (!UiHelper.IsReady(yesno))
+        {
+            yesnoWaitingToClose = false; // 窗不在＝上一按已收效，解除「等消失」
+        }
+        else if (yesnoWaitingToClose)
+        {
+            requestGoneSince = null; // 框還在（關閉途中），沉澱計時照樣重來
+            return false;            // 🔴 但絕不重按——對關閉中的窗 FireCallback 就是這次的崩潰
+        }
+        else
         {
             // 交納確認。台服按下「交出」之後最多會連著出現兩扇：
             // 「確定要交易優質道具嗎？」（含 HQ 時）與「確定要為合建設備提供○○×N嗎？」。
             // ⚠️ 這裡刻意不做文字過濾（維持既有行為）：這個時點交納視窗是我們自己開的，
             //    冒出來的確認框就是這條流程的，漏按任何一扇都會讓這一項卡住。
             requestGoneSince = null; // 還有確認框要處理，沉澱計時重來
+            var prompt = UiHelper.GetSelectYesnoText();
+            // 🔴 讀出替換字元＝窗的記憶體正在變動，這幀不碰（下一幀重讀）。
+            if (prompt.Contains('�'))
+                return false;
             if (Throttle.Pass("AutoFCWSDeliver-Yesno", 300))
             {
-                var prompt = UiHelper.GetSelectYesnoText();
                 UiHelper.FireCallback(yesno, true, 0);
+                yesnoWaitingToClose = true;
                 yesnoAnswered = true;
                 if (Throttle.Pass("AutoFCWSDeliver-YesnoLog", 1_000))
                     Svc.Log.Information($"[AutoFCWSDeliver] 交納確認框按下「是」：「{prompt}」。");
