@@ -81,7 +81,7 @@ namespace TCToolbox.Modules;
 /// </para>
 /// <para>
 /// 🔴 <b>使用者裁決：預設關、白名單預設空。</b>開了模組但一個副本都沒加＝完全不動作。
-/// 倍率上限刻意壓在 1.5：伺服器對位移速度的容忍度<b>無法離線證明</b>，見設定畫面上的紅字。
+/// 倍率上限 3.0（2026-08-31 使用者要求自 1.5 提高）：伺服器對位移速度的容忍度<b>無法離線證明</b>，見設定畫面上的紅字。
 /// </para>
 /// </remarks>
 public sealed unsafe class MovementSpeedMultiplier : TcModule
@@ -116,11 +116,11 @@ public sealed unsafe class MovementSpeedMultiplier : TcModule
     /// 倍率上限。
     /// </summary>
     /// <remarks>
-    /// 🔴 1.5 是<b>刻意保守</b>的數字，不是量到的安全值。遊戲原生的疾跑約是 1.3~1.4 倍，
-    /// 所以 1.5 大致落在「客戶端本來就會出現的速度」的邊緣。
-    /// <b>伺服器端對位移速度的容忍門檻無法離線證明</b>，調高這個常數等於拿帳號去試。
+    /// 🔴 3.0 是使用者要求的上限（2026-08-31 自 1.5 提高），不是量到的安全值。
+    /// 遊戲原生的疾跑約是 1.3~1.4 倍——超過那個範圍越多，離「客戶端本來就會出現的速度」越遠。
+    /// <b>伺服器端對位移速度的容忍門檻無法離線證明</b>，倍率開多高等於拿帳號試多少，由使用者自己拿捏。
     /// </remarks>
-    public const float MaxMultiplier = 1.5f;
+    public const float MaxMultiplier = 3.0f;
 
     /// <summary>滑桿每一級的大小。</summary>
     private const float MultiplierStep = 0.05f;
@@ -513,8 +513,8 @@ public sealed unsafe class MovementSpeedMultiplier : TcModule
         // 🔴 這段紅字是使用者裁決的一部分，不要改成比較婉轉的說法。
         ImGui.TextColored(new Vector4(1f, 0.35f, 0.35f, 1f),
             "⚠ 超過遊戲原生速度有被伺服器判定異常的風險，後果自負。");
-        ImGui.TextDisabled("上限刻意壓在 1.50。伺服器端真正的容忍門檻無法從客戶端證明，");
-        ImGui.TextDisabled("所以這個上限是保守猜測，不是量到的安全值。");
+        ImGui.TextDisabled("上限 3.00（應要求自 1.50 提高）。伺服器端真正的容忍門檻無法從客戶端證明，");
+        ImGui.TextDisabled("倍率開多高等於拿帳號試多少——原生疾跑約 1.3~1.4 倍，超過越多越顯眼。");
 
         ImGui.Separator();
 
