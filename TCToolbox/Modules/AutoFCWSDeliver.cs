@@ -73,7 +73,7 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
     private DateTime? listWaitStartedAt;
 
     /// <summary>送出這一項之前的清單指紋，交完之後拿來確認清單真的變了。</summary>
-    private (uint Index, int Count)? preDeliverFingerprint;
+    private (uint Index, int Count, uint ItemId, uint Owned)? preDeliverFingerprint;
 
     /// <summary>
     /// 送出合成事件之後，等交納視窗（或交納確認框）出現的上限。
@@ -98,7 +98,7 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
     /// 舊碼在那一幀就判定這一項完成並往下跑，等於在自己的確認框還沒按掉時
     /// 就去送下一項的合成事件。
     /// </remarks>
-    private const int ConfirmSettleMs = 1_000;
+    private const int ConfirmSettleMs = 600; // 2026-08-31 自 1000 下調:實測按「交出」後確認框 10~150ms 內出現,600 仍寬
 
     /// <summary>
     /// 交完一項之後，等合建視窗的素材清單反映出去的上限。
@@ -117,7 +117,7 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
     /// <summary>
     /// 上一輪解析結果的指紋（首項 Index ＋ 清單長度），用來偵測「零進展」。
     /// </summary>
-    private (uint Index, int Count)? lastParseFingerprint;
+    private (uint Index, int Count, uint ItemId, uint Owned)? lastParseFingerprint;
 
     /// <summary>連續幾輪解析結果完全相同了。</summary>
     private int noProgressRounds;
@@ -142,7 +142,7 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
     /// <summary>單趟交納的項數上限（合建素材實際上限約數十項，這個數綽綽有餘）。</summary>
     private const int MaxItemsPerRun = 100;
 
-    private sealed record DeliverItem(uint Index, uint ItemId, uint Count);
+    private sealed record DeliverItem(uint Index, uint ItemId, uint Count, uint Owned);
 
     /// <summary>
     /// 取得工房領地，兩種失效都擋掉。
@@ -316,7 +316,11 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
             // ── 保險絲一：零進展偵測 ───────────────────────────────────────────
             // 解析結果與上一輪完全相同 ＝ 上一輪那一項其實沒交出去。
             // 這是「agent 事件被靜默拒絕」唯一看得出來的地方（台服的拒絕沒有任何回饋）。
-            var fingerprint = (item.Index, items.Count);
+            // 🔴 2026-08-31 使用者回報「繳交太慢」的根因：指紋原本只有 (Index, Count)——
+            //    同一項要連續交多輪（總需求大於單次量）時兩者都不變，「等清單更新」每輪
+            //    白等滿 ListUpdateWaitMs，零進展保險絲還會誤數。納入 ItemId 與持有數 Owned：
+            //    同項交一輪素材必定被扣、Owned 必變，清單變化在下一次解析就看得到。
+            var fingerprint = (item.Index, items.Count, item.ItemId, item.Owned);
             if (lastParseFingerprint == fingerprint)
             {
                 noProgressRounds++;
@@ -586,7 +590,7 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
 
         menuGoneSince = null; // 視窗在，重新計時（與解析步驟同一條規則）
         var items = ParseDeliverables(addon);
-        var fingerprint = items.Count == 0 ? ((uint)0, 0) : (items[0].Index, items.Count);
+        var fingerprint = items.Count == 0 ? ((uint)0, 0, (uint)0, (uint)0) : (items[0].Index, items.Count, items[0].ItemId, items[0].Owned);
         if (preDeliverFingerprint != fingerprint)
         {
             Svc.Log.Information(
@@ -646,7 +650,7 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
             var owned = values[72 + i].UInt;
             if (owned < required) continue; // 持有數不足
 
-            result.Add(new DeliverItem((uint)i, itemId, required));
+            result.Add(new DeliverItem((uint)i, itemId, required, owned));
         }
 
         return result;
