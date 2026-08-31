@@ -299,5 +299,9 @@ public sealed class Plugin : IDalamudPlugin
         //    讓補送窗口活到最後（見 NavStop.Release 的說明），但外掛整個卸載時
         //    絕對不能留一個指向本組件的 Framework.Update 訂閱。
         NavStop.ForceTeardown();
+
+        // 🔴 同理：確認框防重按閘門的 AddonLifecycle 監聽器是共用的（不屬於任何一個模組），
+        //    外掛整個卸載時一定要拆乾淨。
+        AddonPressGuard.ForceTeardown();
     }
 }

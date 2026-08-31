@@ -151,6 +151,22 @@ internal static unsafe class AddonPrompt
     }
 
     /// <summary>
+    /// 這串提示文字看起來是不是「讀到一半」的（含 U+FFFD 替換字元）。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 2026-08-31 崩潰（<c>crash-20260831205734</c>）前的實機 log 裡，最後幾行讀到的
+    /// 確認框文字帶著替換字元——那是<b>視窗的記憶體正在變動</b>（多半是正在關閉）時，
+    /// UTF-8 解碼撞到半個字元的徵兆。這一幀讀到這種東西就<b>什麼都不要碰</b>，下一幀重讀即可。
+    /// <para>
+    /// ⚠️ 這是<b>額外</b>的一道，不是主防線——主防線是
+    /// <see cref="AddonPressGuard.TryBeginPress"/>（按過就不再按）。
+    /// 只有「窗的記憶體剛好正在被改」的那幾幀讀得到替換字元，讀不到不代表安全。
+    /// </para>
+    /// </remarks>
+    public static bool LooksMidUpdate(string prompt) =>
+        !string.IsNullOrEmpty(prompt) && prompt.Contains('�');
+
+    /// <summary>
     /// 去掉所有空白字元。
     /// </summary>
     /// <remarks>

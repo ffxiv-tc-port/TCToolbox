@@ -115,20 +115,39 @@ public static unsafe class UiHelper
 
     public static void SelectStringEntry(AtkUnitBase* addon, int index) => FireCallback(addon, true, index);
 
-    /// <summary>SelectYesno 點「是」。</summary>
+    /// <summary><c>SelectYesno</c> 這扇窗在 <see cref="AddonPressGuard"/> 裡的鍵。</summary>
+    public const string SelectYesnoAddonName = "SelectYesno";
+
+    /// <summary>
+    /// SelectYesno 點「是」。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b><see cref="IsReady"/> 過了不代表可以按。</b>按下之後有「正在關閉中」的幾幀，
+    /// 那幾幀三關（非 null／<c>IsVisible</c>／<c>Loaded</c>）全過而 <c>FireCallback</c> 下去
+    /// 就是攔不到的存取違規（2026-08-31 實機崩潰 <c>crash-20260831205734</c>）。
+    /// 所以這裡多一道 <see cref="AddonPressGuard.TryBeginPress"/>：按過的那個實例
+    /// 在觀察到它走完生命週期之前不再按。
+    /// <para>
+    /// ⚠️ 回 <see langword="false"/> 的語意<b>沒有改變</b>——本來就是「這次沒按到」，
+    /// 呼叫端全都是「下一輪再試」。只是多了一種回 false 的理由。
+    /// </para>
+    /// </remarks>
     public static bool ClickSelectYesnoYes()
     {
-        var addon = GetAddon("SelectYesno");
+        var addon = GetAddon(SelectYesnoAddonName);
         if (!IsReady(addon)) return false;
+        if (!AddonPressGuard.TryBeginPress(SelectYesnoAddonName, addon)) return false;
         FireCallback(addon, true, 0);
         return true;
     }
 
     /// <summary>SelectYesno 點「否」（callback value 1，與「是」的 0 相對）。</summary>
+    /// <remarks>防護與理由同 <see cref="ClickSelectYesnoYes"/>。</remarks>
     public static bool ClickSelectYesnoNo()
     {
-        var addon = GetAddon("SelectYesno");
+        var addon = GetAddon(SelectYesnoAddonName);
         if (!IsReady(addon)) return false;
+        if (!AddonPressGuard.TryBeginPress(SelectYesnoAddonName, addon)) return false;
         FireCallback(addon, true, 1);
         return true;
     }
