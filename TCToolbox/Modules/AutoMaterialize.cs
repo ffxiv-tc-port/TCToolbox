@@ -54,6 +54,8 @@ public sealed unsafe class AutoMaterialize : TcModule
         InventoryType.ArmoryBody, InventoryType.ArmoryHands, InventoryType.ArmoryLegs,
         InventoryType.ArmoryFeets, InventoryType.ArmoryEar, InventoryType.ArmoryNeck,
         InventoryType.ArmoryWrist, InventoryType.ArmoryRings,
+        // 身上穿著的裝備也要精製（遊戲的精製視窗本來就列出並允許；精製無損，只是精鍊度歸零）。
+        InventoryType.EquippedItems,
     ];
 
     private readonly TaskQueue queue = new() { DefaultTimeoutMs = 20_000 };
