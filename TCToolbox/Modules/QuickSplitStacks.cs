@@ -312,6 +312,8 @@ public sealed unsafe class QuickSplitStacks : TcModule
 
             var result = InventoryContextMenu.TryFireEntry(agent, SplitAddonRow, InternalName, out var label);
             if (result == ContextMenuFireResult.Fired) return true;
+            // 守衛擋下＝同一扇選單實例剛送過、還在關閉中：這一輪沒送，下一 tick 再來（步驟逾時兜底）。
+            if (result == ContextMenuFireResult.Guarded) return false;
 
             var why = result switch
             {

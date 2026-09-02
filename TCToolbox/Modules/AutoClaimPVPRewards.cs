@@ -408,7 +408,8 @@ public sealed unsafe class AutoClaimPVPRewards : TcModule
                 }
 
                 // 「確定要領取獎勵嗎？」的兩個選項是 0=確定 / 1=取消。
-                UiHelper.FireCallback(yesno, true, 0);
+                // 🔴 守衛擋下（同一扇確認框剛按過、還在關閉中）＝這一輪沒按到：狀態不推進，下一輪再來。
+                if (!UiHelper.TryFireCallback(yesno, true, 0)) return false;
                 awaitingConfirmSince = null;
                 awaitingApplySince = DateTime.UtcNow;
                 statusText = "等待領取結果…";
@@ -487,11 +488,17 @@ public sealed unsafe class AutoClaimPVPRewards : TcModule
 
         if (!Throttle.Pass("AutoClaimPVPRewards-Claim", 400)) return false;
 
-        // ClickButton 內部還會依序驗 OwnerNode／IsEnabled／可見性／事件非 null，全部通過才送事件。
-        if (!UiHelper.ClickButton(addon, (AtkComponentButton*)button))
+        // TryClickButton 內部還會依序驗 OwnerNode／IsEnabled／可見性／事件非 null，全部通過才送事件。
+        switch (UiHelper.TryClickButton(addon, (AtkComponentButton*)button))
         {
-            Stop($"第 {tier} 級（節點 {nodeId}）現在不能按，停止");
-            return null;
+            case UiHelper.ButtonPressResult.Guarded:
+                // 🔴 這一扇報酬視窗剛按過、遊戲還沒把它重建（PvpReward 在守衛裡是併鍵的單答窗）：
+                //    等，不是停——對關閉中的視窗再點下一格就是這次要擋的崩潰形狀。
+                statusText = "等待報酬視窗重建…";
+                return false;
+            case UiHelper.ButtonPressResult.Unavailable:
+                Stop($"第 {tier} 級（節點 {nodeId}）現在不能按，停止");
+                return null;
         }
 
         awaitingConfirmSince = DateTime.UtcNow;

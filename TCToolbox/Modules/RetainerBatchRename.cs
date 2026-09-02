@@ -1943,6 +1943,8 @@ public sealed unsafe class RetainerBatchRename : TcModule
                 return AbortWith($"讀不到「讓僱員返回」的選單文字（Addon {AddonRowRetainerQuit}）。");
 
             var entries = UiHelper.GetSelectStringEntries(addon);
+            // 🔴 選項文字讀出 U+FFFD ＝選單記憶體正在變動（建到一半／關閉中）：這一幀不判也不按，下一 tick 重讀。
+            if (UiHelper.LooksMidUpdate(entries)) return false;
 
             // 🔑「選單建好了沒」用一個資料表裡真的存在、而且僱員選單上永遠有的項目來判
             //    （「讓僱員返回」），不用「至少幾項」這種魔術數字。
@@ -2072,6 +2074,8 @@ public sealed unsafe class RetainerBatchRename : TcModule
                 if (completeText.Length > 0)
                 {
                     var entries = UiHelper.GetSelectStringEntries(menu);
+                    // 🔴 選項文字讀出 U+FFFD ＝選單記憶體正在變動：這一幀不判也不按。
+                    if (UiHelper.LooksMidUpdate(entries)) return false;
                     var index = entries.FindIndex(e => e.StartsWith(completeText, StringComparison.Ordinal));
                     if (index >= 0)
                     {
@@ -2122,8 +2126,12 @@ public sealed unsafe class RetainerBatchRename : TcModule
             var addon = UiHelper.GetAddon(RetainerListAddon);
             if (!UiHelper.IsReady(addon)) return false;
 
-            if (!TryFindRetainerListIndex(addon, work.OldName, out var index, out var seenNames))
+            if (!TryFindRetainerListIndex(addon, work.OldName, out var index, out var seenNames, out var midUpdate))
+            {
+                // 🔴 名字讀出 U+FFFD ＝清單記憶體正在變動：這一幀不判也不按，下一 tick 重讀（本步 20 秒逾時兜底）。
+                if (midUpdate) return false;
                 return AbortWith($"僱員清單上找不到「{work.OldName}」（讀到的是：{seenNames}）。");
+            }
 
             // 🔴 只有名字逐字相同才會點。版面若改變＝找不到＝上面已經停下，不會誤點別人。
             UiHelper.FireCallback(
@@ -2156,6 +2164,8 @@ public sealed unsafe class RetainerBatchRename : TcModule
             if (!UiHelper.IsReady(addon)) return false;
 
             var entries = UiHelper.GetSelectStringEntries(addon);
+            // 🔴 選項文字讀出 U+FFFD ＝選單記憶體正在變動：這一幀不判也不按。
+            if (UiHelper.LooksMidUpdate(entries)) return false;
             var index = entries.FindIndex(e => e.StartsWith(quitText, StringComparison.Ordinal));
             if (index < 0) return false;
 
@@ -2225,6 +2235,8 @@ public sealed unsafe class RetainerBatchRename : TcModule
                 if (quitText.Length > 0)
                 {
                     var entries = UiHelper.GetSelectStringEntries(menu);
+                    // 🔴 選項文字讀出 U+FFFD ＝選單記憶體正在變動：這一幀不判也不按。
+                    if (UiHelper.LooksMidUpdate(entries)) return false;
                     var index = entries.FindIndex(e => e.StartsWith(quitText, StringComparison.Ordinal));
                     if (index >= 0)
                     {
@@ -2332,6 +2344,8 @@ public sealed unsafe class RetainerBatchRename : TcModule
                 everSawRenameUi = true;
                 var prompt = UiHelper.GetSelectYesnoText();
                 if (prompt.Length == 0) return false;
+                // 🔴 提示文字讀出 U+FFFD ＝確認框記憶體正在變動（多半是關閉中）：這一幀不判也不按，下一 tick 重讀。
+                if (AddonPrompt.LooksMidUpdate(prompt)) return false;
 
                 var useSaved = UseSavedAppearanceAnchor;
                 if (useSaved.Length > 0 && prompt.Contains(useSaved, StringComparison.Ordinal))
@@ -2488,6 +2502,8 @@ public sealed unsafe class RetainerBatchRename : TcModule
             if (UiHelper.IsReady(ss))
             {
                 var entries = UiHelper.GetSelectStringEntries(ss);
+                // 🔴 選項文字讀出 U+FFFD ＝選單記憶體正在變動：這一幀不判也不按。
+                if (UiHelper.LooksMidUpdate(entries)) return false;
 
                 // 1. 管理人「有什麼事？」→ 改變樣貌性格名字。送出名字後不再重入。
                 var idxChange = entries.FindIndex(e => e.Contains(VocateChangeAppearanceMarker, StringComparison.Ordinal));
@@ -2587,8 +2603,12 @@ public sealed unsafe class RetainerBatchRename : TcModule
             var liveName = LookupRetainerName(work.RetainerId);
             if (liveName.Length == 0) return AbortWith("穿回前讀不到僱員現名，無法重新選取。");
 
-            if (!TryFindRetainerListIndex(addon, liveName, out var index, out var seenNames))
+            if (!TryFindRetainerListIndex(addon, liveName, out var index, out var seenNames, out var midUpdate))
+            {
+                // 🔴 名字讀出 U+FFFD ＝清單記憶體正在變動：這一幀不判也不按，下一 tick 重讀（本步 20 秒逾時兜底）。
+                if (midUpdate) return false;
                 return AbortWith($"穿回前在僱員清單找不到「{liveName}」（讀到的是：{seenNames}）。");
+            }
 
             UiHelper.FireCallback(
                 addon, true, RetainerListSelectEventId, (uint)index, default(AtkValue), default(AtkValue));
@@ -3002,7 +3022,10 @@ public sealed unsafe class RetainerBatchRename : TcModule
                 if (quitText.Length > 0)
                 {
                     var entries = UiHelper.GetSelectStringEntries(menu);
-                    var index = entries.FindIndex(e => e.StartsWith(quitText, StringComparison.Ordinal));
+                    // 🔴 選項文字讀出 U+FFFD ＝選單記憶體正在變動：這一幀不判也不按（期限照算）。
+                    var index = UiHelper.LooksMidUpdate(entries)
+                        ? -1
+                        : entries.FindIndex(e => e.StartsWith(quitText, StringComparison.Ordinal));
                     if (index >= 0 && Throttle.Pass($"{InternalName}-Quit", 1_000))
                         UiHelper.SelectStringEntry(menu, index);
                 }
@@ -3339,10 +3362,15 @@ public sealed unsafe class RetainerBatchRename : TcModule
     /// 在 <c>RetainerList</c> 上找出名字逐字相符的那一筆。
     /// 🔴 找不到就回 false ——<b>絕不退而求其次點第 N 個</b>。
     /// </summary>
+    /// <param name="midUpdate">
+    /// 任一格名字含 U+FFFD 替換字元＝清單記憶體正在變動；此時一律回 <c>false</c>、<paramref name="index"/>＝-1，
+    /// 呼叫端要當「這一幀不判」而不是「找不到」。
+    /// </param>
     private static bool TryFindRetainerListIndex(
-        AtkUnitBase* addon, string name, out int index, out string seenNames)
+        AtkUnitBase* addon, string name, out int index, out string seenNames, out bool midUpdate)
     {
         index = -1;
+        midUpdate = false;
         var seen = new List<string>();
 
         var values = addon->AtkValues;
@@ -3361,11 +3389,19 @@ public sealed unsafe class RetainerBatchRename : TcModule
             var entryName = ReadAtkString(values[nameIndex]);
             if (entryName.Length == 0) continue;
 
+            if (AddonPrompt.LooksMidUpdate(entryName)) midUpdate = true;
             seen.Add(entryName);
             if (index < 0 && entryName == name) index = i;
         }
 
         seenNames = seen.Count == 0 ? "（空）" : string.Join("、", seen);
+        if (midUpdate)
+        {
+            // 🔴 讀到一半的清單不下任何判斷（連「找到了」也不信）：對正在變動的窗按下去就是要擋的那種存取違規。
+            index = -1;
+            return false;
+        }
+
         return index >= 0;
     }
 

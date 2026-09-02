@@ -341,8 +341,11 @@ public sealed unsafe class SaddlebagEntrustDuplicates : TcModule
                 }
 
                 var agent = AgentInventoryContext.Instance();
-                lastFireAccepted = agent != null &&
-                                   TryFireContextMenuEntry(agent, AddonRowDepositToSaddlebag, label);
+                var fire = agent == null ? false : TryFireContextMenuEntry(agent, AddonRowDepositToSaddlebag, label);
+
+                // 守衛擋下（null）＝同一扇選單實例剛送過、還在關閉中：這一輪不送，下一 tick 再來（本步 5 秒逾時兜底）。
+                if (fire == null) return false;
+                lastFireAccepted = fire.Value;
 
                 if (!lastFireAccepted)
                 {
@@ -427,7 +430,8 @@ public sealed unsafe class SaddlebagEntrustDuplicates : TcModule
     /// （那樣會掃到上一次選單的殘留）。
     /// <para>🔴 三道 fail-closed：找不到、在次選單裡、項目停用——都回 <c>false</c> 什麼都不做。</para>
     /// </remarks>
-    private bool TryFireContextMenuEntry(AgentInventoryContext* agent, uint addonRowId, string displayName)
+    /// <returns><c>true</c>＝已送出；<c>false</c>＝這一格不能點（三道 fail-closed）；<c>null</c>＝守衛擋下，這一輪沒送、下一輪再來。</returns>
+    private bool? TryFireContextMenuEntry(AgentInventoryContext* agent, uint addonRowId, string displayName)
     {
         var wanted = Svc.Data.GetExcelSheet<Addon>()?.GetRowOrDefault(addonRowId)?.Text.ExtractText().Trim();
         if (string.IsNullOrEmpty(wanted))
@@ -493,15 +497,11 @@ public sealed unsafe class SaddlebagEntrustDuplicates : TcModule
             return false;
         }
 
-        var values = stackalloc AtkValue[5];
-        for (var i = 0; i < 5; i++)
-        {
-            values[i].Type = ValueType.Int;
-            values[i].Int = 0;
-        }
+        // 值的形狀＝[Int 0, Int index, Int 0, Int 0, Int 0]（與原本手寫 stackalloc 的完全相同），
+        // 改繞 UiHelper.TryFireCallback 讓 AddonPressGuard 罩到：ContextMenu 是選了就關的窗，
+        // 同一實例在觀察到它收掉之前只送一次；擋下回 null 讓呼叫端等下一輪。
+        if (!UiHelper.TryFireCallback(addon, true, 0, index, 0, 0, 0)) return null;
 
-        values[1].Int = index;
-        addon->FireCallback(5, values, true);
         return true;
     }
 

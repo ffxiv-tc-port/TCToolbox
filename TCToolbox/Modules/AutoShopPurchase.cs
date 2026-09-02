@@ -90,6 +90,11 @@ public sealed unsafe class AutoShopPurchase : TcModule
         if (preset.ClickIndex < 0 || preset.ClickIndex >= list->ListLength)
             return $"索引 {preset.ClickIndex} 超出清單範圍（目前 {list->ListLength} 項）。";
 
+        // 🔴 同一扇商店視窗、同一格，在它走完生命週期前只重播一次（2 秒逾時兜底）：
+        //    ListItemClick 是輸入事件，對關閉中的視窗送就是攔不到的存取違規。
+        if (!AddonPressGuard.TryBeginPress(addon, $"list:{preset.ListNodeId}:{preset.ClickIndex}"))
+            return "剛剛才對同一項送出過點擊，請稍候再試。";
+
         // 重播那一項的點擊——叫出遊戲自己的購買對話框。不代按任何確認框。
         list->DispatchItemEvent(preset.ClickIndex, AtkEventType.ListItemClick);
         Svc.Log.Information(
@@ -302,6 +307,9 @@ public sealed unsafe class AutoShopPurchase : TcModule
 
         var list = addon->GetComponentListById(nodeId);
         if (list == null || index >= list->ListLength) return;
+
+        // 同上：同一扇窗、同一格只重播一次（守衛擋下＝剛送過，這次略過）。
+        if (!AddonPressGuard.TryBeginPress(addon, $"list:{nodeId}:{index}")) return;
 
         list->DispatchItemEvent(index, AtkEventType.ListItemClick);
     }

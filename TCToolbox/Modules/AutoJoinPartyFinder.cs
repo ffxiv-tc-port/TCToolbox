@@ -234,11 +234,17 @@ public sealed unsafe class AutoJoinPartyFinder : TcModule
         // 按下去之前先記住畫面上有沒有確認框——之後代按「是」的因果判準靠它。
         yesnoAlreadyOpenAtClick = UiHelper.IsAddonReady("SelectYesno");
 
-        if (!UiHelper.ClickButton(baseAddon, button))
+        switch (UiHelper.TryClickButton(baseAddon, button))
         {
-            Svc.Log.Information($"[{InternalName}] 「加入」按鈕按不動（取不到事件），不自動加入。");
-            lastAction = "上一則：加入鈕按不動，未加入";
-            return;
+            case UiHelper.ButtonPressResult.Guarded:
+                // 同一扇詳細視窗的加入鈕剛按過、還沒觀察到它收掉：不再按（handledThisOpen 已鎖，這一次就此作罷）。
+                Svc.Log.Information($"[{InternalName}] 「加入」按鈕剛按過、視窗還沒收掉，不重按。");
+                lastAction = "上一則：加入鈕剛按過，未重按";
+                return;
+            case UiHelper.ButtonPressResult.Unavailable:
+                Svc.Log.Information($"[{InternalName}] 「加入」按鈕按不動（取不到事件），不自動加入。");
+                lastAction = "上一則：加入鈕按不動，未加入";
+                return;
         }
 
         joinClickTick = Environment.TickCount64;

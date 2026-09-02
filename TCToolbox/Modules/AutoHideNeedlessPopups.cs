@@ -111,6 +111,11 @@ public sealed unsafe class AutoHideNeedlessPopups : TcModule
             if (root != null)
                 root->ToggleVisibility(false);
 
+            // 🔴 Close＋FireCloseCallback 對同一實例每幀重送沒有意義：這裡掛的是 PreDraw，
+            //    關閉中的實例若還會被 Draw，就會對正在拆的窗連打 callback。守衛用多次互動窗的
+            //    15 幀逃生口（沒關成才再關一次，寫 Debug 不洗版）；根節點隱藏仍然每幀做（純旗標，不碰 callback）。
+            if (!AddonPressGuard.TryBeginRoutinePress(args.AddonName, addon)) return;
+
             addon->Close(false);
             addon->FireCloseCallback();
         }

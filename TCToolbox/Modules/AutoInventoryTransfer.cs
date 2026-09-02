@@ -794,6 +794,12 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
                     Svc.Chat.PrintError($"[TC Toolbox] 「{wanted}」目前無法使用，「{displayName}」未轉移。");
                 return false;
 
+            case ContextMenuFireResult.Guarded:
+                // 同一扇選單實例剛送過、還在關閉中：這一下不送。使用者再點一次即可，不當成失敗。
+                if (Throttle.Pass("AutoInventoryTransfer-MenuGuarded", 3_000))
+                    Svc.Chat.PrintError($"[TC Toolbox] 剛剛才對同一個右鍵選單送出過，「{displayName}」這一下沒送，請再試一次。");
+                return false;
+
             // LabelUnavailable／AddonUnavailable 原本就只寫 Warning、不對使用者說話（已在共用端寫過）。
             default:
                 return false;

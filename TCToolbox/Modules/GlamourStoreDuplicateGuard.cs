@@ -241,13 +241,21 @@ public sealed unsafe class GlamourStoreDuplicateGuard : TcModule
         if (prompt == null) return;
 
         var text = prompt->NodeText.ToString();
+        // 🔴 讀出 U+FFFD 替換字元＝窗的記憶體正在變動（多半是關閉中）：這一幀不判也不碰，candidate 留著下一幀重讀。
+        if (AddonPrompt.LooksMidUpdate(text)) return;
         if (string.IsNullOrEmpty(text) || !text.Contains(confirmAnchor, StringComparison.Ordinal)) return;
-
-        candidate = null;
 
         var blocked = false;
         if (Config.BlockConfirmation)
-            blocked = ClickNo(baseAddon, addon);
+        {
+            var press = ClickNo(baseAddon, addon);
+            // 守衛擋下＝這一扇確認框剛被按過、還在關閉中：candidate 留著，等它收掉（或 TTL 到期），
+            // 不對關閉中的窗再按第二次。
+            if (press == UiHelper.ButtonPressResult.Guarded) return;
+            blocked = press == UiHelper.ButtonPressResult.Pressed;
+        }
+
+        candidate = null;
 
         // 🔴 攔截一定要出聲。靜默地把使用者的操作取消掉是最糟的失敗形式。
         var message = blocked
@@ -273,14 +281,16 @@ public sealed unsafe class GlamourStoreDuplicateGuard : TcModule
     /// <remarks>
     /// 🔴 一定要先確認 <c>OwnerNode</c> 非 null 再問 <c>IsEnabled</c>——
     /// CS 的 <c>AtkComponentButton.IsEnabled</c> 直接解參考 <c>OwnerNode</c>，沒有任何判空。
-    /// <para>按不到就回 <c>false</c>：那時只提示、不動遊戲，使用者照樣可以自己決定。</para>
+    /// <para>按不到就回 <see cref="UiHelper.ButtonPressResult.Unavailable"/>：那時只提示、不動遊戲，使用者照樣可以自己決定。
+    /// <see cref="UiHelper.ButtonPressResult.Guarded"/>＝同一扇確認框剛按過、還在關閉中，呼叫端要等而不是提示。</para>
     /// </remarks>
-    private static bool ClickNo(AtkUnitBase* baseAddon, AddonSelectYesno* addon)
+    private static UiHelper.ButtonPressResult ClickNo(AtkUnitBase* baseAddon, AddonSelectYesno* addon)
     {
         var no = addon->NoButton;
-        if (no == null || no->AtkComponentBase.OwnerNode == null) return false;
+        if (no == null || no->AtkComponentBase.OwnerNode == null) return UiHelper.ButtonPressResult.Unavailable;
 
-        return UiHelper.ClickButton(baseAddon, no);
+        // 走 TryClickButton＝與 UiHelper.ClickSelectYesnoNo 共用同一把 SelectYesno 守衛鍵（併鍵：是／否都算按過）。
+        return UiHelper.TryClickButton(baseAddon, no);
     }
 
     public override void DrawConfig()

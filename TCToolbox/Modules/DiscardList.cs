@@ -289,6 +289,8 @@ public sealed unsafe class DiscardList : TcModule
                 }
 
                 var result = InventoryContextMenu.TryFireEntry(a, DiscardAddonRow, InternalName, out var label);
+                // 守衛擋下＝同一扇選單實例剛送過、還在關閉中：這一輪沒送，下一 tick 再來（步驟逾時兜底）。
+                if (result == ContextMenuFireResult.Guarded) return false;
                 if (result == ContextMenuFireResult.Fired)
                 {
                     initiatedCount++;

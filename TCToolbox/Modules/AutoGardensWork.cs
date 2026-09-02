@@ -266,6 +266,8 @@ public sealed unsafe class AutoGardensWork : TcModule
             if (!UiHelper.IsReady(addon)) return false;
 
             var entries = UiHelper.GetSelectStringEntries(addon);
+            // 🔴 選項文字讀出 U+FFFD ＝選單記憶體正在變動（建到一半／關閉中）：這一幀不判也不按，下一 tick 重讀。
+            if (UiHelper.LooksMidUpdate(entries)) return false;
             var cancelIndex = entries.FindIndex(x => x.Contains(textCancel, StringComparison.Ordinal));
 
             // Scan：只記錄目前可用的選項後取消，不改變地壟狀態。

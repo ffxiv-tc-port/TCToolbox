@@ -169,10 +169,15 @@ public sealed unsafe class TradeAllCollectables : TcModule
         // 交易前先記下背包裡的收藏品件數，交易後拿它判斷這一下到底有沒有生效。
         var before = CountCollectables();
 
-        if (!UiHelper.ClickButton(addon, button))
+        switch (UiHelper.TryClickButton(addon, button))
         {
-            FinishRun("已中止：「交易」按鈕目前按不動。");
-            return;
+            case UiHelper.ButtonPressResult.Guarded:
+                // 守衛擋下（CollectablesShop 是多次互動窗：同一實例的交易鈕 15 幀內剛按過）：
+                // 等下一輪，不是中止。StepIntervalMs 拉到最低（100ms）時會落在這裡，實際節奏變成約 300ms 一件。
+                return;
+            case UiHelper.ButtonPressResult.Unavailable:
+                FinishRun("已中止：「交易」按鈕目前按不動。");
+                return;
         }
 
         tradesDone++;

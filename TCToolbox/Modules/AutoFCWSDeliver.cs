@@ -469,8 +469,11 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
         if (UiHelper.IsReady(contextIcon))
         {
             // 道具選單開著 → 選第一個（即對應素材）
-            UiHelper.FireCallback(contextIcon, false, 0, 0, 1021003, 0, 0);
-            fillSlotCursor++;
+            // 🔴 選了就關：關閉中那幾幀 IsReady 照過，這裡又是每 tick 回來、沒有節流——
+            //    守衛（ContextIconMenu 是併鍵的單答窗）擋住對同一實例的第二次，
+            //    而且只有真的送出去才推進游標，否則游標會多跳、漏填格。
+            if (UiHelper.TryFireCallback(contextIcon, false, 0, 0, 1021003, 0, 0))
+                fillSlotCursor++;
             return false;
         }
 

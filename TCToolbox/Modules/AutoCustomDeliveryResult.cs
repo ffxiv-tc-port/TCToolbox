@@ -61,9 +61,8 @@ public sealed unsafe class AutoCustomDeliveryResult : TcModule
         //    而這裡掛了 PostDraw ＝每幀都會回來重送。對關閉中的視窗送 callback 就是攔不到的
         //    存取違規（2026-08-31 實機崩潰 crash-20260831205734 的形狀）。
         //    ⇒ 按過的那個實例，在觀察到它被銷毀／有新的一扇被建立之前不再按。
-        if (!AddonPressGuard.TryBeginPress(AddonName, addon)) return;
-
-        UiHelper.FireCallback(addon, true, 1);
+        //    守衛已下沉到 UiHelper.TryFireCallback 裡（SatisfactionSupplyResult 是併鍵的單答窗）：回 false ＝這一幀沒送。
+        if (!UiHelper.TryFireCallback(addon, true, 1)) return;
 
         if (Throttle.Pass("AutoCustomDeliveryResult-Log", 5_000))
             Svc.Log.Information($"[{InternalName}] 已自動確認老主顧交易結果視窗。");

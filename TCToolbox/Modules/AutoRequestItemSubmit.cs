@@ -69,6 +69,9 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
 
     private const string AddonName = "Request";
 
+    /// <summary>填格時遊戲開出的「選哪一份」道具選單；只拿來當守衛的錨。</summary>
+    private const string ContextIconMenuAddon = "ContextIconMenu";
+
     /// <summary>
     /// 判定「這個 SelectYesno 是不是優質道具確認框」用的 <c>Addon</c> 列。
     /// 🔑 用列號查客戶端自己的字串，所以跟語言無關，也不會因為台服用全形「？」而失效
@@ -165,9 +168,9 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
 
         // 🔴 最後一道：按過的那個實例在觀察到它收掉之前不再按（見 AddonPressGuard 的說明）。
         //    PostDraw 每幀都會進來，而「按下之後正在關閉」的那幾幀 IsReady 三關照樣全過。
-        if (!AddonPressGuard.TryBeginPress(UiHelper.SelectYesnoAddonName, (AtkUnitBase*)addon)) return;
+        //    守衛已下沉到 UiHelper.TryFireCallback 裡：回 false ＝這一幀沒送。
+        if (!UiHelper.TryFireCallback((AtkUnitBase*)addon, true, 0)) return;
 
-        UiHelper.FireCallback((AtkUnitBase*)addon, true, 0);
         Svc.Log.Information($"[{InternalName}] 已確認優質道具交易：「{prompt}」");
     }
 
@@ -192,22 +195,27 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
             // 當成取消。因為這裡是「先試按、按不動才填」，那一按就 return，
             // FillNextSlot() 從頭到尾沒被呼叫過 —— 十次繳交十次失敗。
             // 上面的白名單只是把這個錯誤假設關進較小的籠子裡，並沒有修正它本身。
-            if (!AreAllRequestedItemsHandedIn()) { FillNextSlot(); return; }
+            if (!AreAllRequestedItemsHandedIn()) { FillNextSlot((AtkUnitBase*)addon); return; }
 
             // 🔴 判斷「能不能按」一律交給 UiHelper.ClickButton，**不要自己先讀 IsEnabled**：
             // CS 的 AtkComponentButton.IsEnabled 是
             // `AtkComponentBase.OwnerNode->AtkResNode.NodeFlags.HasFlag(...)`，
             // 它對 OwnerNode **沒有任何 null 檢查**，先讀它等於自己開一個存取違規的口子
             // （而 AVE 是 .NET Core 的 corrupted-state exception，外面那圈 try/catch 攔不到）。
-            // ClickButton 內部依序驗 addon／button／OwnerNode／IsEnabled／可見性／事件非 null，
-            // 全部通過才送事件，回 false 就代表「現在按不動」——正好是我們要的分支條件。
-            if (UiHelper.ClickButton((AtkUnitBase*)addon, addon->HandOverButton))
+            // TryClickButton 內部依序驗 addon／button／OwnerNode／IsEnabled／可見性／事件非 null，
+            // 全部通過才送事件，Unavailable 就代表「現在按不動」——正好是我們要的分支條件。
+            switch (UiHelper.TryClickButton((AtkUnitBase*)addon, addon->HandOverButton))
             {
-                Svc.Log.Information($"[{InternalName}] 已按下交出鈕（欄位數 {addon->EntryCount}）。");
-                return;
+                case UiHelper.ButtonPressResult.Pressed:
+                    Svc.Log.Information($"[{InternalName}] 已按下交出鈕（欄位數 {addon->EntryCount}）。");
+                    return;
+                case UiHelper.ButtonPressResult.Guarded:
+                    // 🔴 交出鈕剛按過、這扇交納視窗正在關閉：這一輪什麼都不做。
+                    //    絕不能落到 FillNextSlot——那會對關閉中的交納視窗送 agent 事件。
+                    return;
             }
 
-            FillNextSlot();
+            FillNextSlot((AtkUnitBase*)addon);
         }
         catch (Exception ex)
         {
@@ -317,7 +325,8 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
     /// 把還沒填的第一格填上。一次只處理一格：送出事件之後遊戲要開
     /// <c>ContextIconMenu</c> 讓人選同款道具的哪一份（NQ／HQ），選完才輪得到下一格。
     /// </summary>
-    private void FillNextSlot()
+    /// <param name="request">正開著的交納視窗（呼叫端已驗 <see cref="UiHelper.IsReady"/>），只拿來當守衛的錨，不解參考。</param>
+    private void FillNextSlot(AtkUnitBase* request)
     {
         var agent = AgentNpcTrade.Instance();
         if (agent == null) return;
@@ -352,9 +361,12 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
             if (slot != null && slot->ItemId == wanted.ItemId) continue;
 
             // 道具選單還沒開 → 請遊戲替第 i 格開出可選道具清單
-            if (!UiHelper.IsAddonReady("ContextIconMenu"))
+            var menu = UiHelper.GetAddon(ContextIconMenuAddon);
+            if (!UiHelper.IsReady(menu))
             {
-                UiHelper.SendAgentEvent(AgentId.NpcTrade, 0, 2, i, 0, 0);
+                // 錨在交納視窗上：同一扇視窗、同一格，在它走完生命週期前只請一次（2 秒逾時兜底）。
+                //    PostDraw 對關閉中的交納視窗照樣進來，沒有錨的話會對它一直重送。
+                UiHelper.TrySendAgentEvent(AddonName, request, AgentId.NpcTrade, 0, 2, i, 0, 0);
                 return;
             }
 
@@ -362,7 +374,9 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
             var itemId = PickTurnInItemId(agent);
             if (itemId == 0) return;
 
-            UiHelper.SendAgentEvent(AgentId.NpcTrade, 1, 0, 0, itemId, 0u, 0);
+            // 錨在道具選單上：選完它就關，關閉中那幾幀 IsReady 照過——同一實例只選一次
+            // （ContextIconMenu 在守衛裡是併鍵的單答窗）。
+            UiHelper.TrySendAgentEvent(ContextIconMenuAddon, menu, AgentId.NpcTrade, 1, 0, 0, itemId, 0u, 0);
             return;
         }
     }
