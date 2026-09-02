@@ -32,6 +32,12 @@ public enum ContextMenuFireResult
 
     /// <summary>取不到右鍵選單所屬的 addon。</summary>
     AddonUnavailable = 5,
+
+    /// <summary>
+    /// 守衛擋下：這一扇選單實例剛送過、還沒觀察到它收掉（<see cref="AddonPressGuard"/>）。
+    /// 呼叫端一律當「這一輪沒送，下一輪再來」，<b>不是</b>失敗。
+    /// </summary>
+    Guarded = 6,
 }
 
 /// <summary>
@@ -137,15 +143,11 @@ public static unsafe class InventoryContextMenu
 
         Svc.Log.Debug($"[{logTag}] 觸發選單項目 {index}（{wanted}）");
 
-        var values = stackalloc AtkValue[5];
-        for (var i = 0; i < 5; i++)
-        {
-            values[i].Type = ValueType.Int;
-            values[i].Int = 0;
-        }
+        // 值的形狀＝[Int 0, Int index, Int 0, Int 0, Int 0]（與原本手寫 stackalloc 的完全相同），
+        // 改繞 UiHelper.TryFireCallback 讓 AddonPressGuard 罩到：ContextMenu 是選了就關的窗，
+        // 同一實例在觀察到它收掉之前只送一次。
+        if (!UiHelper.TryFireCallback(addon, true, 0, index, 0, 0, 0)) return ContextMenuFireResult.Guarded;
 
-        values[1].Int = index;
-        addon->FireCallback(5, values, true);
         return ContextMenuFireResult.Fired;
     }
 }

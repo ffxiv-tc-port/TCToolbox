@@ -71,30 +71,85 @@ public static unsafe class UiHelper
         }
     }
 
-    /// <summary>對 addon 發送合成事件（等同 /callback）。</summary>
-    public static void FireCallback(AtkUnitBase* addon, bool updateState, params object[] values)
+    /// <summary>
+    /// 對 addon 發送合成事件（等同 /callback）。守衛擋下時<b>靜默不送</b>——
+    /// 要知道這一幀有沒有真的送出去，用 <see cref="TryFireCallback"/>。
+    /// </summary>
+    /// <remarks>
+    /// 📌 刻意維持 <see langword="void"/>：改成回 bool 會讓 <c>Enqueue(() => FireCallback(...))</c>
+    /// 這種運算式 lambda 從 <c>Action</c> 靜默改綁 <c>Func&lt;bool?&gt;</c>，任務語意變成「做到回 true 為止」。
+    /// </remarks>
+    public static void FireCallback(AtkUnitBase* addon, bool updateState, params object[] values) =>
+        TryFireCallback(addon, updateState, values);
+
+    /// <summary>
+    /// 對 addon 發送合成事件，送出前先過 <see cref="AddonPressGuard"/>：
+    /// 同一個實例（位址）、同一組參數，在觀察到那扇窗走完生命週期之前只送一次。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>這是本 repo 所有 callback 的唯一出口</b>（<see cref="FireCallbackInt"/>／
+    /// <see cref="FireCallbackIntIntBool"/>／<see cref="SelectStringEntry"/>／<see cref="ClickSelectYesnoYes"/>…
+    /// 全部繞經這裡），守衛才罩得住每一條路。
+    /// <para>
+    /// 回 <see langword="false"/> ＝這一幀沒送（addon 為 null，或守衛判定「剛按過、還沒觀察到它收掉」）。
+    /// 對呼叫端的意義一律是「這一輪沒按到，下一輪再來」，與「addon 還沒出現」走同一條既有路徑。
+    /// </para>
+    /// </remarks>
+    public static bool TryFireCallback(AtkUnitBase* addon, bool updateState, params object[] values)
     {
-        if (addon == null) return;
+        if (addon == null) return false;
+        if (!AddonPressGuard.TryBeginPress(addon, AddonPressGuard.DescribeCallback(updateState, values)))
+            return false;
+
         var atkValues = stackalloc AtkValue[Math.Max(1, values.Length)];
         BuildValues(atkValues, values);
         addon->FireCallback((uint)values.Length, atkValues, updateState);
+        return true;
     }
 
     /// <summary>對 Agent 發送事件（等同 OmenTools 的 AgentId.SendEvent）。</summary>
-    public static void SendAgentEvent(AgentId agentId, ulong eventKind, params object[] values)
+    /// <remarks>
+    /// 目標是常駐的 <c>AgentInterface</c>，不是某扇視窗，所以這一支<b>沒有</b>視窗守衛。
+    /// 送出後遊戲會去動某扇窗（開選單、選項目）的話，改用 <see cref="TrySendAgentEvent"/> 把事件錨在那扇窗上。
+    /// </remarks>
+    public static void SendAgentEvent(AgentId agentId, ulong eventKind, params object[] values) =>
+        SendAgentEventCore(agentId, eventKind, values);
+
+    /// <summary>
+    /// 對 Agent 發送事件，但先把它<b>錨在某扇視窗的實例上</b>過 <see cref="AddonPressGuard"/>：
+    /// 同一扇 <paramref name="anchor"/>、同一個 agent 事件與參數，在那扇窗走完生命週期前只送一次。
+    /// </summary>
+    /// <remarks>
+    /// 用在「送給 agent 的事件會去碰某扇窗」的場合（例如對 <c>NpcTrade</c> 送「選這一份」時
+    /// 正在碰 <c>ContextIconMenu</c>）：agent 是常駐的，但它接下來要動的那扇窗可能正在關閉。
+    /// 回 <see langword="false"/> ＝這一幀沒送（錨窗為 null／守衛擋下／agent 取不到），意義同 <see cref="TryFireCallback"/>。
+    /// </remarks>
+    public static bool TrySendAgentEvent(
+        string anchorAddonName, AtkUnitBase* anchor, AgentId agentId, ulong eventKind, params object[] values)
+    {
+        if (anchor == null) return false;
+
+        var key = $"agent:{agentId}:{eventKind}:{AddonPressGuard.DescribeCallback(false, values)}";
+        if (!AddonPressGuard.TryBeginPress(anchorAddonName, anchor, key)) return false;
+
+        return SendAgentEventCore(agentId, eventKind, values);
+    }
+
+    private static bool SendAgentEventCore(AgentId agentId, ulong eventKind, object[] values)
     {
         // AgentModule.Instance() 走 UIModule，UI 尚未建立時回 null（CS 手寫實作）。
         // 取不到就不送事件——與下面 agent == null 完全相同的失敗形式。
         var agentModule = AgentModule.Instance();
-        if (agentModule == null) return;
+        if (agentModule == null) return false;
 
         var agent = agentModule->GetAgentByInternalId(agentId);
-        if (agent == null) return;
+        if (agent == null) return false;
 
         var atkValues = stackalloc AtkValue[Math.Max(1, values.Length)];
         BuildValues(atkValues, values);
         var returnValue = new AtkValue();
         agent->ReceiveEvent(&returnValue, atkValues, (uint)values.Length, eventKind);
+        return true;
     }
 
     /// <summary>讀取 SelectString 的選項清單（PopupMenu 條目，不含標題行——避開台服首行標題偏移陷阱）。</summary>
@@ -113,10 +168,45 @@ public static unsafe class UiHelper
         return result;
     }
 
-    public static void SelectStringEntry(AtkUnitBase* addon, int index) => FireCallback(addon, true, index);
+    /// <summary>任何一段文字含 U+FFFD 替換字元＝讀到一半／視窗記憶體正在變動。</summary>
+    public static bool LooksMidUpdate(IEnumerable<string> texts)
+    {
+        foreach (var text in texts)
+        {
+            if (AddonPrompt.LooksMidUpdate(text)) return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>SelectString 選第 <paramref name="index"/> 項（<c>-1</c>＝取消）。</summary>
+    /// <remarks>
+    /// 🔴 選項文字裡讀到 U+FFFD 替換字元＝窗的記憶體正在變動（多半是關閉中），這一幀不碰。
+    /// 送出本身走 <see cref="TryFireCallback"/>；<c>SelectString</c> 是「回答一次即終結」的窗，
+    /// 守衛對它不分參數、一個實例只准按一次。
+    /// </remarks>
+    public static void SelectStringEntry(AtkUnitBase* addon, int index)
+    {
+        if (addon == null) return;
+
+        if (LooksMidUpdate(GetSelectStringEntries(addon)))
+        {
+            if (Throttle.Pass("UiHelper-SelectStringMidUpdate", 1_000))
+                Svc.Log.Information("[UiHelper] SelectString 的選項文字含替換字元（視窗記憶體變動中），這一幀不送。");
+            return;
+        }
+
+        TryFireCallback(addon, true, index);
+    }
 
     /// <summary><c>SelectYesno</c> 這扇窗在 <see cref="AddonPressGuard"/> 裡的鍵。</summary>
     public const string SelectYesnoAddonName = "SelectYesno";
+
+    /// <summary><c>Talk</c> 對話框在 <see cref="AddonPressGuard"/> 裡的鍵（多次互動窗，逃生口 15 幀）。</summary>
+    public const string TalkAddonName = "Talk";
+
+    /// <summary><c>InputString</c> 在 <see cref="AddonPressGuard"/> 裡的鍵。</summary>
+    public const string InputStringAddonName = "InputString";
 
     /// <summary>
     /// SelectYesno 點「是」。
@@ -132,30 +222,34 @@ public static unsafe class UiHelper
     /// 呼叫端全都是「下一輪再試」。只是多了一種回 false 的理由。
     /// </para>
     /// </remarks>
-    public static bool ClickSelectYesnoYes()
-    {
-        var addon = GetAddon(SelectYesnoAddonName);
-        if (!IsReady(addon)) return false;
-        if (!AddonPressGuard.TryBeginPress(SelectYesnoAddonName, addon)) return false;
-        FireCallback(addon, true, 0);
-        return true;
-    }
+    public static bool ClickSelectYesnoYes() => ClickSelectYesno(0);
 
     /// <summary>SelectYesno 點「否」（callback value 1，與「是」的 0 相對）。</summary>
     /// <remarks>防護與理由同 <see cref="ClickSelectYesnoYes"/>。</remarks>
-    public static bool ClickSelectYesnoNo()
+    public static bool ClickSelectYesnoNo() => ClickSelectYesno(1);
+
+    private static bool ClickSelectYesno(int answer)
     {
         var addon = GetAddon(SelectYesnoAddonName);
         if (!IsReady(addon)) return false;
-        if (!AddonPressGuard.TryBeginPress(SelectYesnoAddonName, addon)) return false;
-        FireCallback(addon, true, 1);
-        return true;
+
+        // 🔴 提示文字讀出 U+FFFD ＝窗的記憶體正在變動（崩潰前實機 log 的亂碼 prompt 就是這徵兆），這一幀不碰。
+        if (AddonPrompt.LooksMidUpdate(ReadSelectYesnoText(addon)))
+        {
+            if (Throttle.Pass("UiHelper-SelectYesnoMidUpdate", 1_000))
+                Svc.Log.Information("[UiHelper] SelectYesno 的提示文字含替換字元（視窗記憶體變動中），這一幀不按。");
+            return false;
+        }
+
+        // SelectYesno 在守衛裡是「回答一次即終結」的窗：一個實例不管是／否只准按一次。
+        return TryFireCallback(addon, true, answer);
     }
 
     /// <summary>讀 SelectYesno 的提示文字（讀不到一律回空字串，不擲例外）。</summary>
-    public static string GetSelectYesnoText()
+    public static string GetSelectYesnoText() => ReadSelectYesnoText(GetAddon(SelectYesnoAddonName));
+
+    private static string ReadSelectYesnoText(AtkUnitBase* addon)
     {
-        var addon = GetAddon("SelectYesno");
         if (!IsReady(addon)) return string.Empty;
 
         var node = ((AddonSelectYesno*)addon)->PromptText;
@@ -165,9 +259,15 @@ public static unsafe class UiHelper
     }
 
     /// <summary>若 Talk 對話框開著就點掉它。</summary>
+    /// <remarks>
+    /// 🔴 <c>Talk</c> 是「按一次翻一頁、窗不會因為被按而消失」的多次互動窗：守衛照樣記實例位址，
+    /// 但逃生口是 <see cref="AddonPressGuard.RoutineRePressEscapeFrames"/>（15 幀）而不是 2 秒——
+    /// 關閉中的危險窗口不到 10 幀，15 幀不落在裡面；每頁多等 0.25 秒幾乎無感。
+    /// 回 <see langword="false"/> 的語意沒有變：本來就是「這次沒點掉」，呼叫端一律下一輪再試。
+    /// </remarks>
     public static bool ClickTalkIfOpen()
     {
-        var addon = GetAddon("Talk");
+        var addon = GetAddon(TalkAddonName);
         if (!IsReady(addon)) return false;
 
         // 🔴 AtkStage.Instance() 是 [StaticAddress(..., isPointer: true)]，遊戲尚未建立單例時回 null。
@@ -176,6 +276,9 @@ public static unsafe class UiHelper
         //    讀不到回 false ＝「這次沒點掉」，呼叫端會重試。
         var stage = AtkStage.Instance();
         if (stage == null) return false;
+
+        // 守衛放在所有「取不到就放棄」的檢查之後：一登記就算按過，登記完卻不按會白白封鎖 15 幀。
+        if (!AddonPressGuard.TryBeginRoutinePress(TalkAddonName, addon)) return false;
 
         var evt = stackalloc AtkEvent[1];
         evt[0] = new AtkEvent
@@ -217,29 +320,14 @@ public static unsafe class UiHelper
         return string.Empty;
     }
 
-    /// <summary>對 addon 送單一 Int 的 callback（照實機錄製的形狀）。</summary>
-    public static void FireCallbackInt(AtkUnitBase* addon, int a)
-    {
-        if (addon == null) return;
-        var values = stackalloc AtkValue[1];
-        values[0].Type = ValueType.Int;
-        values[0].Int = a;
-        addon->FireCallback(1, values, true);
-    }
+    /// <summary>對 addon 送單一 Int 的 callback（照實機錄製的形狀：<c>[Int=a]</c>、updateState=true）。</summary>
+    /// <remarks>值的形狀與 <see cref="BuildValues"/> 對 <see cref="int"/> 產生的完全相同；繞經 <see cref="TryFireCallback"/> 讓守衛罩到。</remarks>
+    public static void FireCallbackInt(AtkUnitBase* addon, int a) => TryFireCallback(addon, true, a);
 
-    /// <summary>對 addon 送 [Int, Int, Bool] 的 callback（照實機錄製的形狀）。</summary>
-    public static void FireCallbackIntIntBool(AtkUnitBase* addon, int a, int b, bool c)
-    {
-        if (addon == null) return;
-        var values = stackalloc AtkValue[3];
-        values[0].Type = ValueType.Int;
-        values[0].Int = a;
-        values[1].Type = ValueType.Int;
-        values[1].Int = b;
-        values[2].Type = ValueType.Bool;
-        values[2].Byte = (byte)(c ? 1 : 0);
-        addon->FireCallback(3, values, true);
-    }
+    /// <summary>對 addon 送 [Int, Int, Bool] 的 callback（照實機錄製的形狀，updateState=true）。</summary>
+    /// <remarks>值的形狀與 <see cref="BuildValues"/> 對 <see cref="int"/>／<see cref="bool"/> 產生的完全相同；繞經 <see cref="TryFireCallback"/> 讓守衛罩到。</remarks>
+    public static void FireCallbackIntIntBool(AtkUnitBase* addon, int a, int b, bool c) =>
+        TryFireCallback(addon, true, a, b, c);
 
     /// <summary>
     /// CharaMake 編輯器是否「帶著已載入的外觀」開著。
@@ -280,20 +368,59 @@ public static unsafe class UiHelper
         return true;
     }
 
-    /// <summary>點擊 addon 上的按鈕元件（複用按鈕自身既有的事件）。</summary>
-    public static bool ClickButton(AtkUnitBase* addon, AtkComponentButton* button)
+    /// <summary><see cref="TryClickButton"/> 的三態結果。</summary>
+    /// <remarks>
+    /// 🔴 零值刻意放在「沒按到」上：任何忘了指派的路徑都不會被誤判成「已經按下去了」。
+    /// </remarks>
+    public enum ButtonPressResult
     {
-        if (addon == null || button == null) return false;
+        /// <summary>按鈕現在按不動（addon／按鈕／OwnerNode 取不到、停用、不可見、沒有事件）。</summary>
+        Unavailable = 0,
+
+        /// <summary>事件已送出。</summary>
+        Pressed = 1,
+
+        /// <summary>
+        /// 這一扇實例的這顆鈕剛按過、還沒觀察到那扇窗收掉——這一輪不送。
+        /// 呼叫端一律當「等一下再來」，<b>不要</b>當成「按不動」去中止流程。
+        /// </summary>
+        Guarded = 2,
+    }
+
+    /// <summary>點擊 addon 上的按鈕元件（複用按鈕自身既有的事件）。<c>true</c>＝事件已送出。</summary>
+    /// <remarks>
+    /// 回 <see langword="false"/> 不分「按不動」與「守衛擋下」；把 false 當成終止條件的呼叫端
+    /// 要改用 <see cref="TryClickButton"/> 分辨 <see cref="ButtonPressResult.Guarded"/>。
+    /// </remarks>
+    public static bool ClickButton(AtkUnitBase* addon, AtkComponentButton* button) =>
+        TryClickButton(addon, button) == ButtonPressResult.Pressed;
+
+    /// <summary>
+    /// 點擊 addon 上的按鈕元件（複用按鈕自身既有的事件），送出前先過 <see cref="AddonPressGuard"/>。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <c>ReceiveEvent</c> 比 <c>FireCallback</c> 更早踩到關閉中的窗：按下即關的鈕（交出、確認、接受）
+    /// 按過之後那幾幀 <see cref="IsReady"/> 三關照過，再送一次事件就是攔不到的存取違規。
+    /// 守衛的鍵＝（視窗位址，<c>btn:節點 id</c>）：同一扇窗上按不同的鈕互不干涉；
+    /// 「回答一次即終結」的窗（<see cref="AddonPressGuard"/> 的併鍵名單）不分鈕、一個實例只准一次。
+    /// <para>守衛放在所有「取不到就放棄」的檢查之後：一登記就算按過，登記完卻不按會白白封鎖到解除為止。</para>
+    /// </remarks>
+    public static ButtonPressResult TryClickButton(AtkUnitBase* addon, AtkComponentButton* button)
+    {
+        if (addon == null || button == null) return ButtonPressResult.Unavailable;
 
         var node = button->AtkComponentBase.OwnerNode;
-        if (node == null) return false;
-        if (!button->IsEnabled || !node->AtkResNode.IsVisible()) return false;
+        if (node == null) return ButtonPressResult.Unavailable;
+        if (!button->IsEnabled || !node->AtkResNode.IsVisible()) return ButtonPressResult.Unavailable;
 
         var evt = node->AtkResNode.AtkEventManager.Event;
-        if (evt == null) return false;
+        if (evt == null) return ButtonPressResult.Unavailable;
+
+        if (!AddonPressGuard.TryBeginPress(addon, $"btn:{node->AtkResNode.NodeId}"))
+            return ButtonPressResult.Guarded;
 
         addon->ReceiveEvent(evt->State.EventType, (int)evt->Param, evt);
-        return true;
+        return ButtonPressResult.Pressed;
     }
 
     /// <summary>
@@ -306,8 +433,12 @@ public static unsafe class UiHelper
     /// </remarks>
     public static bool FireInputStringConfirm(string name)
     {
-        var addon = GetAddon("InputString");
+        var addon = GetAddon(InputStringAddonName);
         if (!IsReady(addon)) return false;
+
+        // 🔴 送出「確定」就關窗：按過的那個實例在觀察到它收掉之前不再送（InputString 在守衛裡是併鍵的單答窗）。
+        //    這條路不走 TryFireCallback（BuildValues 不支援字串），所以守衛要自己接。
+        if (!AddonPressGuard.TryBeginPress(InputStringAddonName, addon)) return false;
 
         var nameBytes = Encoding.UTF8.GetBytes(name ?? string.Empty);
         var nameAlloc = Marshal.AllocHGlobal(nameBytes.Length + 1);
