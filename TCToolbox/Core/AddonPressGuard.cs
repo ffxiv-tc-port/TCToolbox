@@ -157,10 +157,17 @@ internal static unsafe class AddonPressGuard
     /// <summary>
     /// 登記「即將對這扇視窗送出這一組參數」。名稱直接從 addon 讀（呼叫端已經解參考過它才會走到這裡）。
     /// </summary>
+    /// <remarks>
+    /// 🔴🔴 名稱一定要走 <c>UiHelper.ReadAddonName</c> 這種<b>有界</b>讀法，
+    /// <b>不可以</b>用 CS 產生的 <c>NameString</c>（無上限的 null-terminated 掃描）：
+    /// 這支守衛被呼叫的時機正好是「這扇窗可能正在關閉」，
+    /// 在判定安全<b>之前</b>先對它做無界讀取，等於守衛自己去踩它要防的那顆雷。
+    /// 除了偏移 0x8 那 32 個 byte 的固定欄位之外，位址一樣不解任何二級指標。
+    /// </remarks>
     public static bool TryBeginPress(AtkUnitBase* addon, string paramKey)
     {
         if (addon == null) return false;
-        return TryBeginPress(addon->NameString, addon, paramKey);
+        return TryBeginPress(UiHelper.ReadAddonName(addon), addon, paramKey);
     }
 
     /// <summary>

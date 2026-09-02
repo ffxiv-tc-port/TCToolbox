@@ -131,7 +131,7 @@ public sealed unsafe class AutoShopPurchase : TcModule
             }
 
             if (lists.Count > 0)
-                scanned.Add(new ScannedAddon(addon->NameString, lists));
+                scanned.Add(new ScannedAddon(UiHelper.ReadAddonName(addon), lists));
         }
     }
 

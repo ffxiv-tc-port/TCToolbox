@@ -147,7 +147,7 @@ public sealed unsafe class AutoNumericInputMax : TcModule
         {
             var addon = entries[i].Value;
             if (addon == null) continue;
-            var name = addon->NameString;
+            var name = UiHelper.ReadAddonName(addon);
             if (!string.IsNullOrWhiteSpace(name) && BlacklistAddons.Contains(name))
                 return true;
         }

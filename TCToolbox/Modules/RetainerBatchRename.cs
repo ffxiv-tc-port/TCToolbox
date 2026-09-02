@@ -3635,7 +3635,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
             if (addon != null)
             {
                 Svc.Log.Information(
-                    $"[{InternalName}] [錄製] FireCallback {addon->NameString} close={close} " +
+                    $"[{InternalName}] [錄製] FireCallback {UiHelper.ReadAddonName(addon)} close={close} " +
                     DescribeValueArray(values, (int)valueCount));
             }
         }
