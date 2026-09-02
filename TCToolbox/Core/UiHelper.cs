@@ -20,6 +20,70 @@ public static unsafe class UiHelper
 
     public static bool IsAddonReady(string name) => IsReady(GetAddon(name));
 
+    /// <summary>掃描同名視窗實例時最多看幾格（<c>GetAddonByName</c> 的 index 從 1 起算）。</summary>
+    /// <remarks>
+    /// 同名視窗同時掛著超過兩三個已經很罕見，這個上限只是防呆——真正的終止條件是掃到第一個
+    /// <c>null</c> 就停（那代表這個名字底下沒有更多實例了）。
+    /// </remarks>
+    public const int MaxAddonInstanceScan = 16;
+
+    /// <summary>
+    /// 在<b>所有</b>同名實例裡找出第一扇 <see cref="IsReady"/> 的視窗；一扇都沒有就回 <c>null</c>。
+    /// </summary>
+    /// <remarks>
+    /// 🔴🔴 <b><see cref="GetAddon"/>／<see cref="IsAddonReady"/> 只看得到第 1 格。</b>
+    /// <c>GetAddonByName</c> 的 <c>index</c> 參數預設是 1，而同一個名字是<b>可以同時掛著好幾個實例</b>的
+    /// ——<c>SelectYesno</c> 連著跳兩扇（「確定要交易優質道具嗎？」接「確定要為合建設備提供○○×N嗎？」）
+    /// 就是現成的例子，剛關掉、還沒被回收的那一扇也可能繼續佔著格子。
+    /// 這種時候第 1 格拿到的是<b>已經不可見</b>的那一扇，<see cref="IsReady"/> 對它回
+    /// <see langword="false"/>，於是「確認框在不在」被答成「不在」，而真正開著、等著被按的那一扇
+    /// 在第 2 格——<b>完全看不到，而且不會報錯</b>。
+    /// <para>
+    /// ⚠️ 這支<b>不是</b> <see cref="GetAddon"/> 的替代品：只有「我要找出那扇開著的窗」的地方才該用它
+    /// （多幾次原生查詢換一個正確答案）。既有呼叫點維持原樣，不要無差別換掉。
+    /// </para>
+    /// </remarks>
+    public static AtkUnitBase* FindReadyAddon(string name)
+    {
+        for (var index = 1; index <= MaxAddonInstanceScan; index++)
+        {
+            var addon = Svc.GameGui.GetAddonByName<AtkUnitBase>(name, index);
+            if (addon == null) return null; // 這個名字底下沒有更多實例了
+
+            if (IsReady(addon)) return addon;
+        }
+
+        return null;
+    }
+
+    /// <summary><see cref="FindReadyAddon"/> 的布林版：同名實例裡<b>任何一扇</b>開著就算數。</summary>
+    public static bool IsAnyAddonReady(string name) => FindReadyAddon(name) != null;
+
+    /// <summary>
+    /// 把某個名字底下所有實例的狀態壓成一行診斷字串（第幾格、位址、可見嗎、載入完成嗎）。
+    /// </summary>
+    /// <remarks>
+    /// 給「我明明看到視窗開著，模組卻說沒有」這種回報用：一眼就能分辨是「第 1 格擋住了」
+    /// 還是「這扇窗根本不叫這個名字」。只讀不寫，位址只印出來、不留存也不解參考。
+    /// </remarks>
+    public static string DescribeAddonInstances(string name)
+    {
+        var sb = new StringBuilder();
+        for (var index = 1; index <= MaxAddonInstanceScan; index++)
+        {
+            var addon = Svc.GameGui.GetAddonByName<AtkUnitBase>(name, index);
+            if (addon == null) break;
+
+            if (sb.Length > 0) sb.Append('、');
+            sb.Append('#').Append(index)
+              .Append(" 位址 0x").Append(((nint)addon).ToString("X"))
+              .Append(" 可見=").Append(addon->IsVisible)
+              .Append(" 載入完成=").Append(addon->UldManager.LoadedState == AtkLoadState.Loaded);
+        }
+
+        return sb.Length == 0 ? "（一個實例都沒有）" : sb.ToString();
+    }
+
     /// <summary>依 addon id 取 addon，取不到（含遊戲尚未就緒）一律回 <c>null</c>。</summary>
     /// <remarks>
     /// 🔴 這支存在的理由是 <c>AtkStage.Instance()->RaptureAtkUnitManager->GetAddonById(...)</c>
@@ -247,6 +311,16 @@ public static unsafe class UiHelper
 
     /// <summary>讀 SelectYesno 的提示文字（讀不到一律回空字串，不擲例外）。</summary>
     public static string GetSelectYesnoText() => ReadSelectYesnoText(GetAddon(SelectYesnoAddonName));
+
+    /// <summary>
+    /// 讀<b>指定那一扇</b> SelectYesno 的提示文字（讀不到一律回空字串，不擲例外）。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 呼叫端如果是用 <see cref="FindReadyAddon"/> 找到窗的，讀文字就<b>必須</b>用這一支。
+    /// 走無參數的 <see cref="GetSelectYesnoText()"/> 會退回只看第 1 格，於是
+    /// 「按的是第 2 格那扇、log 印的是第 1 格那扇的字」——診斷會指著錯的窗。
+    /// </remarks>
+    public static string GetSelectYesnoText(AtkUnitBase* addon) => ReadSelectYesnoText(addon);
 
     private static string ReadSelectYesnoText(AtkUnitBase* addon)
     {
