@@ -288,13 +288,22 @@ internal static unsafe class AddonPressGuard
     private static string DescribeKey(string paramKey) => paramKey.Length == 0 ? "（不分）" : paramKey;
 
     /// <summary>
-    /// 第一次用到時掛上解除封鎖用的全域監聽器與幀計數器。
+    /// 掛上解除封鎖用的全域監聽器與幀計數器（重複呼叫是 no-op）。
     /// </summary>
     /// <remarks>
     /// 掛上去之後就不再拆（只在 <see cref="ForceTeardown"/> 拆）：監聽器只做一次字典移除，
     /// 成本可忽略，而動態掛／拆比較容易留下懸空的監聽器。
+    /// <para>
+    /// 📌 <b>外掛啟動時就先呼叫一次</b>（<c>Plugin</c> 建構子裡、模組 <c>Enable()</c> 之前）：
+    /// 留給第一次按下才懶註冊的話，守衛的監聽器必定排在所有模組之後，
+    /// 而同一次事件派送是依清單順序逐一呼叫的。
+    /// ⚠️ <b>但順序不能當保證</b>：<c>RegisterListener</c> 走 <c>Framework.RunOnTick</c>，
+    /// 而它底下的 <c>ThreadBoundTaskScheduler</c> 用 <c>ConcurrentDictionary</c> 存待跑的工作、
+    /// <c>Run()</c> 直接列舉它的 <c>Keys</c>——<b>列舉順序與排入順序無關</b>。
+    /// 真正把順序這個變數拿掉的是 <see cref="OnAddonLifecycle"/> 裡的「這一幀才登記的不清」。
+    /// </para>
     /// </remarks>
-    private static void EnsureWatching()
+    public static void EnsureWatching()
     {
         if (watching) return;
 
@@ -307,12 +316,52 @@ internal static unsafe class AddonPressGuard
 
     private static void OnFrameworkUpdate(IFramework framework) => frameCount++;
 
-    /// <summary>該位址走完（或重新開始）生命週期：它底下所有參數組的紀錄一起清掉。</summary>
+    /// <summary>該位址走完（或重新開始）生命週期：把它底下的紀錄清掉。</summary>
+    /// <remarks>
+    /// 🔴🔴 <b><see cref="AddonEvent.PostSetup"/> 只清「不是這一幀才登記的」紀錄。</b>
+    /// 本 pin 的 Dalamud 對同一個事件是<b>在同一次派送裡依清單順序逐一呼叫監聽器</b>的
+    /// （<c>AddonLifecycle.InvokeListenersSafely</c> 直接 <c>foreach</c> 那份全域清單、<b>不做快照</b>），
+    /// 而排序不是我們能決定的（見 <see cref="EnsureWatching"/> 的說明）。
+    /// 凡是<b>在 PostSetup 處理常式裡就按下</b>的模組（本 repo 至少六支：
+    /// <c>AutoCustomDeliveryResult</c>、<c>AutoRequestItemSubmit</c> 的兩支、<c>LetterCollectAll</c>、
+    /// <c>OptimizedFreeShop</c>、<c>AutoMaterialize</c>），只要守衛排在它後面，
+    /// 模組剛登記完位址就輪到這支把同一個位址清掉，
+    /// 接下來那扇窗的 <c>PostDraw</c> 重送<b>完全沒有守衛</b>（＝ crash-20260831205734 的形狀）。
+    /// 「這一幀才登記的不清」把順序這個變數整個拿掉：不管誰先誰後，結果都一樣。
+    /// <para>
+    /// ⚙️ 一幀之內不可能發生「舊的還在、新的已經建在同一個位址」：位址要被重用得先 finalize，
+    /// 而 <see cref="AddonEvent.PreFinalize"/> 沒有這個豁免（下一段），所以重用場景裡紀錄早就被清掉了。
+    /// </para>
+    /// <para>
+    /// <see cref="AddonEvent.PreFinalize"/> 不做這個豁免：它的意思是「這一扇確定走到終點」，
+    /// 清掉才是對的；而且窗都沒了，後面也不會再有人對它送東西。
+    /// </para>
+    /// </remarks>
     private static void OnAddonLifecycle(AddonEvent type, AddonArgs args)
     {
         var address = args.Addon.Address;
         if (address == nint.Zero) return;
-        Pressed.Remove(address);
+
+        if (type != AddonEvent.PostSetup)
+        {
+            Pressed.Remove(address);
+            return;
+        }
+
+        if (!Pressed.TryGetValue(address, out var records)) return;
+
+        List<string>? stale = null;
+        foreach (var (paramKey, record) in records.ByParam)
+        {
+            if (record.Frame == frameCount) continue;
+            (stale ??= []).Add(paramKey);
+        }
+
+        // 整筆都是這一幀才登記的 ⇒ 是「模組剛在這次 PostSetup 派送裡按下」，不是新的一扇。
+        if (stale == null) return;
+
+        foreach (var paramKey in stale) records.ByParam.Remove(paramKey);
+        if (records.ByParam.Count == 0) Pressed.Remove(address);
     }
 
     private static void PruneIfCrowded(DateTime now)

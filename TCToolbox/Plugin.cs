@@ -133,6 +133,16 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new IconReference());
         Modules.Add(new MovementSpeedMultiplier());
 
+        // 🔴 一定要在模組 Enable() 之前：模組的 OnEnable 會註冊 AddonLifecycle 監聽器，
+        //    而同一個事件的監聽器是依註冊順序在同一次派送裡逐一呼叫的。守衛留到「第一次按下」
+        //    才懶註冊的話，它必定排在所有模組之後——模組在自己的 PostSetup 處理常式裡按下、
+        //    登記完位址，緊接著就輪到守衛把同一個位址的紀錄清掉，那扇窗後續的 PostDraw 重送
+        //    就完全沒有守衛（＝ crash-20260831205734 的形狀）。
+        //    ⚠️ 這只是「盡量排前面」：RegisterListener 走 Framework.RunOnTick，而它底下的
+        //    ThreadBoundTaskScheduler 是列舉 ConcurrentDictionary 的 Keys，順序不保證。
+        //    真正的防線在 AddonPressGuard.OnAddonLifecycle 的「這一幀才登記的不清」。
+        AddonPressGuard.EnsureWatching();
+
         foreach (var module in Modules)
         {
             if (Config.EnabledModules.Contains(module.InternalName))
