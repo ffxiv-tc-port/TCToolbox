@@ -110,6 +110,9 @@ internal static unsafe class AddonPressGuard
     /// <remarks>
     /// <c>Talk</c>＝翻頁；<c>CollectablesShop</c>＝每按一次交一件；<c>FreeCompanyChest</c>／
     /// <c>GrandCompanyExchange</c>＝分頁圓鈕與軍階分頁（點了視窗還在，直到選上為止重試）；
+    /// <c>TripleTriadCoinExchange</c>＝幻卡回收，每按一次送出一張；真正的回收發生在子視窗
+    /// <c>ShopCardDialog</c> 上，這扇父窗不會因為被按而關（使用者手動連按是正常流程，
+    /// 2 秒封鎖會讓第二次靜默不送、呼叫端再空等到逾時）；
     /// <c>_Notification</c>＝常駐 HUD，永遠不會 finalize。
     /// 這些窗按下去不會進入「關閉中」，2 秒封鎖只會把既有的重試節奏拉長，沒有換到任何防護。
     /// </remarks>
@@ -119,6 +122,7 @@ internal static unsafe class AddonPressGuard
         "CollectablesShop",
         "FreeCompanyChest",
         "GrandCompanyExchange",
+        "TripleTriadCoinExchange",
         "_Notification",
     };
 

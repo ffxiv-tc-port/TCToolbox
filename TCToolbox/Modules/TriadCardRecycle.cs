@@ -563,6 +563,10 @@ public sealed unsafe class TriadCardRecycle : TcModule
             return true;
         });
 
+        // 這一步可能會重試（守衛擋下時回 false），視窗狀態只在第一次嘗試時傾印一份，
+        // 免得重試期間每個 tick 都灌一輪 AtkValue 傾印。
+        var dumpedWindowState = false;
+
         queue.Enqueue("送出回收", () =>
         {
             // 🔴 每一步重新解析 addon：上一步到這一步之間視窗可能已經被關掉。
@@ -573,11 +577,25 @@ public sealed unsafe class TriadCardRecycle : TcModule
                 return null;
             }
 
-            LogRecycleWindowState(addon, "送出回收前");
+            if (!dumpedWindowState)
+            {
+                LogRecycleWindowState(addon, "送出回收前");
+                dumpedWindowState = true;
+            }
 
             // ⚠️ 這組值移植自上游，台服未經離線驗證。送錯的失敗形式是「什麼都沒發生」——
             //    真正的回收只可能發生在 ShopCardDialog 上，而那個對話框本模組完全不碰。
-            UiHelper.FireCallback(addon, true, 0, 0, 0);
+            //
+            // 🔴 一定要用 TryFireCallback 而不是 FireCallback：這扇視窗是常駐父窗
+            //    （回收確認框 ShopCardDialog 開關並不會讓它 PreFinalize／PostSetup），
+            //    所以 AddonPressGuard 的紀錄只能靠逃生口解除。void 版被擋下時是靜默不送，
+            //    這一步卻照樣 return true，接著下一步「等待遊戲跳出回收確認框」就會空等到
+            //    5 秒逾時把整條佇列清掉——使用者手動連按第二張時就是這個下場。
+            //    🔑 回 false ＝這一 tick 沒送出、下一 tick 再試（TaskQueue 的三態），
+            //    等滿逃生口（RoutineAddons：15 幀 ≒ 0.25 秒）就會送出去，遠在本步驟的
+            //    10 秒逾時之內。
+            if (!UiHelper.TryFireCallback(addon, true, 0, 0, 0)) return false;
+
             return true;
         });
 

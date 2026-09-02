@@ -89,6 +89,21 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
     /// <summary>解析好的確認框字串。<see cref="OnEnable"/> 時建一次，空字串（台服未開放的列）不收。</summary>
     private readonly HashSet<string> highQualityPrompts = new(StringComparer.Ordinal);
 
+    /// <summary>交出鈕按下之後，這一扇交納視窗最久封鎖多久（毫秒）。到期＝判定「那一按沒生效」。</summary>
+    /// <remarks>
+    /// 和 <c>AddonPressGuard.ReleaseTimeoutMs</c> 取同一個值，理由也一樣：
+    /// 「正在關閉」只有幾幀（60fps 下數十毫秒），撐到 2 秒還在的視窗依定義是「還開著」。
+    /// 🔴 <b>不做成永久閂</b>：交出鈕按下後視窗沒關的情況是存在的
+    /// （例如跳出優質道具確認框而使用者選了「否」），永久閂會把崩潰換成靜默卡死。
+    /// </remarks>
+    private const int HandOverLatchMs = 2_000;
+
+    /// <summary>已經按下交出鈕的那一扇交納視窗實例。<b>位址只做等值比較，永不解參考。</b></summary>
+    private nint handedOverAddress;
+
+    /// <summary>按下交出鈕的時刻（<see cref="HandOverLatchMs"/> 的起算點）。</summary>
+    private DateTime handedOverAt;
+
     private AutoRequestItemSubmitConfig Config => Plugin.Instance.Config.RequestItemSubmit;
 
     protected override void OnEnable()
@@ -123,6 +138,7 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
         Svc.AddonLifecycle.UnregisterListener(OnRequest);
         Svc.AddonLifecycle.UnregisterListener(OnSelectYesno);
         highQualityPrompts.Clear();
+        handedOverAddress = nint.Zero;
     }
 
     /// <summary>
@@ -178,6 +194,39 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
     {
         try
         {
+            // 🔴🔴 交出鈕按下之後，這一扇交納視窗接下來幾幀是「正在關閉」——
+            //    GetAddonByName／IsVisible／UldManager 三關照樣全過，PostDraw 也照樣進來。
+            //    🔑 這裡必須是「整支 OnRequest 都不做」而不是只擋交出鈕：
+            //    交出成功之後遊戲會把 HandIn 暫存容器清空，於是下一輪 AreAllRequestedItemsHandedIn()
+            //    回 false，控制流會落到它上面那一行的 FillNextSlot()——那支對「當初填這一格時」
+            //    登記的錨鍵送 agent 事件，而那次登記早就超過 AddonPressGuard 的 2 秒逾時、
+            //    會被放行，等於對正在關閉的交納視窗送出第二次動作。
+            //    ⚠️ 這一段刻意排在節流之前：節流吃掉的那些幀也必須擋。
+            var address = args.Addon.Address;
+
+            // 同一個位址上有新的一扇被建立起來（含位址重用）⇒ 我們按過的那扇已經不是它了。
+            if (type == AddonEvent.PostSetup && address != nint.Zero && address == handedOverAddress)
+                handedOverAddress = nint.Zero;
+
+            if (address != nint.Zero && address == handedOverAddress)
+            {
+                var heldMs = (DateTime.UtcNow - handedOverAt).TotalMilliseconds;
+                if (heldMs < HandOverLatchMs)
+                {
+                    if (Throttle.Pass("AutoRequestItemSubmit-HandedOver", 1_000))
+                        Svc.Log.Information(
+                            $"[{InternalName}] 交出鈕已按下，這一扇交納視窗（實例 0x{address:X}）" +
+                            "在收掉之前完全不碰——對關閉中的視窗送事件是攔不到的存取違規。");
+
+                    return;
+                }
+
+                Svc.Log.Information(
+                    $"[{InternalName}] 交出鈕按下後 {heldMs:F0} 毫秒，交納視窗（實例 0x{address:X}）" +
+                    "既沒關掉也沒重建，判定為「那一按沒生效」而不是「正在關閉」，解除封鎖重試。");
+                handedOverAddress = nint.Zero;
+            }
+
             if (!Throttle.Pass("AutoRequestItemSubmit-Step", Math.Max(200, Config.DelayMs))) return;
             if (ShouldYieldToFcwsDeliver()) return;
 
@@ -207,6 +256,9 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
             switch (UiHelper.TryClickButton((AtkUnitBase*)addon, addon->HandOverButton))
             {
                 case UiHelper.ButtonPressResult.Pressed:
+                    // 上閂：這一扇從現在起完全不碰（含 FillNextSlot），直到它被銷毀／重建或逾時。
+                    handedOverAddress = (nint)addon;
+                    handedOverAt = DateTime.UtcNow;
                     Svc.Log.Information($"[{InternalName}] 已按下交出鈕（欄位數 {addon->EntryCount}）。");
                     return;
                 case UiHelper.ButtonPressResult.Guarded:
