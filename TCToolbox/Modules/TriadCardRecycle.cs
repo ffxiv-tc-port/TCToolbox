@@ -650,7 +650,7 @@ public sealed unsafe class TriadCardRecycle : TcModule
     /// 把回收視窗的 <c>AtkValues</c> 傾印到記錄。
     /// </summary>
     /// <remarks>
-    /// 📌 一律 <c>Information</c> 級：使用者跑 LogLevel 2，<c>Debug</c> 收不到，
+    /// 📌 一律 <c>Information</c> 級：使用者跑 LogLevel 1，<c>Debug</c> 收得到但單檔數十萬行會淹沒，
     /// 而這是唯一能把「台服的值到底長什麼樣」從實機帶回來的管道
     /// —— 沒有它，「送出去沒反應」永遠只能用猜的。
     /// <para>🔴 <c>AtkValues</c> 指標與 <c>AtkValuesCount</c> 各自判界，字串另外判 null。</para>

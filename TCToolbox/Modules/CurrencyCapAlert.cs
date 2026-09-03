@@ -292,7 +292,7 @@ public sealed unsafe class CurrencyCapAlert : TcModule
         if (loggedSpecialBucketShape) return;
         loggedSpecialBucketShape = true;
 
-        // Information 級：使用者跑 LogLevel 2，這行是實機唯一能回答
+        // Information 級：使用者跑 LogLevel 1，這行是實機唯一能回答
         // 「SpecialItemBucket 的鍵是什麼」的證據。
         Svc.Log.Information($"[{InternalName}] SpecialItemBucket 解讀方式＝{shape}");
     }

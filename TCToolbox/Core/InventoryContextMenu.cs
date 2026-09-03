@@ -103,7 +103,7 @@ public static unsafe class InventoryContextMenu
             if (index == -1 && labels[entry] == wanted) index = entry;
         }
 
-        // 選單長相一律記下來（Information 級，因為使用者的記錄等級會濾掉 DBG）。
+        // 選單長相一律記下來（Information 級，因為使用者的記錄等級只會濾掉 VRB、DBG 收得到但單檔數十萬行會淹沒）。
         // 「▸」標的是被收進二級指令的項目——那是最可能讓找不到的原因，
         // 而且從錯誤訊息裡看不出來，只能靠這行分辨「沒有這個項目」與「在二級選單裡」。
         var dump = new string[itemCount];

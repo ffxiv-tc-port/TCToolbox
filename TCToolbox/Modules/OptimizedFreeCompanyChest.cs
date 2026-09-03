@@ -29,7 +29,7 @@ namespace TCToolbox.Modules;
 /// （<c>IsEnabled</c> 走 <c>OwnerNode</c>）就是在對不是那個型別的記憶體解參考；</item>
 /// <item><see cref="UiHelper.ClickButton"/> 自己還會驗按鈕啟用、節點可見、事件非 null。</item>
 /// </list>
-/// 任何一道沒過都<b>什麼都不做</b>，並寫一行 <c>Information</c>（使用者跑 LogLevel 2）。
+/// 任何一道沒過都<b>什麼都不做</b>，並寫一行 <c>Information</c>（使用者跑 LogLevel 1）。
 /// </para>
 /// <para>
 /// 🔴 <b>不跨幀保存原生指標。</b>PostSetup 只把「這次開窗還沒切過」記成一個 bool，

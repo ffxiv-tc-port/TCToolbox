@@ -138,7 +138,7 @@ public sealed class Configuration : IPluginConfiguration
         Version = CurrentVersion;
         Save();
 
-        // 使用者回報用：設定被動過就一定要留下痕跡（LogLevel 2 收得到）。
+        // 使用者回報用：設定被動過就一定要留下痕跡（LogLevel 1 收得到）。
         Svc.Log.Information(
             migrated
                 ? "[TCToolbox] 設定結構升級到 v2：已把 OptimizedEnemyList 的舊 ShowCast／偏移值遷移到新 schema。"

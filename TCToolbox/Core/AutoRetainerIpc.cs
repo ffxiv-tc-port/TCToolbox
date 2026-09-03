@@ -171,7 +171,7 @@ internal static class AutoRetainerIpc
             cachedNameMember = FindMember(type, "Name");
             cachedWorldMember = FindMember(type, "World");
 
-            // Information 級：使用者跑 LogLevel 2。反射有沒有對上，只有這行說得出來。
+            // Information 級：使用者跑 LogLevel 1。反射有沒有對上，只有這行說得出來。
             Svc.Log.Information(
                 $"[AutoRetainerIpc] 角色資料型別＝{type.FullName}；" +
                 $"Name {(cachedNameMember == null ? "找不到" : "已對上")}、" +

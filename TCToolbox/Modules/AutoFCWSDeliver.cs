@@ -128,7 +128,7 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
     /// <remarks>
     /// 正常節奏下這個狀態只有幾幀（按下「交出」到確認框冒出來之間），所以 1.5 秒不會誤報；
     /// 真的卡住時每 <see cref="ConfirmStallReportMs"/> 印一行，使用者的 log 就足以定案，
-    /// 不必請他當場做任何測試。寫 <c>Information</c>（使用者跑 LogLevel 2，Debug 收不到）。
+    /// 不必請他當場做任何測試。寫 <c>Information</c>（使用者跑 LogLevel 1，Debug 收得到但單檔數十萬行會淹沒）。
     /// </remarks>
     private const int ConfirmStallReportMs = 1_500;
 
@@ -598,7 +598,7 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
 
             // 🔴 「交納視窗還開著、卻一扇確認框都找不到」正常只有幾幀。卡住的時候舊碼在這裡
             //    完全不寫 log，實機 log 就是一段純空白——分不出模組死了、看不到窗、還是在等別的。
-            //    這行是唯一能離線定案的線索，寫 Information（使用者跑 LogLevel 2）。
+            //    這行是唯一能離線定案的線索，寫 Information（使用者跑 LogLevel 1）。
             confirmStallSince ??= DateTime.UtcNow;
             if ((DateTime.UtcNow - confirmStallSince.Value).TotalMilliseconds >= ConfirmStallReportMs &&
                 Throttle.Pass("AutoFCWSDeliver-ConfirmStall", ConfirmStallReportMs))

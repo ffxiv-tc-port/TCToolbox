@@ -275,7 +275,7 @@ public sealed class MainWindow : Window
             ImGui.TextColored(ConfigErrorColor, $"「{module.DisplayName}」的設定畫面繪製失敗，本次不顯示。");
             ImGui.TextDisabled(ex.Message);
 
-            // 使用者回報用（LogLevel 2 收得到）。節流：展開節點時這裡每幀都會進來。
+            // 使用者回報用（LogLevel 1 收得到）。節流：展開節點時這裡每幀都會進來。
             if (Throttle.Pass($"MainWindow-DrawConfig-{module.InternalName}", 60_000))
                 Svc.Log.Information($"[TCToolbox] 模組 {module.InternalName} 的設定畫面繪製失敗：{ex}");
         }

@@ -352,7 +352,7 @@ public sealed unsafe class MovementSpeedMultiplier : TcModule
 
         if (Math.Abs(desired - lastLoggedMultiplier) <= Epsilon) return;
 
-        // 🔴 一律 Information：使用者的記錄等級會濾掉 Debug／Verbose。
+        // 🔴 一律 Information：使用者的記錄等級只會濾掉 Verbose、Debug 收得到但單檔數十萬行會淹沒。
         //    這一行是出事時唯一能證明「倍率什麼時候被改成多少、在哪個副本」的證據。
         Svc.Log.Information(
             $"[{InternalName}] 速度倍率 {lastLoggedMultiplier:0.00}→{desired:0.00}（{DescribeCurrentDuty()}）");
@@ -373,7 +373,7 @@ public sealed unsafe class MovementSpeedMultiplier : TcModule
     /// <remarks>
     /// 🔑 這件事<b>離線證明不了</b>（那支函式有 8 個呼叫點，其中幾個落在數千位元組的巨大鏈結函式裡）。
     /// 與其寫一句「假設只有本地玩家會走到」，不如讓使用者的記錄直接回答它。
-    /// <para>📌 一律 <c>Information</c>：使用者的記錄等級會濾掉 Debug／Verbose。</para>
+    /// <para>📌 一律 <c>Information</c>：使用者的記錄等級只會濾掉 Verbose、Debug 收得到但單檔數十萬行會淹沒。</para>
     /// </remarks>
     private void LogIdentityGateOnce()
     {

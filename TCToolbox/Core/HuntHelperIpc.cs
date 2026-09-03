@@ -198,7 +198,7 @@ internal static class HuntHelperIpc
     {
         if (!Throttle.Pass($"TCToolbox.HuntHelperIpc.Error.{endpoint}", ErrorLogIntervalMs)) return;
 
-        // 🔴 Information 級：使用者跑 LogLevel 2，Debug／Verbose 收不到。
+        // 🔴 Information 級：使用者跑 LogLevel 1，盲區只有 Verbose,Debug 收得到但單檔數十萬行會淹沒。
         Svc.Log.Information($"[HuntHelperIpc] 呼叫 {endpoint} 時發生非預期例外（{ErrorLogIntervalMs / 1000} 秒內只報一次）：{ex}");
     }
 }

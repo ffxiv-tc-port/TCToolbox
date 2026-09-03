@@ -379,7 +379,7 @@ public sealed class HuntTrainOnMappy : TcModule
 
         if (!log) return;
 
-        // 🔴 Information 級：使用者跑 LogLevel 2，Debug／Verbose 收不到，
+        // 🔴 Information 級：使用者跑 LogLevel 1，盲區只有 Verbose,Debug 收得到但單檔數十萬行會淹沒，
         //    而「到底同步了幾筆、被拒絕幾筆」是事後看實機記錄時唯一問得到的地方。
         Svc.Log.Information(
             $"[{InternalName}] 同步狩獵列車：清單 {lastTotal} 筆 → 地圖上 {lastPlaced} 筆"

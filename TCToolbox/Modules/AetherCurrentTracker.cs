@@ -427,7 +427,7 @@ public sealed unsafe class AetherCurrentTracker : TcModule
         //    而那些行沒有任何新資訊。
         if (!contentChanged) return;
 
-        // 🔴 Information 級：使用者跑 LogLevel 2，Debug／Verbose 收不到。
+        // 🔴 Information 級：使用者跑 LogLevel 1，盲區只有 Verbose,Debug 收得到但單檔數十萬行會淹沒。
         Svc.Log.Information(
             $"[{InternalName}] 同步風脈泉到 Mappy：未共鳴 {lastMappyPlaced} 個"
             + $"（本次異動 {mappy.LastIpcCalls} 次、圖示 {iconId}）"

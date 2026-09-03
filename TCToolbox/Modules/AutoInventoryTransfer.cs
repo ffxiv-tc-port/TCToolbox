@@ -768,7 +768,7 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
     /// 這裡只剩「哪種失敗印哪一句聊天訊息」——那部分是轉移專用的措辭，沒有搬。
     /// 對使用者可見的行為（聊天訊息內容、節流鍵、Information 診斷）一個字都沒有改。
     /// ⚠️ 唯一的差異在 <c>Debug</c> 級那一行：搬過去之後不再附帶道具名。
-    /// 使用者跑 LogLevel 2 本來就收不到 Debug，所以那行對回報沒有影響。
+    /// 使用者跑 LogLevel 1 收得到 Debug,但單檔數十萬行會淹沒，所以那行對回報沒有影響。
     /// </remarks>
     private bool TryFireContextMenuEntry(AgentInventoryContext* agent, uint addonRowId, string displayName)
     {
@@ -916,7 +916,7 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         lastHandledItemId = itemId;
         lastHandledTick = Environment.TickCount64;
 
-        // 過了去重才印：一次右鍵＝一筆 Information（使用者跑 LogLevel 2，收得到的就是這筆）。
+        // 過了去重才印：一次右鍵＝一筆 Information（使用者跑 LogLevel 1，收得到的就是這筆）。
         // 修飾鍵沒按、或同格 500ms 內的重複觸發都已經在上面 return 掉了。
         Svc.Log.Information(
             $"[{InternalName}] 右鍵轉移觸發：{source}#{slot} itemId={itemId}「{displayName}」");

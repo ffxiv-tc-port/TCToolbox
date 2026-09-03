@@ -297,7 +297,7 @@ public sealed unsafe class FlagCommands : TcModule
 
         if (result == null)
         {
-            // Information 級：使用者跑 LogLevel 2。哪一個水晶解不出座標，只有這行說得出來。
+            // Information 級：使用者跑 LogLevel 1。哪一個水晶解不出座標，只有這行說得出來。
             Svc.Log.Information(
                 $"[{InternalName}] 解析不出乙太之光 {aetheryteId} 的座標，找最近的時候會跳過它。");
         }

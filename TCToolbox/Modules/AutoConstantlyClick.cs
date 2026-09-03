@@ -164,7 +164,7 @@ public sealed unsafe class AutoConstantlyClick : TcModule
             padHookAttached = false;
             checkPadHotbarClickedHook = null;
 
-            // Information 級：使用者跑 LogLevel 2，這行是「手把連發沒反應」唯一的線索。
+            // Information 級：使用者跑 LogLevel 1，這行是「手把連發沒反應」唯一的線索。
             Svc.Log.Information(
                 $"[{InternalName}] 十字熱鍵輸入處理函式的特徵碼對不上，手把連發本次無法使用" +
                 $"（鍵盤／滑鼠不受影響）。原因：{ex.Message}");

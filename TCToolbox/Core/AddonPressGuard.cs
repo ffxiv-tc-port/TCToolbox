@@ -268,7 +268,7 @@ internal static unsafe class AddonPressGuard
                 var waitedMs = (now - pressed.At).TotalMilliseconds;
                 if (waitedMs < ReleaseTimeoutMs)
                 {
-                    // 🔴 這就是崩潰的那一幀。診斷寫 Information（使用者跑 LogLevel 2），並節流免得洗版。
+                    // 🔴 這就是崩潰的那一幀。診斷寫 Information（使用者跑 LogLevel 1），並節流免得洗版。
                     if (Throttle.Pass($"AddonPressGuard-Hold-{addonName}", 1_000))
                         Svc.Log.Information(
                             $"[AddonPressGuard] 「{addonName}」（實例 0x{address:X}，參數 {DescribeKey(paramKey)}）" +

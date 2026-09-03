@@ -291,7 +291,7 @@ public sealed unsafe class ShopDefaults : TcModule
     /// <remarks>
     /// 🔑 這一行是「視覺順序假設對不對」唯一的離線後驗證據：節點 id 與座標都印出來，
     /// 使用者回報記錄時就能直接看出分頁是不是左右排、順序是不是與 GCShopItemCategory 一致。
-    /// <b>一律 Information 級</b>——使用者跑 LogLevel 2，Debug／Verbose 完全收不到。
+    /// <b>一律 Information 級</b>——使用者跑 LogLevel 1，盲區只有 Verbose,Debug 收得到但單檔數十萬行會淹沒。
     /// </remarks>
     private void ReportButtons(AtkUnitBase* addon, AtkComponentRadioButton** buttons, int count)
     {

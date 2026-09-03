@@ -309,7 +309,7 @@ public static class SimpleTweaksProbe
         lastError = reason;
         lastFingerprint = default;
 
-        // Information 級：使用者跑 LogLevel 2，這句是事後回頭查「為什麼一直顯示未知」的唯一線索。
+        // Information 級：使用者跑 LogLevel 1，這句是事後回頭查「為什麼一直顯示未知」的唯一線索。
         if (Throttle.Pass("SimpleTweaksProbe-Fail", 60_000))
             Svc.Log.Information($"[SimpleTweaksProbe] 讀不到 SimpleTweaks 設定（{reason}），重疊偵測顯示為未知。路徑：{ConfigPath}");
     }

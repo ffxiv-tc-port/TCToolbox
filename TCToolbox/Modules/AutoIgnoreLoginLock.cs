@@ -81,7 +81,7 @@ public sealed unsafe class AutoIgnoreLoginLock : TcModule
         // 🔴 2026-08-30：這行原本是 10 秒節流的 Information，實機 08-23~30 印了 1,374 次。
         // 成因不是「每次登入一筆」——待在角色選擇畫面時遊戲會把旗標反覆設回來，
         // 我們每 500ms 就清一次，於是 10 秒節流等於「每 10 秒穩定印一筆」。
-        // ⇒ 每趟大廳停留只留第一筆 Information（使用者跑 LogLevel 2，那筆就夠證明模組有在動），
+        // ⇒ 每趟大廳停留只留第一筆 Information（使用者跑 LogLevel 1，那筆就夠證明模組有在動），
         //   同一趟裡後續的重複清除降 Debug。清旗標的行為完全沒動。
         if (!loggedClearThisLobbyVisit)
         {

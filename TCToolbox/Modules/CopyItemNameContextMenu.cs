@@ -140,7 +140,7 @@ public sealed unsafe class CopyItemNameContextMenu : TcModule
     /// 「這個視窗到底有沒有被加上選單項、為什麼」的診斷。
     /// </summary>
     /// <remarks>
-    /// 📌 寫 <c>Information</c>：使用者跑 LogLevel 2，Debug／Verbose 收不到，
+    /// 📌 寫 <c>Information</c>：使用者跑 LogLevel 1，盲區只有 Verbose,Debug 收得到但單檔數十萬行會淹沒，
     /// 而這個模組唯一會被回報的問題就是「該出現的沒出現／不該出現的出現了」。
     /// 節流鍵含 addon 名，所以每扇視窗各自有一行，不會被同一扇視窗洗掉。
     /// </remarks>

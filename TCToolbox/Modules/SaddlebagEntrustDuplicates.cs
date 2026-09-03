@@ -461,7 +461,7 @@ public sealed unsafe class SaddlebagEntrustDuplicates : TcModule
 
         if (index == -1)
         {
-            // 選單長相一律記下來（Information 級，使用者的記錄等級會濾掉 DBG）。
+            // 選單長相一律記下來（Information 級，使用者的記錄等級只會濾掉 VRB、DBG 收得到但單檔數十萬行會淹沒）。
             // 「▸」標的是被收進二級指令的項目——那是最可能讓找不到的原因，從錯誤訊息看不出來。
             var dump = new string[itemCount];
             for (var entry = 0; entry < itemCount; entry++)

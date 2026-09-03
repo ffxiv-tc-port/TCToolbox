@@ -350,7 +350,7 @@ public sealed class IconReference : TcModule
             dtrEntry.Shown = true;
             dtrCurrent = entry.Identifier;
 
-            // 使用者要拿這個跟人對照，所以寫 Information（LogLevel 2 收得到）。
+            // 使用者要拿這個跟人對照，所以寫 Information（LogLevel 1 收得到）。
             Svc.Log.Information($"[{InternalName}] DTR 預覽 → {entry.Identifier}（{entry.Note}）");
         }
         catch (Exception ex)

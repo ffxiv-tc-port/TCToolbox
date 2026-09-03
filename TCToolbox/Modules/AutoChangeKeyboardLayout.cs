@@ -26,7 +26,7 @@ namespace TCToolbox.Modules;
 /// 極少數「焦點剛到、指令文字還沒填進來」的情形可能誤切成中文配置——那是良性失誤（自己再切回來即可），
 /// 換來的是不會崩。
 /// <para>
-/// 🔴 <b>解不到特徵碼＝停用並記一筆 Information</b>（使用者跑 LogLevel 2 看得到），
+/// 🔴 <b>解不到特徵碼＝停用並記一筆 Information</b>（使用者跑 LogLevel 1 看得到），
 /// 不像 DR 那樣讓位址回 0 之後照樣去 hook。
 /// </para>
 /// <para>

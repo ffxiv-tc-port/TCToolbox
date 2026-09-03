@@ -68,7 +68,7 @@ public sealed unsafe class AutoGysahlGreens : TcModule
         // 就是因為整條鏈沒有任何可見輸出，無從分辨死在哪段。
         // 🔴 2026-08-30：但這是**純輪詢**，跟有沒有事情發生無關，實機 08-23~30 印了 1,004 次。
         // ⇒ 週期性那筆降 Debug；Information 只留給「真的該餵了卻沒餵成」的現場（見下面那筆），
-        //   因為使用者跑 LogLevel 2，會被回報的只有那種時刻。餵食結果本身維持 Information／聊天訊息。
+        //   因為使用者跑 LogLevel 1，會被回報的只有那種時刻。餵食結果本身維持 Information／聊天訊息。
         var timeLeftNow = uiState != null ? uiState->Buddy.CompanionInfo.TimeLeft : 0f;
         var thresholdSeconds = Config.ThresholdMinutes * 60f;
 

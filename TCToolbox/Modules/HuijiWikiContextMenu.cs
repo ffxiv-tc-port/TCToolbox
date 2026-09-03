@@ -87,7 +87,7 @@ public sealed class HuijiWikiContextMenu : TcModule
         var url = string.Format(SearchUrlFormat, HttpUtility.UrlEncode(itemName));
 
         // 使用者要回報「點了沒反應」時，這一行是唯一能分辨「網址沒組出來」與
-        // 「瀏覽器沒起來」的證據，所以記 Information（使用者跑 LogLevel 2）。
+        // 「瀏覽器沒起來」的證據，所以記 Information（使用者跑 LogLevel 1）。
         Svc.Log.Information($"[{InternalName}] 開啟灰機 wiki：{itemName}（#{itemId}）→ {url}");
 
         Util.OpenLink(url);

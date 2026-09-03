@@ -3458,7 +3458,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
     /// 🔴 <b>只印字串與數值，不跨幀保存任何原生指標。</b>
     /// 🔴 hook <b>只在錄製期間 enable</b>——<c>AtkUnitBase::FireCallback</c> 是全遊戲每個視窗都會走的
     /// 熱路徑，常態掛著會對每一次 UI 互動收費。
-    /// 📌 一律寫 <c>Information</c>：使用者跑 LogLevel 2，Debug／Verbose 收不到。
+    /// 📌 一律寫 <c>Information</c>：使用者跑 LogLevel 1，盲區只有 Verbose,Debug 收得到但單檔數十萬行會淹沒。
     /// <para>
     /// 🔑 <b>庫存變化是這裡最有價值的產物</b>：使用者手動卸一次裝，記錄裡就會出現
     /// 「<c>RetainerEquippedItems</c>#N 少了什麼、<c>Inventory</c>#M 多了什麼」，
@@ -4448,7 +4448,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
                 "預設開啟。改名畫面（CharaMake）的僱員模式在台服完全沒有可離線查證的資料，\n" +
                 "所以這一版不自動操作它——改成在你手動改名的時候，把 addon 開關、選單文字、\n" +
                 "每一次 UI callback、以及背包／僱員裝備欄的每一格變化寫進 Dalamud 記錄\n" +
-                "（Information 等級，你的 LogLevel 2 收得到）。\n" +
+                "（Information 等級，你的 LogLevel 1 收得到）。\n" +
                 "\n" +
                 "這些資料是之後要不要（以及能不能）把改名也自動化的唯一依據。\n" +
                 "關掉的話流程一樣可以跑，只是不會留下資料。" +

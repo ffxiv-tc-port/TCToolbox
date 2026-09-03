@@ -190,7 +190,7 @@ public sealed unsafe class WeeklyBingoClickToOpen : TcModule
 
         if (!target.IsResolved)
         {
-            // 🔴 對不到就不開。使用者跑 LogLevel 2，所以診斷寫 Information。
+            // 🔴 對不到就不開。使用者跑 LogLevel 1，所以診斷寫 Information。
             Svc.Log.Information(
                 $"[{InternalName}] 第 {slot + 1} 格（WeeklyBingoOrderData {orderRowId}「{description}」）對不到副本：{target.Reason}");
 

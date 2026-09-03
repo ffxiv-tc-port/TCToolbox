@@ -389,7 +389,7 @@ public sealed class CustomDeliveriesOverview : TcModule
 
         if (!contentChanged) return;
 
-        // 🔴 Information 級：使用者跑 LogLevel 2，Debug／Verbose 收不到。
+        // 🔴 Information 級：使用者跑 LogLevel 1，盲區只有 Verbose,Debug 收得到但單檔數十萬行會淹沒。
         Svc.Log.Information(
             $"[{InternalName}] 同步老主顧到 Mappy：放上 {lastMappyPlaced} 個"
             + $"（本次異動 {mappy.LastIpcCalls} 次、圖示 {iconId}、共用額度剩 {remaining}／{WeeklyTotalCap}）"

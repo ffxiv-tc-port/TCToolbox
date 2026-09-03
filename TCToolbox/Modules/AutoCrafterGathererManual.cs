@@ -113,7 +113,7 @@ public sealed unsafe class AutoCrafterGathererManual : TcModule
         BuildJobSets();
 
         // 🔑 「回 0」比「報錯」常見：資料表讀不到時整個模組會安靜地什麼都不做。
-        //    把筆數寫進 Information 級記錄（使用者跑 LogLevel 2），讓「表是空的」看得出來。
+        //    把筆數寫進 Information 級記錄（使用者跑 LogLevel 1），讓「表是空的」看得出來。
         //    台服 7.20 的期望值是 採集 3 ／ 製作 8。
         Svc.Log.Information(
             $"[{InternalName}] 模組啟用：採集職 {gathererJobs.Count} 個、製作職 {crafterJobs.Count} 個" +

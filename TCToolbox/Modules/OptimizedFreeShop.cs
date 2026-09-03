@@ -133,7 +133,7 @@ public sealed unsafe class OptimizedFreeShop : TcModule
     /// 或其他外掛（AutoRetainer 之類）此刻彈出的確認框。少了文字閘門就等於「看到 Yes/No 就按是」。
     /// 📌 <b>也不能改用 <c>queue.IsBusy</c> 當閘門</b>：本模組的賣點包含「手動點領取也跳過確認」，
     /// 手動路徑根本不經過佇列 —— 文字白名單才是必要且充分的那一道。
-    /// ⚠️ 未命中一律不動作並寫一行 Information 級 log（使用者跑 LogLevel 2 收得到），
+    /// ⚠️ 未命中一律不動作並寫一行 Information 級 log（使用者跑 LogLevel 1 收得到），
     /// 那行同時是「台服實際跳的是哪一句」的唯一線索。
     /// </remarks>
     private void OnSelectYesno(AddonEvent type, AddonArgs args)

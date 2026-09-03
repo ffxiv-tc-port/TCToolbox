@@ -101,7 +101,7 @@ public sealed unsafe class GlamourStoreDuplicateGuard : TcModule
         confirmAnchor = BuildConfirmAnchor();
 
         // 🔑 「回 0」比「報錯」常見：錨點算不出來時整個模組會安靜地什麼都不做。
-        // 一律 Information 級（使用者跑 LogLevel 2），讓「錨點是空的」看得出來。
+        // 一律 Information 級（使用者跑 LogLevel 1），讓「錨點是空的」看得出來。
         if (confirmAnchor.Length == 0)
         {
             Svc.Log.Information(

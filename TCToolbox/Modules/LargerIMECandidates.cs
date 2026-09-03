@@ -127,7 +127,7 @@ public sealed unsafe class LargerIMECandidates : TcModule
     {
         everApplied = false;
 
-        // 🔑 「回 0」比「報錯」常見。把設定值寫進 Information 級記錄（使用者跑 LogLevel 2），
+        // 🔑 「回 0」比「報錯」常見。把設定值寫進 Information 級記錄（使用者跑 LogLevel 1），
         //    讓「開了卻沒反應」時第一時間分得出來是「倍率還是 1.0」還是「找不到節點」。
         Svc.Log.Information(
             $"[{InternalName}] 模組啟用：候選字倍率 {Config.Scale:0.0}" +

@@ -60,7 +60,7 @@ internal static class TataruPraiseIpc
             if (!IsAvailableGate.Value.InvokeFunc()) return;
 
             var accepted = PraiseGate.Value.InvokeFunc(category);
-            // Information 級：這是「使用者說沒出聲」時唯一問得出真相的一行（使用者跑 LogLevel 2）。
+            // Information 級：這是「使用者說沒出聲」時唯一問得出真相的一行（使用者跑 LogLevel 1）。
             Svc.Log.Information($"[TataruPraise] {reason}：Praise(「{category}」) 回傳 {accepted}。");
         }
         catch (IpcNotReadyError)

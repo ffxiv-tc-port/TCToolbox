@@ -323,8 +323,8 @@ public sealed class FateTracker : TcModule
         }
         catch (Exception ex)
         {
-            // 每幀都印會把記錄洗爆，所以節流；但等級用 Information——使用者跑 LogLevel 2，
-            // Debug 收不到，而這一行是事後唯一能看出「清單為什麼是空的」的證據。
+            // 每幀都印會把記錄洗爆，所以節流；但等級用 Information——使用者跑 LogLevel 1，
+            // Debug 收得到但單檔數十萬行會淹沒，而這一行是事後唯一能看出「清單為什麼是空的」的證據。
             if (Throttle.Pass("FateTracker-SnapshotError", 30_000))
                 Svc.Log.Information(ex, "[FateTracker] 枚舉 F.A.T.E. 清單時發生例外，本幀跳過");
 

@@ -52,7 +52,7 @@ public sealed class PrismBoxRestoreRunner
         this.tag = tag;
         queue.OnTimeout = step =>
         {
-            // Information 級：使用者跑 LogLevel 2，這是要他回報的診斷。
+            // Information 級：使用者跑 LogLevel 1，這是要他回報的診斷。
             Svc.Log.Information(
                 $"[{tag}] 流程在「{step}」逾時中止，本輪已取出 {restoredCount} 件。" +
                 "若卡在等待伺服器更新，代表 RestorePrismBoxItem 送出後投影台內容沒有變化。");

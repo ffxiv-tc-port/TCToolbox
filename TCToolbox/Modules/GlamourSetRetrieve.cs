@@ -63,7 +63,7 @@ public sealed class GlamourSetRetrieve : TcModule
         sets = BuildSets();
 
         // 🔑 資料表讀不到時本模組會安靜地「找不到任何整組」，跟「真的沒有」長得一模一樣。
-        // 把筆數寫成 Information 級，讓這兩種情況分得開（使用者跑 LogLevel 2）。
+        // 把筆數寫成 Information 級，讓這兩種情況分得開（使用者跑 LogLevel 1）。
         Svc.Log.Information($"[{InternalName}] MirageStoreSetItem 表載入 {sets.Count} 組可整套取出的裝備組合。");
 
         Svc.Framework.Update += OnUpdate;

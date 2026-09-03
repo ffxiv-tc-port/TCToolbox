@@ -169,7 +169,7 @@ public sealed class Plugin : IDalamudPlugin
 
     /// <summary>
     /// 啟動時把模組狀態寫進記錄。
-    /// 🔴 **一律 <c>Information</c> 級**：使用者跑 LogLevel 2，Debug／Verbose 完全收不到，
+    /// 🔴 **一律 <c>Information</c> 級**：使用者跑 LogLevel 1，盲區只有 Verbose,Debug 收得到但單檔數十萬行會淹沒，
     /// 而「哪些模組是開的」是事後看實機記錄時唯一無法從別處推得的資訊
     /// （模組啟用時本來一行都不寫，2026-08-06 的調查就是卡在這裡）。
     /// <para>
