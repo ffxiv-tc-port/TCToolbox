@@ -69,6 +69,20 @@ internal static unsafe class AddonPressGuard
     /// </summary>
     public const int RoutineRePressEscapeFrames = 15;
 
+    /// <summary>槽位回收掃描的間隔（幀）。</summary>
+    private const int SweepIntervalFrames = 60;
+
+    /// <summary>
+    /// 槽位回收的<b>年齡下限</b>（毫秒）：只回收「既有規則已經一定會放行」的紀錄。
+    /// </summary>
+    /// <remarks>
+    /// 取 30 秒是為了同時滿足兩件事：①遠大於 <see cref="ReleaseTimeoutMs"/>（2 秒），
+    /// 所以 <c>SelectYesno</c> 族那條「按下後 N 毫秒既沒被銷毀也沒重建」的診斷不會被吃掉；
+    /// ②幀數那一關的安全邊際——要撐滿 30 秒還湊不到
+    /// <see cref="RoutineRePressEscapeFrames"/>（15）幀，得掉到 0.5 fps。
+    /// </remarks>
+    private const int SweepMinAgeMs = 30_000;
+
     /// <summary>位址表膨脹到這個數量時，順手清掉太久沒動的紀錄（正常情況下表裡只有個位數）。</summary>
     private const int PruneThreshold = 64;
 
@@ -133,6 +147,9 @@ internal static unsafe class AddonPressGuard
         public string AddonName { get; } = addonName;
         public Dictionary<string, PressRecord> ByParam { get; } = new(StringComparer.Ordinal);
         public DateTime LastAt { get; set; }
+
+        /// <summary>這個位址最後一次被按下時的幀序（給 <c>SweepReleasedRecords</c> 判「幀數也夠久了」）。</summary>
+        public ulong LastFrame { get; set; }
     }
 
     /// <summary>位址 → 這個實例被按過的參數組。位址只當字典鍵，從不解參考。</summary>
@@ -293,6 +310,7 @@ internal static unsafe class AddonPressGuard
 
         records.ByParam[paramKey] = new PressRecord(now, frameCount);
         records.LastAt = now;
+        records.LastFrame = frameCount;
         LogPressDiag(addonName, address, paramKey);
         return true;
     }
@@ -343,7 +361,60 @@ internal static unsafe class AddonPressGuard
         watching = true;
     }
 
-    private static void OnFrameworkUpdate(IFramework framework) => frameCount++;
+    private static void OnFrameworkUpdate(IFramework framework)
+    {
+        frameCount++;
+        if (frameCount % SweepIntervalFrames == 0) SweepReleasedRecords();
+    }
+
+    /// <summary>回收「已經不可能再擋住任何人」的槽位。</summary>
+    /// <remarks>
+    /// 🔴🔴 <b>存在的理由</b>：解除封鎖靠的是 <see cref="AddonEvent.PreFinalize"/>／
+    /// <see cref="AddonEvent.PostSetup"/>，而<b>常駐 HUD 兩個都不會發生</b>——
+    /// <c>_Notification</c> 從登入到登出都是同一個實例、同一個位址。
+    /// 2026-09-04 實機：<c>_Notification</c> 的同一筆紀錄活了 <b>58066 幀</b>（約 10 分鐘、
+    /// 橫跨好幾場副本），於是下一場副本的第一次按壓被迫走逃生口，還每秒多寫一行 log。
+    /// <para>
+    /// 🔑 <b>兩條安全不變量原封不動</b>：
+    /// ①位址只當字典鍵與等值比較，<b>永不解參考</b>（這支從頭到尾沒碰過任何 addon）；
+    /// ②解除是<b>按位址</b>一筆一筆移除，不是按名稱整批清。
+    /// </para>
+    /// <para>
+    /// 🔑 <b>為什麼這不會弱化防護</b>：回收條件是「距離最後一次按下超過
+    /// <see cref="SweepMinAgeMs"/>」<b>而且</b>「已經過了 <see cref="RoutineRePressEscapeFrames"/> 幀」。
+    /// 同時滿足這兩條的紀錄，<see cref="TryBeginPressCore"/> 本來就<b>一定會放行</b>
+    /// （逾時放行只要 <see cref="ReleaseTimeoutMs"/>＝2 秒、逃生口只要 15 幀），
+    /// 所以移除它<b>不會改變任何一次「按／不按」的判定</b>，只是少寫一行 log、少佔一格字典。
+    /// </para>
+    /// <para>
+    /// ⚠️ 刻意<b>不</b>用「<c>GetAddonByName</c> 查不到就清」當回收條件，兩個理由：
+    /// ①本案的 <c>_Notification</c> 是常駐 HUD，<b>永遠查得到</b>，那條規則對它完全無效，
+    /// 修不到實際發生的那個形狀；
+    /// ②在保護窗<b>之內</b>拿「用名字查位址」的結果去決定要不要解除封鎖，
+    /// 等於把「攔不到的存取違規」押在一次可能查歪的查詢上
+    /// （同名多實例只看得到第 1 格、關閉中的視窗可能已經從清單移除）。
+    /// 年齡門檻能達成同樣的回收，而且不需要相信任何查詢。
+    /// </para>
+    /// </remarks>
+    private static void SweepReleasedRecords()
+    {
+        if (Pressed.Count == 0) return;
+
+        var now = DateTime.UtcNow;
+        List<nint>? stale = null;
+
+        foreach (var (address, records) in Pressed)
+        {
+            if ((now - records.LastAt).TotalMilliseconds < SweepMinAgeMs) continue;
+            if (frameCount - records.LastFrame < (ulong)RoutineRePressEscapeFrames) continue;
+
+            (stale ??= []).Add(address);
+        }
+
+        if (stale == null) return;
+
+        foreach (var address in stale) Pressed.Remove(address);
+    }
 
     /// <summary>該位址走完（或重新開始）生命週期：把它底下的紀錄清掉。</summary>
     /// <remarks>

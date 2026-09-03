@@ -34,6 +34,34 @@ public sealed unsafe class AutoPlayerCommend : TcModule
 
     private const string MipDisplayConfigKey = "MipDispType";
 
+    /// <summary>常駐 HUD 的通知容器；對它送「點了第 N 種通知」的合成事件。</summary>
+    private const string NoticeAddonName = "_Notification";
+
+    /// <summary>
+    /// 最優隊員推薦通知的<b>實體視窗</b>：它在 ⇔ 這一局真的掛著一則「可以給推薦」的通知。
+    /// </summary>
+    /// <remarks>
+    /// 🔑 <b>離線機械證明</b>（台服 7.20 <c>ffxiv_dx11.exe</c>，image base <c>0x140000000</c>）：
+    /// <list type="number">
+    /// <item>通知種類的名字指標表在 <c>0x142123DA0</c>，共 34 筆（筆數來自關閉函式
+    /// <c>0x14146CC20</c> 開頭的界限檢查 <c>cmp edi, 0x22</c>），
+    /// <b>索引 11 就是 <c>_NotificationIcMvp</c></b>——本模組送的第二個參數正是 11。</item>
+    /// <item>整顆執行檔<b>只有一處</b>引用那張表（<c>0x14146E5EA</c> 的
+    /// <c>lea r12,[rip+…]</c> ＋ <c>mov r12,[r12+rbp*8]</c>），而那段程式碼做的事就是
+    /// 「把 <c>表[種類]</c> 這個名字的視窗開起來」⇒「這扇視窗在」與「這種通知正掛著」是同一件事。</item>
+    /// <item><c>_Notification</c> 自己的 <c>ReceiveEvent</c>（vtable <c>0x142123900</c> 第 2 格、
+    /// 實作 <c>0x14146CAA0</c>）在點擊事件上組出的參數正是
+    /// <c>{Int 0, Int 種類索引, …}</c> 再對自己 <c>FireCallback</c>——
+    /// 也就是說本模組送的 <c>(0, 11)</c> <b>逐欄與玩家真的用滑鼠點下去完全相同</b>。</item>
+    /// </list>
+    /// ⚠️ 目前<b>只拿來寫診斷、刻意不當閘門</b>：「查不到它就直接放棄」還沒有實機證據，
+    /// 猜錯的話失敗形式是「推薦從此永遠不送出」，而且一樣安靜。
+    /// </remarks>
+    private const string MvpNoticeAddonName = "_NotificationIcMvp";
+
+    /// <summary>推薦清單本體。</summary>
+    private const string VoteAddonName = "VoteMvp";
+
     private readonly TaskQueue queue = new() { DefaultTimeoutMs = 15_000 };
 
     private readonly MenuItem assignMenuItem;
@@ -42,6 +70,12 @@ public sealed unsafe class AutoPlayerCommend : TcModule
     private ulong assignedContentId;
 
     private uint? savedMipDisplayType;
+
+    /// <summary>本輪流程中是否曾經觀察到 <see cref="MvpNoticeAddonName"/>（純診斷，不影響流程）。</summary>
+    private bool mvpNoticeSeen;
+
+    /// <summary>本輪真的對 <see cref="NoticeAddonName"/> 送出了幾次合成點擊（純診斷）。</summary>
+    private int noticeClicks;
 
     private AutoPlayerCommendConfig Config => Plugin.Instance.Config.PlayerCommend;
 
@@ -58,7 +92,7 @@ public sealed unsafe class AutoPlayerCommend : TcModule
 
     protected override void OnEnable()
     {
-        queue.OnTimeout = step => Svc.Log.Warning($"[{InternalName}] 推薦流程逾時，已停止：{step}");
+        queue.OnTimeout = OnQueueTimeout;
 
         Svc.DutyState.DutyCompleted += OnDutyCompleted;
         Svc.ClientState.TerritoryChanged += OnTerritoryChanged;
@@ -126,12 +160,58 @@ public sealed unsafe class AutoPlayerCommend : TcModule
         if (Svc.Party.Length <= 1) return;
         if (assignedContentId != 0 && assignedContentId == Svc.PlayerState.ContentId) return;
 
+        mvpNoticeSeen = false;
+        noticeClicks = 0;
+
+        // 🔴 開場診斷寫 Information：這條路每場副本只走一次，而且是「沒反應」時唯一的現場。
+        Svc.Log.Information(
+            $"[{InternalName}] 副本完成（區域 {territory}），開始推薦流程：隊伍 {Svc.Party.Length} 人、" +
+            $"手動指定={(assignedContentId == 0 ? "無" : assignedContentId.ToString())}、" +
+            $"{MvpNoticeAddonName}={UiHelper.DescribeAddonInstances(MvpNoticeAddonName)}、" +
+            $"{VoteAddonName}={UiHelper.DescribeAddonInstances(VoteAddonName)}");
+
         // 推薦視窗預設可能被設定為「不顯示清單」；暫時關掉自動顯示，送出後還原
         SuppressMipDisplayType();
 
         queue.Enqueue("開啟最優隊員推薦視窗", OpenCommendWindow, 10_000);
         queue.Enqueue("送出最優隊員推薦", GiveCommendation, 20_000);
         queue.Enqueue("還原推薦清單顯示設定", RestoreMipDisplayType);
+    }
+
+    /// <summary>
+    /// 步驟逾時的收尾：<b>先把 <see cref="MipDisplayConfigKey"/> 還原</b>，再寫一行分得出成因的診斷。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>還原一定要放在這裡</b>：<see cref="TaskQueue.Tick"/> 逾時時是<b>先 <c>Abort()</c>
+    /// 再叫 <see cref="TaskQueue.OnTimeout"/></b>，佇列尾巴那個「還原推薦清單顯示設定」步驟
+    /// <b>已經連同整條佇列被丟掉了</b>。在補上這一支之前，逾時之後要一路等到換區
+    /// （<see cref="OnTerritoryChanged"/>）或停用模組才會還原——玩家留在原地不走的話，
+    /// 遊戲的「最優隊員推薦顯示方式」就一直被我們壓成 0。
+    /// </remarks>
+    private void OnQueueTimeout(string step)
+    {
+        RestoreMipDisplayType();
+
+        var voteState = UiHelper.DescribeAddonInstances(VoteAddonName);
+        var context =
+            $"[{InternalName}] 推薦流程逾時，已停止：{step}。" +
+            $"送出 {noticeClicks} 次通知點擊、全程有沒有看到「{MvpNoticeAddonName}」={mvpNoticeSeen}、" +
+            $"{VoteAddonName}={voteState}。";
+
+        // ⚠️ 兩種成因的等級刻意不同：沒有可推薦對象是預期行為（Information），
+        //    看得到通知卻打不開清單才是真的異常（Warning，維持原本的等級）。
+        if (mvpNoticeSeen)
+        {
+            Svc.Log.Warning(
+                context +
+                $"看得到通知卻始終打不開 {VoteAddonName} ⇒ 合成點擊送得出去但沒有生效，請把這一行回報。");
+            return;
+        }
+
+        Svc.Log.Information(
+            context +
+            $"全程都沒有出現「{MvpNoticeAddonName}」通知 ⇒ 這一局本來就沒有可以推薦的對象" +
+            "（整隊都是自己人的固定隊、隊友是 NPC 支援者等等都會這樣），逾時是正確行為、不是故障。");
     }
 
     private void SuppressMipDisplayType()
@@ -164,22 +244,36 @@ public sealed unsafe class AutoPlayerCommend : TcModule
         }
     }
 
+    /// <summary>
+    /// 對 <see cref="NoticeAddonName"/> 送「點了第 11 種通知（最優隊員推薦）」，直到
+    /// <see cref="VoteAddonName"/> 開起來為止。
+    /// </summary>
+    /// <remarks>
+    /// 📌 <b>按壓行為刻意與先前完全相同</b>（同樣的參數、同樣的 1 秒節流、同樣不因為
+    /// <see cref="MvpNoticeAddonName"/> 不在就提早放棄）——這一版只多記了兩個診斷欄位。
+    /// 「通知不在就別按」看起來很合理，但它會把「推薦不送出」這個失敗形式變成靜默的，
+    /// 而目前還沒有實機證據能排除「通知在、只是 addon 查不到」。
+    /// </remarks>
     private bool? OpenCommendWindow()
     {
-        if (UiHelper.IsAddonReady("VoteMvp")) return true;
+        if (UiHelper.IsAddonReady(VoteAddonName)) return true;
 
-        var notification = UiHelper.GetAddon("_Notification");
+        // 只判 null、不解參考，也不跨幀保存：拿到就用完丟掉。
+        if (UiHelper.GetAddon(MvpNoticeAddonName) != null) mvpNoticeSeen = true;
+
+        var notification = UiHelper.GetAddon(NoticeAddonName);
         if (notification == null) return false;
 
-        if (Throttle.Pass("AutoPlayerCommend-Open", 1_000))
-            UiHelper.FireCallback(notification, true, 0, 11);
+        if (Throttle.Pass("AutoPlayerCommend-Open", 1_000) &&
+            UiHelper.TryFireCallback(notification, true, 0, 11))
+            noticeClicks++;
 
         return false;
     }
 
     private bool? GiveCommendation()
     {
-        var voteMvp = UiHelper.GetAddon("VoteMvp");
+        var voteMvp = UiHelper.GetAddon(VoteAddonName);
         if (!UiHelper.IsReady(voteMvp)) return false;
 
         var agentModule = AgentModule.Instance();
@@ -189,13 +283,22 @@ public sealed unsafe class AutoPlayerCommend : TcModule
         if (agent == null || !agent->IsAgentActive()) return false;
 
         var candidates = BuildCandidateOrder();
-        if (candidates.Count == 0) return true;
+        if (candidates.Count == 0)
+        {
+            Svc.Log.Information($"[{InternalName}] 推薦清單已開啟，但沒有任何可推薦的隊友（可能全在黑名單裡），本局不推薦。");
+            return true;
+        }
 
         foreach (var candidate in candidates)
         {
             if (!TryFindVoteIndex(voteMvp, candidate.Name, candidate.ClassJobId, out var index)) continue;
 
             UiHelper.SendAgentEvent(AgentId.ContentsMvp, 0, 0, index);
+
+            // 🔴 這一行不受「推薦後顯示聊天訊息」開關影響：關掉聊天提示的人也要能在 log 裡看到結果。
+            Svc.Log.Information(
+                $"[{InternalName}] 已送出最優隊員推薦：「{candidate.Name}」（職業 {candidate.ClassJobId}、" +
+                $"清單索引 {index}），本輪共送出 {noticeClicks} 次通知點擊。");
 
             if (Config.NotifyOnCommend)
             {
