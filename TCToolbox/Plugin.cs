@@ -129,6 +129,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new DiscardList());
         Modules.Add(new AutoDisplayMSQProgress());
         Modules.Add(new AutoChangeKeyboardLayout());
+        Modules.Add(new LargerIMECandidates());
         Modules.Add(new AutoNumericInputMax());
         Modules.Add(new IconReference());
         Modules.Add(new MovementSpeedMultiplier());
