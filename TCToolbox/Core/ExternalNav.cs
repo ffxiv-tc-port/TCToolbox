@@ -137,11 +137,17 @@ internal static class ExternalNav
     /// 的路徑點，<b>碰不到那個還沒算完的工作</b>——所以「按了停止、幾秒後角色自己走起來」
     /// 是真的會發生的（vnavmesh/AsyncMoveRequest.cs:60-78 直證）。
     /// <para>
-    /// ⚠️ 而 <c>Nav.PathfindCancelAll</c> <b>不是</b>用來解這個的：那個端點的實作是
-    /// <c>navmeshManager.Reload(true)</c>，也就是把整份導航網格重載一次，名字與行為不符。
+    /// 📌 <b>2026-09-03 更正</b>：上面那段成立，但原本接著寫的「<c>Nav.PathfindCancelAll</c>
+    /// 不是用來解這個的，它的實作是 <c>navmeshManager.Reload(true)</c>」<b>已經過期，而且結論是反的</b>。
+    /// vnavmesh <c>02dcefe</c>（已隨 v7.20.0.32 出貨）把該端點改成真正的
+    /// <c>navmeshManager.CancelAllPathfinds()</c>：拆出獨立的 <c>_pathfindCTS</c> 只取消尋路批次，
+    /// <b>不動導航網格</b>。而 <c>SimpleMove</c> 的在途工作走的正是 <c>QueryPath</c>
+    /// （vnavmesh/AsyncMoveRequest.cs 的 <c>MoveTo</c>），會被那個 CTS 取消。
+    /// ⇒ <c>Nav.PathfindCancelAll</c> 現在就是解這個問題的正確工具。
     /// </para>
     /// <para>
-    /// ⇒ 呼叫端要嘛在這段期間擋住新的導航請求，要嘛在使用者按停止後持續補送
+    /// ⚠️ <b>但本檔目前還沒有改成去呼叫它</b>（那是使用者可見的行為變更，等裁決）。
+    /// 在改之前，呼叫端仍然要嘛在這段期間擋住新的導航請求，要嘛在使用者按停止後持續補送
     /// <see cref="TryStopMovement"/> 直到這裡回 false。
     /// </para>
     /// </remarks>
