@@ -183,6 +183,22 @@ public static unsafe class UiHelper
     /// 回 <see langword="false"/> ＝這一幀沒送（addon 為 null，或守衛判定「剛按過、還沒觀察到它收掉」）。
     /// 對呼叫端的意義一律是「這一輪沒按到，下一輪再來」，與「addon 還沒出現」走同一條既有路徑。
     /// </para>
+    /// <para>
+    /// 🔴🔴 <b>「送出前的就地就緒檢查」不在這裡，在 <see cref="AddonPressGuard"/> 裡</b>，而且
+    /// <b>只對常駐視窗</b>（<c>AddonPressGuard.PersistentAddons</c>）生效。兩個理由：
+    /// <list type="number">
+    /// <item>那道檢查的意義<b>完全來自「與解除條件互為邏輯反面」</b>——只有常駐視窗才有
+    /// 「連續隱藏 N 幀就解除」這條看可見性的解除路徑，也才需要一個看可見性的放行條件配它。
+    /// <see cref="IsReady"/> 三關在「關閉中」是全過的，<b>單獨放在這裡擋不住任何東西</b>。</item>
+    /// <item>擺在守衛裡才罩得住<b>每一條</b>按下路徑（<see cref="TrySendAgentEvent"/>、
+    /// <see cref="TryClickButton"/>、直接呼叫 <c>TryBeginPress</c> 的模組），不是只有這一支。</item>
+    /// </list>
+    /// ⚠️ <b>不要在這裡無差別加上 <see cref="IsReady"/> 閘門。</b>本 repo 至少有兩處是
+    /// <b>刻意不判可見</b>的送出：<c>AutoPlayerCommend</c> 對常駐 HUD <c>_Notification</c>
+    /// （那支的註解寫明：判了會把「推薦沒送出」變成靜默失敗）、<c>AutoMaterialize</c> 在
+    /// <c>PostSetup</c> 當下就按而且沒有 <c>PostDraw</c> 重試（<c>PostSetup</c> 那一刻
+    /// <c>IsVisible</c>／<c>LoadedState</c> 不保證到位）。無差別加閘門會把它們靜默改成不送。
+    /// </para>
     /// </remarks>
     public static bool TryFireCallback(AtkUnitBase* addon, bool updateState, params object[] values)
     {
