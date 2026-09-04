@@ -28,6 +28,25 @@ internal static class TataruPraiseIpc
     /// <summary><c>Func&lt;bool&gt;</c>：總開關開著而且真的有可播的內容。</summary>
     private const string TagIsAvailable = "TataruPraise.IsAvailable";
 
+    /// <summary>
+    /// <c>Func&lt;string, bool&gt;</c>：<b>指定的那個情境</b>現在出得了聲嗎
+    /// （總開關開著＋這個情境沒被關掉＋這個情境至少有一句已合成的語音）。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>閘門要問的是這一個，不是 <see cref="TagIsAvailable"/>。</b>後者問的是
+    /// 「整池<b>有某個情境</b>播得出來」，於是「別的情境有語音、<b>呼叫端要的那個情境</b>一句都沒有」時
+    /// 照樣通過，接著 <c>Praise</c> 回 <c>false</c>——呼叫端就分不出「不能出聲」與「這次剛好沒出聲」。
+    /// <para>
+    /// 📌 它刻意<b>不看冷卻</b>：冷卻是「這次剛好不出聲」，不是「不能出聲」。
+    /// </para>
+    /// <para>
+    /// 🔴 舊版 TataruPraise 沒有註冊這個端點，<c>InvokeFunc</c> 會擲 <c>IpcNotReadyError</c>，
+    /// 剛好落進既有的 catch＝安靜不出聲，這是正確的 fail-safe。
+    /// <b>失敗時絕不可以退回去叫 <see cref="TagIsAvailable"/></b>——那樣就把這個端點的意義整個抵銷掉了。
+    /// </para>
+    /// </remarks>
+    private const string TagIsAvailableFor = "TataruPraise.IsAvailableFor";
+
     /// <summary><c>Func&lt;string, bool&gt;</c>：從指定情境的誇獎池挑一句念。</summary>
     private const string TagPraise = "TataruPraise.Praise";
 
@@ -41,8 +60,8 @@ internal static class TataruPraiseIpc
     internal const string CategoryPlayerAlert = "玩家警示";
 
     // 建 subscriber 本身零成本；真正的探測發生在 InvokeFunc()：對方沒註冊同名端點就丟 IpcNotReadyError。
-    private static readonly Lazy<ICallGateSubscriber<bool>> IsAvailableGate =
-        new(() => Svc.PluginInterface.GetIpcSubscriber<bool>(TagIsAvailable));
+    private static readonly Lazy<ICallGateSubscriber<string, bool>> IsAvailableForGate =
+        new(() => Svc.PluginInterface.GetIpcSubscriber<string, bool>(TagIsAvailableFor));
 
     private static readonly Lazy<ICallGateSubscriber<string, bool>> PraiseGate =
         new(() => Svc.PluginInterface.GetIpcSubscriber<string, bool>(TagPraise));
@@ -56,8 +75,9 @@ internal static class TataruPraiseIpc
     {
         try
         {
-            // 先問一次：對方的總開關關著、或池裡一句已合成的都沒有，就不要浪費它的冷卻。
-            if (!IsAvailableGate.Value.InvokeFunc()) return;
+            // 先問這個情境出不出得了聲：對方的總開關關著、這個情境被使用者關掉、或這個情境
+            // 一句已合成的都沒有，就不要浪費它的冷卻。
+            if (!IsAvailableForGate.Value.InvokeFunc(category)) return;
 
             var accepted = PraiseGate.Value.InvokeFunc(category);
             // Information 級：這是「使用者說沒出聲」時唯一問得出真相的一行（使用者跑 LogLevel 1）。

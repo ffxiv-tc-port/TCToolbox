@@ -1495,7 +1495,7 @@ public sealed class PlayerWatchRule
     /// <remarks>
     /// 📌 預設 <c>true</c>，但這<b>不是</b>行為回退：TataruPraise 沒安裝、或它自己的總開關關著、
     /// 或「玩家警示」情境裡沒有已合成語音的句子時，這條路是完全安靜的 no-op
-    /// （見 <see cref="TCToolbox.Core.TataruPraiseIpc"/>：每次都先問它的 <c>IsAvailable</c>）。
+    /// （見 <see cref="TCToolbox.Core.TataruPraiseIpc"/>：每次都先問它的 <c>IsAvailableFor</c>）。
     /// 換句話說，沒裝那個外掛的人感覺不到任何差別。
     /// <para>
     /// ⚠️ 舊設定檔沒有這個鍵，反序列化不會覆寫欄位初始值，所以升級上來的既有規則會拿到 <c>true</c>。
