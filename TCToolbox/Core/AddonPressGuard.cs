@@ -414,7 +414,7 @@ internal static unsafe class AddonPressGuard
     }
 
     /// <summary>
-    /// 跨外掛「按窗診斷」：在<b>真的送出按壓</b>的那一刻寫一行 <c>Information</c>。
+    /// 跨外掛「按窗診斷」：在<b>真的送出按壓</b>的那一刻寫一行 <c>Debug</c>。
     /// </summary>
     /// <remarks>
     /// 全艦隊 15 份各自獨立的 <c>AddonPressGuard</c> 只擋自己按過的位址：外掛 A 按下之後
@@ -427,7 +427,7 @@ internal static unsafe class AddonPressGuard
     private static void LogPressDiag(string addonName, nint address, string paramKey)
     {
         var name = string.IsNullOrEmpty(addonName) ? "?" : addonName;
-        Svc.Log.Information($"[按窗診斷] plugin=TCToolbox addon={name} addr=0x{address:X} key={paramKey ?? string.Empty}");
+        Svc.Log.Debug($"[按窗診斷] plugin=TCToolbox addon={name} addr=0x{address:X} key={paramKey ?? string.Empty}");
     }
 
     private static string DescribeKey(string paramKey) => paramKey.Length == 0 ? "（不分）" : paramKey;
