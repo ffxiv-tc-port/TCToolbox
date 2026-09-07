@@ -816,6 +816,13 @@ public sealed class HuntTrainOnMappyConfig
     /// </remarks>
     public uint AliveIconId { get; set; }
 
+    /// <summary>按「前往」時允許 Lifestream 用飛行坐騎跑最後一段。</summary>
+    /// <remarks>
+    /// 📌 預設開啟。這一格<b>不會</b>讓你被卡住：Lifestream 端在區域不可飛、或起飛失敗時
+    /// 會自己退回地面路線，不會因此讓整趟請求失敗。
+    /// ⚠️ 它也<b>不會</b>替你上坐騎——本外掛不新增自動化。沒乘坐騎時就是走過去。
+    /// </remarks>
+    public bool FlyWhenTravelling { get; set; } = true;
     /// <summary>已擊殺目標的圖示 id。0＝用內建預設值（理由同 <see cref="AliveIconId"/>）。</summary>
     public uint DeadIconId { get; set; }
 }

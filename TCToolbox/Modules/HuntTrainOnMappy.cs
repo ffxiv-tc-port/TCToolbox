@@ -79,6 +79,13 @@ public sealed class HuntTrainOnMappy : TcModule
     /// <summary>設定畫面上重新探測「兩端在不在」的間隔（毫秒）。</summary>
     private const int UiProbeIntervalMs = 2_000;
 
+    /// <summary>重新探測「有沒有別的外掛正在移動角色」的間隔（毫秒）。</summary>
+    /// <remarks>
+    /// 📌 這個值決定「按鈕變灰」的反應速度。500ms 已經比人按下去的反應快，
+    /// 而它一次要打四支 IPC（Lifestream／vnavmesh 兩個／AutoDuty／BossMod），不宜每幀打。
+    /// </remarks>
+    private const int NavProbeIntervalMs = 500;
+
     /// <summary>
     /// 存活目標的圖示。
     /// </summary>
@@ -174,6 +181,45 @@ public sealed class HuntTrainOnMappy : TcModule
     /// <summary>訂閱用的委派實例。取消訂閱必須傳同一個實例，所以存起來。</summary>
     private Action<object>? markSeenHandler;
 
+    // ── 「帶我去下一隻」──────────────────────────────────────────────────
+
+    /// <summary>一次「前往」的請求。<b>只有數字與字串，不含任何原生指標。</b></summary>
+    /// <param name="TerritoryId">目標區域的 <c>TerritoryType</c> 列號。</param>
+    /// <param name="WorldX">目標點的<b>世界座標</b> X。</param>
+    /// <param name="WorldZ">目標點的<b>世界座標</b> Z。</param>
+    /// <param name="Label">給訊息用的名字。</param>
+    private readonly record struct GoToRequest(uint TerritoryId, float WorldX, float WorldZ, string Label);
+
+    /// <summary>
+    /// 使用者按下「前往」之後、還沒送出去的請求。
+    /// </summary>
+    /// <remarks>
+    /// 🔴🔴 <b>按鈕不直接打 IPC，一律先擱在這裡，交給 <see cref="OnUpdate"/> 去送。</b>
+    /// 這是本模組既有的紀律（<c>DrawStatus</c> 那段註解寫著同一條）：對方的端點內部是
+    /// <c>IpcFrameworkGate</c>／<c>RunOnFrameworkThread(…).Result</c>，
+    /// 從繪製路徑呼叫等於在主執行緒上等一個要靠主執行緒才跑得到的 tick。
+    /// 真的發生時的樣子是「按下去之後整個遊戲卡住好幾秒」，而不是任何一種錯誤訊息。
+    /// <para>📌 只留最後一次：連按只會出發一次，不會排成一串。</para>
+    /// </remarks>
+    private GoToRequest? pendingGoTo;
+
+    /// <summary>給設定畫面列清單用的快照（只在框架執行緒上寫，繪製路徑只讀）。</summary>
+    /// <remarks>
+    /// 🔴 <b>存在的理由與上面同一條</b>：<c>HH.GetTrainList</c> 不能從繪製路徑呼叫。
+    /// 這份快照是 <see cref="Republish"/> 每次同步時順手抄下來的，
+    /// 內容與剛剛畫到 Mappy 上的那一份完全一致（含已擊殺的，清單要看得到進度）。
+    /// </remarks>
+    private readonly List<HuntHelperIpc.TrainMob> uiSnapshot = [];
+
+    /// <summary>有沒有別的外掛正在移動角色（框架執行緒上更新，繪製路徑只讀）。</summary>
+    private bool navBusy;
+
+    /// <summary>是誰在移動（<see cref="navBusy"/> 為 <see langword="false"/> 時是空字串）。</summary>
+    private string navBusyWho = string.Empty;
+
+    /// <summary>Lifestream 在不在。不在的話「前往」整個做不到，要在列上說清楚。</summary>
+    private bool lifestreamAvailable;
+
     protected override void OnEnable()
     {
         markSeenHandler = OnMarkSeen;
@@ -213,6 +259,12 @@ public sealed class HuntTrainOnMappy : TcModule
         mappyWasAvailable = false;
         markSeenPending = false;
         state = BridgeState.Unknown;
+
+        uiSnapshot.Clear();
+        pendingGoTo = null;
+        navBusy = false;
+        navBusyWho = string.Empty;
+        lifestreamAvailable = false;
     }
 
     private string SyncThrottleKey => $"TCToolbox.{InternalName}.Sync";
@@ -220,6 +272,8 @@ public sealed class HuntTrainOnMappy : TcModule
     private string ForceResyncThrottleKey => $"TCToolbox.{InternalName}.ForceResync";
 
     private string MarkSeenThrottleKey => $"TCToolbox.{InternalName}.MarkSeen";
+
+    private string NavProbeThrottleKey => $"TCToolbox.{InternalName}.NavProbe";
 
     /// <summary>
     /// <c>MarkSeen</c> 廣播的處理常式。
@@ -251,6 +305,20 @@ public sealed class HuntTrainOnMappy : TcModule
         // Mappy 只在對應的地圖上畫它們，不會造成困擾。
         if (!Svc.ClientState.IsLoggedIn) return;
 
+        // 🔴 這兩件事都在框架執行緒上做：繪製路徑只讀快取。
+        if (Throttle.Pass(NavProbeThrottleKey, NavProbeIntervalMs))
+        {
+            navBusy = ExternalNav.TryGetActiveMover(out navBusyWho);
+            lifestreamAvailable = ExternalNav.IsLifestreamAvailable();
+        }
+
+        // 使用者按下的「前往」在這裡才真的送出去（理由見 pendingGoTo）。
+        if (pendingGoTo is { } request)
+        {
+            pendingGoTo = null;
+            ExecuteGoTo(request);
+        }
+
         var forced = false;
 
         if (markSeenPending)
@@ -277,6 +345,9 @@ public sealed class HuntTrainOnMappy : TcModule
 
             state = BridgeState.HuntHelperMissing;
             lastSignature = string.Empty;
+
+            // 🔴 清單也要清掉：留著一份沒有人再更新的舊清單，使用者會照著它按「前往」。
+            uiSnapshot.Clear();
             return;
         }
 
@@ -340,6 +411,11 @@ public sealed class HuntTrainOnMappy : TcModule
         var deadIcon = EffectiveDeadIcon;
 
         pending.Clear();
+
+        // 🔑 清單快照抄的是<b>原始清單</b>，不是下面篩過的那一份：地圖上可以只留還沒打的，
+        //    但設定畫面的清單要看得到整趟列車的進度（哪幾隻已經打完了）。
+        uiSnapshot.Clear();
+        uiSnapshot.AddRange(train);
 
         foreach (var mob in train)
         {
@@ -530,6 +606,10 @@ public sealed class HuntTrainOnMappy : TcModule
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("每隔這麼久向 Hunt Helper 拉一次清單。Hunt Helper 每標記一隻怪也會即時通知，所以這個值不必調得很小。");
 
+        ImGui.Separator();
+        DrawTrainList();
+        ImGui.Separator();
+
         if (!ImGui.CollapsingHeader("圖示")) return;
 
         using var indent = ImRaii.PushIndent();
@@ -615,6 +695,226 @@ public sealed class HuntTrainOnMappy : TcModule
         ImGui.SetTooltip(sb.ToString());
     }
 
+    /// <summary>
+    /// 狩獵列車清單，每一列一顆「前往」。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 <b>手動觸發，而且只走到那裡為止。</b>按下去只做一件事：請 Lifestream 把角色帶過去。
+    /// 不選取目標、不開打、不自動接續下一隻——那些都是無人值守的自動化，本模組刻意不做。
+    /// </para>
+    /// <para>
+    /// 🔑 <b>「別的外掛正在移動」寫在表格上方一行，不是每一列各寫一次。</b>
+    /// 那是一個全域狀態，每一列都一樣；重複 20 次只是噪音，而使用者要看的是按鈕為什麼是灰的。
+    /// </para>
+    /// </remarks>
+    private void DrawTrainList()
+    {
+        if (!ImGui.CollapsingHeader($"狩獵列車清單（{uiSnapshot.Count}）###huntTrainList")) return;
+
+        if (!IsEnabled)
+        {
+            ImGui.TextDisabled("? 模組還沒啟用，所以還沒有清單可以列（清單是同步時順手抄下來的）。");
+            return;
+        }
+
+        if (uiSnapshot.Count == 0)
+        {
+            ImGui.TextDisabled("Hunt Helper 的狩獵列車目前是空的。");
+            return;
+        }
+
+        DrawTravelControls();
+
+        if (!ImGui.BeginTable("##huntTrainRows", 4,
+                ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.ScrollY,
+                new Vector2(0f, 220f)))
+            return;
+
+        ImGui.TableSetupScrollFreeze(0, 1);
+        ImGui.TableSetupColumn("目標", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableSetupColumn("區域", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableSetupColumn("座標", ImGuiTableColumnFlags.WidthFixed, 110f);
+        ImGui.TableSetupColumn("前往", ImGuiTableColumnFlags.WidthFixed, 64f);
+        ImGui.TableHeadersRow();
+
+        for (var i = 0; i < uiSnapshot.Count; i++)
+        {
+            var mob = uiSnapshot[i];
+            ImGui.TableNextRow();
+
+            var name = string.IsNullOrWhiteSpace(mob.Name) ? $"#{mob.MobID}" : mob.Name;
+
+            ImGui.TableNextColumn();
+            if (mob.Dead) ImGui.TextDisabled($"{name}（已擊殺）");
+            else ImGui.TextUnformatted(name);
+
+            ImGui.TableNextColumn();
+            var zone = ZoneName(mob.TerritoryID);
+            // 「不知道」要在列上看得見，不要畫一個空白格假裝沒事。
+            if (zone.Length == 0) ImGui.TextDisabled($"? 區域 #{mob.TerritoryID}");
+            else if (mob.Instance > 0) ImGui.TextUnformatted($"{zone}（第 {mob.Instance} 分區）");
+            else ImGui.TextUnformatted(zone);
+
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(
+                $"{mob.Position.X.ToString("F1", CultureInfo.InvariantCulture)}, "
+                + mob.Position.Y.ToString("F1", CultureInfo.InvariantCulture));
+
+            ImGui.TableNextColumn();
+            DrawGoToButton(mob, $"##goto{i}");
+        }
+
+        ImGui.EndTable();
+    }
+
+    /// <summary>清單上方那一排：飛行開關、「下一隻」，以及為什麼按鈕是灰的。</summary>
+    private void DrawTravelControls()
+    {
+        var next = uiSnapshot.FindIndex(x => !x.Dead);
+
+        using (ImRaii.Disabled(!CanTravel || next < 0))
+        {
+            if (ImGui.Button("前往下一隻未擊殺的") && next >= 0)
+                RequestGoTo(uiSnapshot[next]);
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "清單由上往下第一隻還沒標記為已擊殺的目標。" + Environment.NewLine
+                + "「已擊殺」是 Hunt Helper 那邊的標記，本模組只讀不寫。" + Environment.NewLine
+                + "到了就停——不選取目標、不開打、不會自己接著跑下一隻。");
+        }
+
+        ImGui.SameLine();
+
+        var fly = Config.FlyWhenTravelling;
+        if (ImGui.Checkbox("允許飛行", ref fly))
+        {
+            Config.FlyWhenTravelling = fly;
+            Plugin.Instance.Config.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "區域不可飛、或你沒乘坐騎時，Lifestream 會自己退回地面路線，不會因此失敗。"
+                + Environment.NewLine + "本外掛不會替你上坐騎。");
+        }
+
+        // 🔑 按鈕為什麼是灰的，要在列上看得見，不能只放 tooltip。
+        if (navBusy)
+        {
+            ImGui.TextDisabled($"別的外掛正在移動（{navBusyWho}），先讓它跑完。");
+        }
+        else if (!lifestreamAvailable)
+        {
+            ImGui.TextDisabled("未偵測到 Lifestream —— 「前往」需要它（以及 vnavmesh）才能運作。");
+        }
+        else if (next < 0)
+        {
+            ImGui.TextDisabled("清單上每一隻都已標記為已擊殺。");
+        }
+    }
+
+    /// <summary>能不能按「前往」（Lifestream 在，而且沒有別人在移動角色）。</summary>
+    private bool CanTravel => lifestreamAvailable && !navBusy;
+
+    private void DrawGoToButton(HuntHelperIpc.TrainMob mob, string id)
+    {
+        using var disabled = ImRaii.Disabled(!CanTravel);
+        if (ImGui.SmallButton($"前往{id}")) RequestGoTo(mob);
+    }
+
+    /// <summary>把一筆「前往」擱進佇列，等框架執行緒去送（理由見 <see cref="pendingGoTo"/>）。</summary>
+    private void RequestGoTo(HuntHelperIpc.TrainMob mob)
+    {
+        var name = string.IsNullOrWhiteSpace(mob.Name) ? $"#{mob.MobID}" : mob.Name;
+
+        if (mob.TerritoryID == 0)
+        {
+            Svc.Chat.PrintError($"[TC Toolbox] 「{name}」沒有區域資料，無法前往。");
+            return;
+        }
+
+        // 🔴 Hunt Helper 給的是<b>地圖座標</b>，Lifestream 要的是<b>世界座標</b>。
+        //    傳錯不會有錯誤訊息，角色只會被帶到那張圖上不相干的地方。
+        if (!MapCoords.TryHuntHelperMapToWorld(mob.TerritoryID, mob.Position, out var worldX, out var worldZ))
+        {
+            Svc.Chat.PrintError($"[TC Toolbox] 「{name}」的座標換算不出來，無法前往。");
+            return;
+        }
+
+        pendingGoTo = new GoToRequest(mob.TerritoryID, worldX, worldZ, name);
+    }
+
+    /// <summary>真的把請求送給 Lifestream。<b>只在框架執行緒上呼叫。</b></summary>
+    private void ExecuteGoTo(GoToRequest request)
+    {
+        // 從按下按鈕到這一幀之間可能有人開始移動了，所以這裡再確認一次。
+        // 🔑 這不是重複：按鈕的灰階用的是最多 500ms 前的快取，這裡是當下的真值。
+        if (ExternalNav.TryGetActiveMover(out var mover))
+        {
+            Svc.Chat.PrintError($"[TC Toolbox] {mover} 正在移動，這次的「前往」沒有送出。");
+            return;
+        }
+
+        var fly = Config.FlyWhenTravelling;
+
+        if (!ExternalNav.TryGoToMapPoint(request.TerritoryId, request.WorldX, request.WorldZ, fly, out var accepted))
+        {
+            Svc.Chat.PrintError("[TC Toolbox] 找不到 Lifestream，無法前往。");
+            return;
+        }
+
+        if (!accepted)
+        {
+            // ⚠️ 這是<b>正常結果不是錯誤</b>：Lifestream 正在忙、角色不可互動、vnavmesh 沒載入，
+            //    或那個區域沒有任何已解鎖的乙太之光。重試沒有用，要讓使用者知道「沒開始」。
+            Svc.Chat.PrintError(
+                $"[TC Toolbox] Lifestream 沒有接下前往「{request.Label}」的請求"
+                + "（可能它正在忙、角色不可互動、vnavmesh 未載入，或該區沒有已解鎖的乙太之光）。");
+        }
+        else
+        {
+            Svc.Chat.Print($"[TC Toolbox] 出發前往「{request.Label}」。");
+        }
+
+        // 🔴 Information 級：座標換算是這個功能最可能靜默出錯的地方，而「角色被帶到哪裡」
+        //    事後只能靠這一行對證。
+        Svc.Log.Information(
+            $"[{InternalName}] 前往「{request.Label}」：territory={request.TerritoryId}"
+            + $" 世界座標=({request.WorldX.ToString("F1", CultureInfo.InvariantCulture)},"
+            + $" {request.WorldZ.ToString("F1", CultureInfo.InvariantCulture)})"
+            + $" 飛行={fly} Lifestream 接受={accepted}");
+    }
+
+    /// <summary>區域名稱；查不到回空字串（<b>不回一個看起來正常的假名字</b>）。</summary>
+    /// <remarks>📌 每幀每列都會問一次，所以查到的結果快取起來。</remarks>
+    private static readonly Dictionary<uint, string> ZoneNameCache = [];
+
+    private static string ZoneName(uint territoryId)
+    {
+        if (territoryId == 0) return string.Empty;
+        if (ZoneNameCache.TryGetValue(territoryId, out var cached)) return cached;
+
+        var name = string.Empty;
+        try
+        {
+            name = Svc.Data.GetExcelSheet<Lumina.Excel.Sheets.TerritoryType>()
+                      .GetRowOrDefault(territoryId)?.PlaceName.ValueNullable?.Name.ExtractText()
+                   ?? string.Empty;
+        }
+        catch (Exception ex)
+        {
+            // 🔴 這支在 ImGui 的 Draw 路徑上，擲例外的代價是整個模組的設定區被錯誤面板取代。
+            Svc.Log.Warning(ex, $"[HuntTrainOnMappy] 查 territory {territoryId} 的名稱失敗");
+        }
+
+        ZoneNameCache[territoryId] = name;
+        return name;
+    }
     private static void DrawIconSetting(string label, uint current, uint defaultValue, Action<uint> apply)
     {
         using var id = ImRaii.PushId(label);

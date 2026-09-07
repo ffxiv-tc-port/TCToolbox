@@ -23,6 +23,13 @@ internal static class ExternalNav
     private static readonly Lazy<ICallGateSubscriber<uint, byte, bool>> LifestreamTeleportGate =
         new(() => Svc.PluginInterface.GetIpcSubscriber<uint, byte, bool>("Lifestream.Teleport"));
 
+    // 📌 Lifestream/IPC/IPCProvider.cs 的 [EzIPC] public bool GoToMapPoint(uint, float, float, bool)。
+    //    對方的註解逐字寫著「參數順序與型別是對外契約，已有消費端（Mappy 地圖右鍵的
+    //    『移動到這裡』）照此接線，不要改」。座標是<世界座標>的 X 與 Z，不需要 Y——
+    //    抵達之後由 Lifestream 自己向 vnavmesh 問那個 XZ 底下的地板高度。
+    private static readonly Lazy<ICallGateSubscriber<uint, float, float, bool, bool>> LifestreamGoToMapPoint =
+        new(() => Svc.PluginInterface.GetIpcSubscriber<uint, float, float, bool, bool>("Lifestream.GoToMapPoint"));
+
     private static readonly Lazy<ICallGateSubscriber<bool>> VnavNavIsReady =
         new(() => Svc.PluginInterface.GetIpcSubscriber<bool>("vnavmesh.Nav.IsReady"));
 
@@ -331,6 +338,45 @@ internal static class ExternalNav
         }
     }
 
+    /// <summary>
+    /// 請 Lifestream 帶角色去「地圖上的一個點」：跨區時它自己挑最近的乙太之光傳送，
+    /// 最後一段交給 vnavmesh 走（或飛）。
+    /// </summary>
+    /// <param name="territory">目標區域的 <c>TerritoryType</c> 列號。</param>
+    /// <param name="worldX">目標點的<b>世界座標</b> X。</param>
+    /// <param name="worldZ">目標點的<b>世界座標</b> Z。</param>
+    /// <param name="fly">允許用飛行坐騎跑最後一段；不可飛或起飛失敗時 Lifestream 自己退回地面路線。</param>
+    /// <param name="accepted">Lifestream 收下了這次請求（<b>不代表已抵達</b>，用 <c>Lifestream.IsBusy</c> 追蹤）。</param>
+    /// <returns>IPC 呼叫本身是否送達（<see langword="false"/>＝Lifestream 未安裝／未載入）。</returns>
+    /// <remarks>
+    /// <para>
+    /// 🔴 <b>座標一定是世界座標，不是地圖座標。</b>兩者差一個縮放與位移，傳錯不會有任何錯誤訊息——
+    /// 角色只是被帶到那張圖上不相干的地方。地圖座標要先換回世界座標
+    /// （<see cref="MapCoords.TryHuntHelperMapToWorld"/> 之類）再進來。
+    /// </para>
+    /// <para>
+    /// 🔴 <b>絕不用聊天指令 <c>/li</c> 代替這支。</b>空參數的 <c>/li</c> 是跨世界傳送。
+    /// </para>
+    /// <para>
+    /// ⚠️ <c>accepted</c> 為 <see langword="false"/> 是<b>正常結果不是錯誤</b>：區域 id 為 0、
+    /// Lifestream 正在忙、角色不可互動、vnavmesh 沒載入、或該區沒有任何已解鎖的乙太之光。
+    /// 呼叫端該做的是告訴使用者「沒開始」，不是重試。
+    /// </para>
+    /// </remarks>
+    public static bool TryGoToMapPoint(uint territory, float worldX, float worldZ, bool fly, out bool accepted)
+    {
+        try
+        {
+            accepted = LifestreamGoToMapPoint.Value.InvokeFunc(territory, worldX, worldZ, fly);
+            return true;
+        }
+        catch (IpcError ex)
+        {
+            Svc.Log.Warning(ex, "[ExternalNav] 呼叫 Lifestream.GoToMapPoint 失敗");
+            accepted = false;
+            return false;
+        }
+    }
     /// <summary>
     /// 現在有沒有<b>任何一個外掛</b>正在把角色帶往某處。
     /// </summary>
