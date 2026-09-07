@@ -1602,6 +1602,30 @@ public sealed class AutoGardensWorkConfig
     /// <remarks>📌 預設開啟，但沒選種子／土壤或背包沒貨時是安全的無操作。</remarks>
     public bool PlantWhenEmpty = true;
 
+    // ── 無人值守重跑「自動整理」───────────────────────────
+
+    /// <summary>站在自家園圃旁時，每隔一段時間自動跑一輪「自動整理」。</summary>
+    /// <remarks>
+    /// 📌 <b>預設開啟。</b>這是模組裡唯一一個「開著不按也會自己動」的路徑，
+    /// 所以 <see cref="TCToolbox.Core.TcModule.IsManualTrigger"/> 會跟著這格走（開著就不再算「手動觸發」）。
+    /// <para>
+    /// 🔴 <b>預設開啟之所以安全，是因為策略的預設本身是保守的。</b>
+    /// 沒選種子時 <c>目標作物</c> 推不出來，成熟作物一律走 <see cref="OtherMaturePolicy"/>（預設跳過）；
+    /// 施肥預設關、枯萎預設不動、播種沒存貨就是無操作
+    /// ⇒ 一個完全沒設定過的人，這個迴圈能做的只有「護理」（不消耗東西、不可能有壞處）。
+    /// ⚠️ 反過來說：<b>調過策略的人要知道那些策略從此會自己跑</b>，設定畫面上寫明了。
+    /// </para>
+    /// </remarks>
+    public bool AutoLoopEnabled = true;
+
+    /// <summary>兩輪之間至少隔多久（秒）。</summary>
+    /// <remarks>
+    /// 📌 間隔是從<b>上一輪跑完那一刻</b>起算，不是從開始起算——
+    /// 一座 3×8 的庭院跑完一輪本身就要幾十秒，從開始起算的話間隔調小一點就變成幾乎連續不斷地開選單。
+    /// ⚠️ 下限 10 秒、上限 3600 秒，讀取時夾緊（舊設定檔裡的怪值不會讓迴圈每幀跑）。
+    /// </remarks>
+    public int AutoLoopIntervalSeconds = 60;
+
     /// <summary>「自動整理」跑完後在聊天視窗列出逐格的決定（記錄一律會寫，不受這格影響）。</summary>
     /// <remarks>⚠️ 預設<b>關閉</b>：一座 3×8 的庭院會刷 24 行。要查為什麼某一格沒被動到時再打開。</remarks>
     public bool AnnounceEachDecision;

@@ -35,12 +35,22 @@ public sealed unsafe partial class AutoGardensWork : TcModule
         "站在自家（或部隊）庭院的園圃、或房屋內的花盆旁，一鍵批次收穫／護理／施肥附近所有地壟與花盆；" +
         "亦可選定種子與土壤後批次播種。距離太遠或狀態不符的會自動跳過。" +
         "另有「自動整理」：先讀出每一格種了什麼、成熟了沒、枯萎了沒，再依你設定的策略" +
-        "（非目標作物怎麼辦、要不要施肥、枯萎的要不要清掉）逐格決定動作，最後把該重種的種回去。";
+        "（非目標作物怎麼辦、要不要施肥、枯萎的要不要清掉）逐格決定動作，最後把該重種的種回去。"
+        + "另有「自動重跑」（預設開）：只要你人就在園圃旁，每隔一段時間自己跑一輪。不走位、不傳送，戰鬥製作過場或別的外掛正在移動時一律讓開。";
 
     public override ModuleCategory Category => ModuleCategory.Company;
 
-    /// <summary>設定面板按下收穫／護理／施肥／播種才跑一次；開著不按，園圃完全不會被動到。</summary>
-    public override bool IsManualTrigger => true;
+    /// <summary>
+    /// 「手動觸發」分頁要不要收這個模組。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>這裡必須跟著「自動重跑」那個開關走，不能寫死成 <c>true</c>。</b>
+    /// <see cref="TcModule.IsManualTrigger"/> 的判準只有一條：<b>開著但不去按它，遊戲行為完全不變</b>。
+    /// 自動重跑開著的時候這一條就不成立了——模組會自己醒過來動手。
+    /// 繼續聲稱自己是「手動觸發」的失敗形式是靜默的：使用者以為那一頁列的都是
+    /// 「不按就不會動」的東西，而園圃實際上每分鐘都在被動。
+    /// </remarks>
+    public override bool IsManualTrigger => !Config.AutoLoopEnabled;
 
     public override bool HasConfigUI => true;
 
@@ -177,12 +187,20 @@ public sealed unsafe partial class AutoGardensWork : TcModule
         Svc.Framework.Update -= OnUpdate;
         queue.Abort();
         scannedActions.Clear();
+        ResetAutoLoop();
     }
 
     /// <summary>換區後地壟 ObjectId 會重來，掃描結果一律作廢，避免拿到別座庭院的舊狀態。</summary>
     private void OnTerritoryChanged(ushort territoryType) => scannedActions.Clear();
 
-    private void OnUpdate(IFramework framework) => queue.Tick();
+    private void OnUpdate(IFramework framework)
+    {
+        queue.Tick();
+
+        // 🔴 先 Tick 再評估迴圈：兩者的順序決定了「剛跑完的那一幀」算不算閒。
+        //    反過來的話，上一輪的最後一步還在佇列裡，而迴圈已經看到 IsBusy 是 false。
+        TickAutoLoop();
+    }
 
     /// <summary>遊戲字串一律走 Lumina sheet；此表無 EXDSchema 定義，用 RawRow 直讀。</summary>
     private void LoadSheetTexts()
@@ -641,6 +659,37 @@ public sealed unsafe partial class AutoGardensWork : TcModule
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// <see cref="InteractRange"/> 之內有沒有至少一格可種植的容器。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>刻意不複用 <see cref="TryGetGardenPatches"/>。</b>那一支用的是
+    /// <see cref="SearchRange"/>（30 碼），而實際能互動的只有 <see cref="InteractRange"/>（6 碼）。
+    /// 無人值守的迴圈拿 30 碼當閘門的話，使用者只是路過自家庭院就會觸發一輪，
+    /// 而那一輪的每一格都會在「互動地壟」那一步因為距離而跳過——
+    /// 白跑一輪、還把「跳過 N 格」寫進記錄。
+    /// <para>📌 只問「有沒有」，找到第一個就收工；住宅區以外一律回 <see langword="false"/>。</para>
+    /// </remarks>
+    private static bool AnyPatchWithinInteractRange()
+    {
+        var localPlayer = Svc.Objects.LocalPlayer;
+        if (localPlayer == null) return false;
+
+        var housing = HousingManager.Instance();
+        if (housing == null || (housing->OutdoorTerritory == null && housing->IndoorTerritory == null))
+            return false;
+
+        if (!HasGardenPermission(housing)) return false;
+
+        foreach (var obj in Svc.Objects)
+        {
+            if (Vector3.Distance(localPlayer.Position, obj.Position) > InteractRange) continue;
+            if (TryClassify(obj, out _)) return true;
+        }
+
+        return false;
     }
 
     /// <summary>

@@ -48,6 +48,15 @@ internal static class ExternalNav
     private static readonly Lazy<ICallGateSubscriber<Vector3, bool, float, Vector3?>> VnavPointOnFloor =
         new(() => Svc.PluginInterface.GetIpcSubscriber<Vector3, bool, float, Vector3?>("vnavmesh.Query.Mesh.PointOnFloor"));
 
+    // 📌 AutoDuty 與 BossMod 的「正在導航」旗標。兩邊都是實查過的：
+    //    AutoDuty/IPC/IPCProvider.cs 的 [EzIPC] public bool IsNavigating()（前綴取自 InternalName，即 AutoDuty），
+    //    BossmodReborn/BossMod/Framework/IPCProvider.cs 的 Register("AI.IsNavigating", ...)（那支 Register 實作是 "BossMod." + name）。
+    private static readonly Lazy<ICallGateSubscriber<bool>> AutoDutyIsNavigating =
+        new(() => Svc.PluginInterface.GetIpcSubscriber<bool>("AutoDuty.IsNavigating"));
+
+    private static readonly Lazy<ICallGateSubscriber<bool>> BossModAiIsNavigating =
+        new(() => Svc.PluginInterface.GetIpcSubscriber<bool>("BossMod.AI.IsNavigating"));
+
     // 只拿來分辨「沒安裝」與「安裝了但網格沒好」。挑 Nav.BuildProgress 是因為它唯讀、
     // 零副作用，而且與網格狀態無關——它一定註冊得起來，所以擲例外＝真的沒這個外掛。
     private static readonly Lazy<ICallGateSubscriber<float>> VnavBuildProgress =
@@ -318,6 +327,53 @@ internal static class ExternalNav
         {
             Svc.Log.Warning(ex, "[ExternalNav] 呼叫 vnavmesh.SimpleMove.PathfindAndMoveTo 失敗");
             started = false;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 現在有沒有<b>任何一個外掛</b>正在把角色帶往某處。
+    /// </summary>
+    /// <param name="mover">
+    /// 第一個回報「在動」的外掛名稱（給 tooltip 與記錄用）；回 <see langword="false"/> 時是空字串。
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// 🔴 <b>失敗方向是「沒人在動」。</b>四支端點隨便哪一支都可能因為對方沒裝而打不通，
+    /// 而打不通的意思就是「那個外掛不可能正在移動角色」——語意上就是 false。
+    /// 所以這裡不把「問不到」當成「不知道所以當成在動」；否則沒裝 Lifestream 的人會永遠看到按鈕是灰的。
+    /// </para>
+    /// <para>
+    /// ⚠️ vnavmesh 這邊<b>兩個狀態都要問</b>：<c>Path.IsRunning</c> 只涵蓋「已經在走」，
+    /// 剛按下去、路徑還在背景算的那幾百毫秒它是 false（見 <see cref="IsVnavmeshPathRunning"/>）。
+    /// 只問它的話，使用者連按兩下就會在那個空窗裡把第二個請求送出去。
+    /// </para>
+    /// </remarks>
+    public static bool TryGetActiveMover(out string mover)
+    {
+        mover = string.Empty;
+
+        if (Query(LifestreamIsBusy)) { mover = "Lifestream"; return true; }
+        if (IsVnavmeshPathRunning() || IsVnavmeshPathfindInProgress()) { mover = "vnavmesh"; return true; }
+        if (Query(AutoDutyIsNavigating)) { mover = "AutoDuty"; return true; }
+        if (Query(BossModAiIsNavigating)) { mover = "BossMod AI"; return true; }
+
+        return false;
+    }
+
+    /// <summary>問一個無參數的 bool 端點；打不通一律回 <see langword="false"/>。</summary>
+    /// <remarks>
+    /// 🔴 <c>IpcError</c> 不只是「沒註冊」：對方把端點型別改掉時擲出的是 <c>IpcTypeMismatchError</c>，
+    /// 而它<b>不是</b> <c>IpcNotReadyError</c> 的子型別——兩種都要接住，否則會變成每幀擲一次例外。
+    /// </remarks>
+    private static bool Query(Lazy<ICallGateSubscriber<bool>> gate)
+    {
+        try
+        {
+            return gate.Value.InvokeFunc();
+        }
+        catch (IpcError)
+        {
             return false;
         }
     }

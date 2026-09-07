@@ -45,6 +45,45 @@ public sealed unsafe partial class AutoGardensWork
     /// </remarks>
     private static readonly TimeSpan DisposeConfirmWait = TimeSpan.FromSeconds(3);
 
+    /// <summary>「自動重跑」兩輪之間的間隔下限／上限（秒）。</summary>
+    /// <remarks>
+    /// 🔴 下限不是美觀問題。一輪要對每一格各開一次選單，24 格跑完本來就要幾十秒；
+    /// 允許把間隔設成 1 秒等於「永遠有一輪在跑」，使用者會發現自己的角色再也不能做別的事。
+    /// ⚠️ 夾緊發生在<b>讀取</b>那一刻，不是寫入那一刻——舊設定檔或手改過的 JSON 帶進來的怪值
+    /// （0、負數）也一樣被擋住。只夾寫入端的話，那些值會靜靜地變成「每幀跑一輪」。
+    /// </remarks>
+    private const int AutoLoopMinSeconds = 10;
+
+    private const int AutoLoopMaxSeconds = 3600;
+
+    /// <summary>模組啟用（或重新登入）之後的緩衝，避免使用者還在看設定畫面就自己動起來。</summary>
+    private static readonly TimeSpan AutoLoopStartGrace = TimeSpan.FromSeconds(10);
+
+    /// <summary>閘門評估的最短間隔（毫秒）。</summary>
+    /// <remarks>
+    /// 📌 為什麼需要：閘門沒過的時候<b>不會</b>把下一輪的時間往後推（否則「戰鬥了一下」就會
+    /// 白白延後一整個週期），所以沒有這道節流的話，只要條件一直不成立就是每幀掃一次物件表。
+    /// </remarks>
+    private const int AutoLoopGateIntervalMs = 2_000;
+
+    private string AutoLoopGateKey => $"{InternalName}-AutoLoopGate";
+
+    /// <summary>下一輪最早可以在什麼時候開始（UTC）。<c>MinValue</c>＝還沒排過（會先吃緩衝）。</summary>
+    private DateTime nextAutoLoopUtc = DateTime.MinValue;
+
+    /// <summary>上一幀佇列是不是忙著。用來偵測「busy → idle」那個轉換。</summary>
+    /// <remarks>
+    /// 🔑 間隔要從<b>跑完</b>那一刻起算，而且不管上一輪是誰發起的——使用者剛手動按完
+    /// 一輪收穫，自動重跑不該在下一幀就接著開一輪。這個旗標是唯一能分辨那個轉換的東西。
+    /// </remarks>
+    private bool loopSawQueueBusy;
+
+    /// <summary>這一輪是自動重跑發起的（＝逐格記錄降級、不進聊天）。</summary>
+    private bool loopRoundQuiet;
+
+    /// <summary>上一次閘門擋下來的理由，只給設定畫面看（空字串＝沒被擋）。</summary>
+    private string lastLoopBlockReason = string.Empty;
+
     // ── 狀態擷取 ────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -91,7 +130,7 @@ public sealed unsafe partial class AutoGardensWork
         if (job.CropItemId == 0 && cropName.Length > 0)
             job.CropItemId = GardenCropData.CropIdByName(cropName);
 
-        Svc.Log.Information(
+        LogPerPatch(
             $"[{InternalName}] 地壟 {job.GameObjectId:X} 狀態＝{state}"
             + $"，作物 id＝{job.CropItemId}"
             + (job.CropItemId == 0 && cropName.Length > 0 ? $"（名稱「{cropName}」查不到對應道具）" : string.Empty));
@@ -196,7 +235,7 @@ public sealed unsafe partial class AutoGardensWork
             : $"{optionText}：{job.Reason}" + (job.Replant ? "（稍後重種）" : string.Empty);
 
         autoDecisions.Add(line);
-        Svc.Log.Information($"[{InternalName}] 地壟 {job.GameObjectId:X} → {line}");
+        LogPerPatch($"[{InternalName}] 地壟 {job.GameObjectId:X} → {line}");
 
         if (Config.AnnounceEachDecision)
             Svc.Chat.Print($"[TC Toolbox] 園圃：{line}");
@@ -240,13 +279,24 @@ public sealed unsafe partial class AutoGardensWork
     /// <summary>
     /// 「自動整理」：對附近每一格讀狀態、依策略動作，最後把該重種的種回去。
     /// </summary>
-    private void StartAutoBatch()
+    /// <param name="startedByLoop">
+    /// 這一輪是「自動重跑」發起的（<see langword="false"/>＝使用者自己按的按鈕）。
+    /// 🔴 它只影響<b>吵不吵</b>，不影響任何一個決策：決策與佇列兩條路徑完全共用，
+    /// 分岔的話遲早會變成「手動按跟自動跑做出來的事不一樣」，而那種差異查起來極痛苦。
+    /// </param>
+    private void StartAutoBatch(bool startedByLoop = false)
     {
         if (queue.IsBusy) return;
 
+        loopRoundQuiet = startedByLoop;
+
         if (!TryGetGardenPatches(out var patches, out var error))
         {
-            Svc.Chat.PrintError($"[TC Toolbox] {error}");
+            // 🔴 自動重跑的失敗不進聊天：閘門剛剛才確認過互動距離內有花盆，走到這裡
+            //    多半只是狀態在這一瞬間變了（被傳送出去、權限判定翻轉）。
+            //    每個週期印一次紅字，比沒有這個功能還糟。
+            if (startedByLoop) Svc.Log.Debug($"[{InternalName}] 自動重跑取消：{error}");
+            else Svc.Chat.PrintError($"[TC Toolbox] {error}");
             return;
         }
 
@@ -256,7 +306,7 @@ public sealed unsafe partial class AutoGardensWork
         autoDecisions.Clear();
 
         var targetCrop = GardenCropData.CropOfSeed(Config.SeedItemId);
-        Svc.Log.Information(
+        LogPerPatch(
             $"[{InternalName}] 自動整理開始：{patches.Count} 格；目標種子 {Config.SeedItemId}"
             + $" → 目標作物 {targetCrop}；策略 目標成熟={Config.TargetMaturePolicy}"
             + $" 非目標成熟={Config.OtherMaturePolicy} 施肥={Config.FertilizeMode}"
@@ -279,13 +329,141 @@ public sealed unsafe partial class AutoGardensWork
             {
                 lastSummary = $"園圃「自動整理」完成：處理 {doneCount} 格、跳過 {skippedCount} 格"
                               + (replantCount > 0 ? $"，其中重種 {replantCount} 格" : string.Empty);
-                Svc.Chat.Print($"[TC Toolbox] {lastSummary}");
-                Svc.Log.Information($"[{InternalName}] {lastSummary}");
+                AnnounceRoundResult();
                 return true;
             });
 
             return true;
         });
+    }
+
+    // ── 無人值守重跑 ────────────────────────────────────────────────────────
+
+    /// <summary>夾緊之後的重跑間隔（秒）。</summary>
+    private int AutoLoopSeconds =>
+        Math.Clamp(Config.AutoLoopIntervalSeconds, AutoLoopMinSeconds, AutoLoopMaxSeconds);
+
+    /// <summary>把下一輪推到「現在 ＋ 一個間隔」。</summary>
+    private void PostponeAutoLoop() => nextAutoLoopUtc = DateTime.UtcNow.AddSeconds(AutoLoopSeconds);
+
+    /// <summary>模組停用時把排程清掉，下次啟用重新吃一次緩衝。</summary>
+    private void ResetAutoLoop()
+    {
+        nextAutoLoopUtc = DateTime.MinValue;
+        loopSawQueueBusy = false;
+        loopRoundQuiet = false;
+        lastLoopBlockReason = string.Empty;
+    }
+
+    /// <summary>
+    /// 每一幀問一次：現在該不該自己開一輪「自動整理」。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 <b>這裡不走位、也不叫任何人走位。</b>條件是「站在有花盆的地方」而不是
+    /// 「走去有花盆的地方」——後者才是需要使用者裁決的自動化，這個功能刻意不做。
+    /// </para>
+    /// <para>
+    /// 🔑 <b>決策與佇列與手動按鈕完全共用</b>：這支唯一做的事是決定「要不要呼叫
+    /// <see cref="StartAutoBatch"/>」，一格園圃該做什麼、怎麼做，一行都沒有另外寫。
+    /// </para>
+    /// <para>
+    /// 📌 <b>擋下來的時候一律靜默。</b>「附近沒花盆」「正在戰鬥」是常態不是錯誤，
+    /// 每個週期報一次的話這個功能會變成噪音來源。理由留在設定畫面上給想知道的人看。
+    /// </para>
+    /// </remarks>
+    private void TickAutoLoop()
+    {
+        // 🔴 忙碌追蹤要在「開關關著」之前做：關著的時候照樣要記住佇列跑完了，
+        //    否則使用者一打開開關，那個殘留的 true 會讓第一輪被無謂地延後一個週期。
+        if (queue.IsBusy)
+        {
+            loopSawQueueBusy = true;
+            return;
+        }
+
+        if (loopSawQueueBusy)
+        {
+            loopSawQueueBusy = false;
+            loopRoundQuiet = false;
+            PostponeAutoLoop();
+            return;
+        }
+
+        if (!Config.AutoLoopEnabled)
+        {
+            lastLoopBlockReason = string.Empty;
+            return;
+        }
+
+        // 第一次（含剛啟用、剛登入）先給一段緩衝，不要在使用者還盯著設定畫面時就動起來。
+        if (nextAutoLoopUtc == DateTime.MinValue)
+        {
+            nextAutoLoopUtc = DateTime.UtcNow + AutoLoopStartGrace;
+            return;
+        }
+
+        if (DateTime.UtcNow < nextAutoLoopUtc) return;
+
+        // 到期之後才開始評估閘門，而且評估本身也節流（理由見 AutoLoopGateIntervalMs）。
+        if (!Throttle.Pass(AutoLoopGateKey, AutoLoopGateIntervalMs)) return;
+
+        if (AutomationGate.TryGetBusyReason(out var busy))
+        {
+            lastLoopBlockReason = busy;
+            return;
+        }
+
+        if (!AnyPatchWithinInteractRange())
+        {
+            lastLoopBlockReason = "互動距離內沒有園圃地壟或花盆";
+            return;
+        }
+
+        lastLoopBlockReason = string.Empty;
+
+        // 先排程再開跑：這一輪若在中途被逾時中止（佇列被清空、彙總那一步永遠不會跑到），
+        // 這個值就是唯一擋住「立刻再開一輪」的東西。
+        PostponeAutoLoop();
+        StartAutoBatch(startedByLoop: true);
+    }
+
+    // ── 記錄 ────────────────────────────────────────────────────────────────
+
+    /// <summary>逐格的診斷記錄：手動按的時候是 <c>Information</c>，自動重跑時降成 <c>Debug</c>。</summary>
+    /// <remarks>
+    /// 🔴 <b>降級只發生在自動重跑這條新路徑上，手動那條一個字都沒改。</b>
+    /// 一輪 24 格會寫約 48 行；每分鐘一輪就是每小時近三千行，那足以把使用者記錄檔裡
+    /// <b>別的</b>東西淹掉——包含事後要拿來查這個功能自己出了什麼事的那些行。
+    /// <para>
+    /// 📌 使用者的 <c>LogLevel</c> 是 1，<c>Debug</c> 收得到（真正的盲區只有 Verbose），
+    /// 所以降級不等於丟掉，需要時仍然查得到；而每一輪的<b>結果</b>照樣是 Information。
+    /// </para>
+    /// </remarks>
+    private void LogPerPatch(string message)
+    {
+        if (loopRoundQuiet) Svc.Log.Debug(message);
+        else Svc.Log.Information(message);
+    }
+
+    /// <summary>一輪跑完的結果。</summary>
+    /// <remarks>
+    /// 📌 自動重跑<b>什麼都沒做的時候完全靜默</b>（那是絕大多數的輪次）；
+    /// 真的動了手才寫一行 <c>Information</c>，而且不進聊天視窗。
+    /// 手動按的那條路徑維持原本的行為：聊天一行、記錄一行，做了幾格都照報。
+    /// </remarks>
+    private void AnnounceRoundResult()
+    {
+        if (!loopRoundQuiet)
+        {
+            Svc.Chat.Print($"[TC Toolbox] {lastSummary}");
+            Svc.Log.Information($"[{InternalName}] {lastSummary}");
+            return;
+        }
+
+        if (doneCount == 0) return;
+
+        Svc.Log.Information($"[{InternalName}] 自動重跑：{lastSummary}");
     }
 
     // ── 設定 UI ─────────────────────────────────────────────────────────────
@@ -309,6 +487,10 @@ public sealed unsafe partial class AutoGardensWork
                 "再依策略決定收穫／護理／施肥／處理／播種，最後把該重種的種回去。\n" +
                 "策略預設是保守的：非目標作物跳過、不施肥、枯萎不動。");
         }
+
+        ImGui.Spacing();
+        DrawAutoLoopSection();
+        ImGui.Spacing();
 
         using (ImRaii.PushIndent())
         {
@@ -389,6 +571,95 @@ public sealed unsafe partial class AutoGardensWork
         }
     }
 
+    /// <summary>「自動重跑」那一小區的 UI。</summary>
+    /// <remarks>
+    /// 🔑 狀態那一行刻意放在<b>列上</b>而不是 tooltip：使用者要能一眼看出「它現在到底會不會動」。
+    /// tooltip 藏的是「為什麼」，不是「有沒有問題」。
+    /// </remarks>
+    private void DrawAutoLoopSection()
+    {
+        var loop = Config.AutoLoopEnabled;
+        if (ImGui.Checkbox("自動重跑（站在園圃旁就每隔一段時間跑一輪）", ref loop))
+        {
+            Config.AutoLoopEnabled = loop;
+            Plugin.Instance.Config.Save();
+            ResetAutoLoop();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "打開之後，只要你人站在自家（或有權限的）園圃／花盆旁邊，模組就會自己\n" +
+                "每隔一段時間跑一輪上面那個「自動整理」，用的是同一套策略。\n" +
+                "\n" +
+                "不會走位、不會傳送、不會替你上坐騎——只處理站得到的那幾格。\n" +
+                "戰鬥中、製作中、過場中、別的外掛正在移動角色時一律讓開。\n" +
+                "\n" +
+                "⚠️ 你在上面調的策略從此會自己跑。不想讓它自己動的話關掉這格，\n" +
+                "四顆手動按鈕與「開始自動整理」按鈕完全不受影響。");
+        }
+
+        using var indent = ImRaii.PushIndent();
+
+        ImGui.SetNextItemWidth(220f);
+        var seconds = Config.AutoLoopIntervalSeconds;
+        if (ImGui.SliderInt("重跑間隔（秒）", ref seconds, AutoLoopMinSeconds, 600))
+        {
+            Config.AutoLoopIntervalSeconds = seconds;
+            Plugin.Instance.Config.Save();
+            ResetAutoLoop();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "從「上一輪跑完」那一刻起算，不是從開始起算。\n" +
+                $"下限 {AutoLoopMinSeconds} 秒：一輪本身就要幾十秒，設得比它短等於永遠有一輪在跑。\n" +
+                "作物的成熟是以小時計的，這個值不必調小。");
+        }
+
+        DrawAutoLoopStatus();
+    }
+
+    /// <summary>自動重跑現在到底會不會動——一句話講完。</summary>
+    private void DrawAutoLoopStatus()
+    {
+        if (!Config.AutoLoopEnabled)
+        {
+            ImGui.TextDisabled("目前只會在你按下按鈕時才動。");
+            return;
+        }
+
+        if (!IsEnabled)
+        {
+            ImGui.TextDisabled("? 模組還沒啟用，所以自動重跑也還沒開始。");
+            return;
+        }
+
+        if (queue.IsBusy)
+        {
+            ImGui.TextDisabled($"正在跑：{CurrentStepName}");
+            return;
+        }
+
+        if (lastLoopBlockReason.Length > 0)
+        {
+            ImGui.TextDisabled($"目前讓開中：{lastLoopBlockReason}");
+            return;
+        }
+
+        // 🔴 「不知道」要看得見：還沒排過班就顯示問號，不要畫一個看起來很具體的 0 秒。
+        if (nextAutoLoopUtc == DateTime.MinValue)
+        {
+            ImGui.TextDisabled("? 還沒排定下一輪（剛啟用，等一下就會開始）。");
+            return;
+        }
+
+        var remaining = nextAutoLoopUtc - DateTime.UtcNow;
+        ImGui.TextDisabled(remaining > TimeSpan.Zero
+            ? $"下一輪約 {remaining.TotalSeconds:F0} 秒後（條件符合才會真的跑）。"
+            : "隨時可以開始，正在等條件符合。");
+    }
     /// <summary>一個策略下拉。</summary>
     /// <remarks>
     /// 🔴 tooltip 必須在 <c>BeginCombo</c> 之後、還沒畫任何選項之前問 <c>IsItemHovered</c>：
