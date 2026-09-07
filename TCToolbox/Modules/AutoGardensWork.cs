@@ -27,11 +27,15 @@ namespace TCToolbox.Modules;
 /// 走 PopupMenu 條目、避開台服首行標題偏移陷阱），tick 狀態機逐步推進。
 /// 參考 DailyRoutines AutoGardensWork 設計重寫；DR 的 EventStart 封包互動已改為標準物件互動。
 /// </summary>
-public sealed unsafe class AutoGardensWork : TcModule
+public sealed unsafe partial class AutoGardensWork : TcModule
 {
     public override string InternalName => "AutoGardensWork";
     public override string DisplayName => "自動園圃作業";
-    public override string Description => "站在自家（或部隊）庭院的園圃、或房屋內的花盆旁，一鍵批次收穫／護理／施肥附近所有地壟與花盆；亦可選定種子與土壤後批次播種。距離太遠或狀態不符的會自動跳過。";
+    public override string Description =>
+        "站在自家（或部隊）庭院的園圃、或房屋內的花盆旁，一鍵批次收穫／護理／施肥附近所有地壟與花盆；" +
+        "亦可選定種子與土壤後批次播種。距離太遠或狀態不符的會自動跳過。" +
+        "另有「自動整理」：先讀出每一格種了什麼、成熟了沒、枯萎了沒，再依你設定的策略" +
+        "（非目標作物怎麼辦、要不要施肥、枯萎的要不要清掉）逐格決定動作，最後把該重種的種回去。";
 
     public override ModuleCategory Category => ModuleCategory.Company;
 
@@ -68,6 +72,13 @@ public sealed unsafe class AutoGardensWork : TcModule
         Tend,
         Fertilize,
         Plant,
+
+        /// <summary>處理掉（清除）作物。<b>不可回復</b>；只有「自動整理」在使用者明確選了那個策略時才會排入。</summary>
+        Dispose,
+
+        /// <summary>自動整理：先讀這一格的狀態，再依使用者的策略決定要做什麼。</summary>
+        Auto,
+
         Scan,
     }
 
@@ -87,6 +98,27 @@ public sealed unsafe class AutoGardensWork : TcModule
 
         /// <summary>是否已對此地壟發出互動（決定收尾時要不要等互動狀態結束）。</summary>
         public bool Interacted;
+
+        /// <summary>這一格的 GameObjectId（重種佇列要用；只存 id，不存指標）。</summary>
+        public ulong GameObjectId;
+
+        /// <summary>Talk 讀到的狀態。<c>Unknown</c>＝沒讀到（一律不動它）。</summary>
+        public PatchState State;
+
+        /// <summary>Talk 讀到的作物 item id；0＝不明。</summary>
+        public uint CropItemId;
+
+        /// <summary>Talk 已經讀過了（多頁對話時只採信第一次讀到的那一句）。</summary>
+        public bool StateCaptured;
+
+        /// <summary>這一格實際要做的動作。非 Auto 的批次在排隊時就等於 action。</summary>
+        public GardenAction Chosen;
+
+        /// <summary>做完之後要不要把目標作物種回去（Auto 專用，排在同一輪的最後）。</summary>
+        public bool Replant;
+
+        /// <summary>決策理由（記錄與聊天回報用）。</summary>
+        public string Reason = string.Empty;
     }
 
     private readonly TaskQueue queue = new();
@@ -97,6 +129,17 @@ public sealed unsafe class AutoGardensWork : TcModule
     private string textFertilize = "施肥";
     private string textTend = "護理";
     private string textHarvest = "收穫";
+
+    // ── 狀態台詞（同一張表的第 0／7～10 列）。這是作物狀態的唯一來源。──────────
+    // 🔴 這幾行不是裝飾：本 pin 的 FFXIVClientStructs 沒有任何園圃作物欄位，
+    //    互動時遊戲顯示的這句話就是「種了什麼、成熟了沒、枯萎了沒」的全部證據。
+    //    fallback 是 2026-09-08 直讀台服 sqpack 取得的實際值（不是手打的）。
+    private string textPlotEmpty = "地壟裡沒有種任何東西。";
+    private string textStatusDead = "已經枯萎了……";
+    private string textStatusVigorous = "正茁壯成長。";
+    private string textStatusDepressed = "的狀態不太好……";
+    private string textStatusRipe = "已經成熟了。";
+    private string textDispose = "處理";
 
     private int doneCount;
     private int skippedCount;
@@ -158,6 +201,15 @@ public sealed unsafe class AutoGardensWork : TcModule
             textFertilize = Read(3, textFertilize);
             textTend = Read(4, textTend);
             textHarvest = Read(6, textHarvest);
+            textDispose = Read(5, textDispose);
+
+            // 第 0／7~10 列是狀態台詞。表裡存的只有「句尾那段固定文字」，
+            // 句首會變動的作物名是一個 item 巨集，執行期才會被展開成作物名。
+            textPlotEmpty = Read(0, textPlotEmpty);
+            textStatusDead = Read(7, textStatusDead);
+            textStatusVigorous = Read(8, textStatusVigorous);
+            textStatusDepressed = Read(9, textStatusDepressed);
+            textStatusRipe = Read(10, textStatusRipe);
         }
         catch (Exception ex)
         {
@@ -171,6 +223,7 @@ public sealed unsafe class AutoGardensWork : TcModule
         GardenAction.Tend => textTend,
         GardenAction.Fertilize => textFertilize,
         GardenAction.Plant => textPlant,
+        GardenAction.Dispose => textDispose,
         _ => textCancel,
     };
 
@@ -231,7 +284,9 @@ public sealed unsafe class AutoGardensWork : TcModule
     /// <param name="soilItemId">播種用土壤。</param>
     private void EnqueuePatch(ulong gameObjectId, GardenAction action, uint fertilizerItemId, uint seedItemId, uint soilItemId)
     {
-        var job = new PatchJob();
+        // 🔴 只存 GameObjectId，不存 IGameObject 也不存位址：每一步都自己重查。
+        //    本 pin 的 ObjectTable 包裝是每格預配、就地改寫 Address 的，跨幀持有會靜默換人。
+        var job = new PatchJob { GameObjectId = gameObjectId, Chosen = action };
 
         queue.Enqueue("互動地壟", () =>
         {
@@ -254,6 +309,12 @@ public sealed unsafe class AutoGardensWork : TcModule
         queue.Enqueue("等待選單開啟", () =>
         {
             if (job.Skipped) return true;
+
+            // 🔑 作物狀態的唯一來源就是這句話，而且點掉 Talk 之後就沒了 ——
+            //    所以一定要在 ClickTalkIfOpen 之前讀。非 Auto 的動作也照讀（純唯讀、零成本），
+            //    這樣事後看記錄時永遠知道當時那一格是什麼狀態。
+            CaptureTalkState(job);
+
             if (UiHelper.ClickTalkIfOpen()) return false;
             return UiHelper.IsAddonReady("SelectString") ? true : false;
         }, 8_000);
@@ -284,7 +345,17 @@ public sealed unsafe class AutoGardensWork : TcModule
                 return true;
             }
 
-            var target = ActionText(action);
+            // Auto：狀態已經在上一步從 Talk 讀好了，這裡才把它變成一個具體動作。
+            if (action == GardenAction.Auto && !ResolveAutoAction(job, entries))
+            {
+                // 決定是「這一格什麼都不做」——取消離開，算成跳過。
+                job.Skipped = true;
+                skippedCount++;
+                UiHelper.SelectStringEntry(addon, cancelIndex >= 0 ? cancelIndex : -1);
+                return true;
+            }
+
+            var target = ActionText(job.Chosen);
             var index = entries.FindIndex(x => x.Contains(target, StringComparison.Ordinal));
             if (index < 0)
             {
@@ -299,15 +370,15 @@ public sealed unsafe class AutoGardensWork : TcModule
             return true;
         }, 5_000);
 
-        switch (action)
-        {
-            case GardenAction.Fertilize:
-                EnqueueFertilizeSteps(job, fertilizerItemId);
-                break;
-            case GardenAction.Plant:
-                EnqueuePlantSteps(job, seedItemId, soilItemId);
-                break;
-        }
+        // 🔴 後續步驟必須在「排隊的那一刻」就決定排不排，而 Auto 要等真的互動、讀到 Talk
+        //    之後才知道要做什麼 ⇒ Auto 一律把三組後續步驟全部排進來，每一組自己看
+        //    job.Chosen 決定要不要動。沒被選中的那幾組是零成本的直接返回。
+        if (action is GardenAction.Fertilize or GardenAction.Auto)
+            EnqueueFertilizeSteps(job, fertilizerItemId);
+        if (action is GardenAction.Plant or GardenAction.Auto)
+            EnqueuePlantSteps(job, seedItemId, soilItemId);
+        if (action == GardenAction.Auto)
+            EnqueueDisposeSteps(job);
 
         queue.Enqueue("等待互動結束", () =>
         {
@@ -320,7 +391,13 @@ public sealed unsafe class AutoGardensWork : TcModule
             if (Svc.Condition[ConditionFlag.OccupiedInQuestEvent]) return false;
 
             if (!job.Skipped)
+            {
                 doneCount++;
+                // 🔴 重種必須等這一格真的做完才登記：中途逾時中止時佇列會被清掉，
+                //    這裡沒跑到就不會有人去種——比「先登記後失敗」安全。
+                if (job.Replant) replantQueue.Add(job.GameObjectId);
+            }
+
             return true;
         }, 15_000);
     }
@@ -329,7 +406,7 @@ public sealed unsafe class AutoGardensWork : TcModule
     {
         queue.Enqueue("開啟肥料選單", () =>
         {
-            if (job.Skipped) return true;
+            if (job.Skipped || job.Chosen != GardenAction.Fertilize) return true;
             if (UiHelper.IsAddonReady("SelectString")) return false; // 等選單收起
 
             var fertilizer = FindInventoryItem(fertilizerItemId);
@@ -360,7 +437,7 @@ public sealed unsafe class AutoGardensWork : TcModule
 
         queue.Enqueue("點選施肥", () =>
         {
-            if (job.Skipped) return true;
+            if (job.Skipped || job.Chosen != GardenAction.Fertilize) return true;
 
             var context = UiHelper.GetAddon("ContextMenu");
             if (!UiHelper.IsReady(context)) return false;
@@ -411,7 +488,7 @@ public sealed unsafe class AutoGardensWork : TcModule
     {
         queue.Enqueue("填入種子與土壤", () =>
         {
-            if (job.Skipped) return true;
+            if (job.Skipped || job.Chosen != GardenAction.Plant) return true;
 
             var addon = UiHelper.GetAddon("HousingGardening");
             if (!UiHelper.IsReady(addon)) return false;
@@ -446,7 +523,7 @@ public sealed unsafe class AutoGardensWork : TcModule
 
         queue.Enqueue("確認播種", () =>
         {
-            if (job.Skipped) return true;
+            if (job.Skipped || job.Chosen != GardenAction.Plant) return true;
 
             if (UiHelper.IsAddonReady("SelectYesno"))
             {
@@ -795,7 +872,13 @@ public sealed unsafe class AutoGardensWork : TcModule
             return;
         }
 
-        ImGui.TextUnformatted("批次作業（對附近所有地壟與花盆）：");
+        DrawAutoSection();
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        ImGui.TextUnformatted("單一動作批次（對附近所有地壟與花盆，不看狀態）：");
         if (ImGui.Button($"{textHarvest}##garden"))
             StartBatch(GardenAction.Harvest);
         ImGui.SameLine();
