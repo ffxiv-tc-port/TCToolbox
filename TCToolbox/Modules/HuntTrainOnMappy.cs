@@ -616,14 +616,14 @@ public sealed class HuntTrainOnMappy : TcModule
 
         ImGui.TextDisabled("預設值取自 Mappy 畫同類目標時用的圖示。覺得不好認就改成別的編號。");
 
-        DrawIconSetting("存活目標", Config.AliveIconId, DefaultAliveIconId, value =>
+        GameIcons.DrawIconIdSetting("存活目標", Config.AliveIconId, DefaultAliveIconId, value =>
         {
             Config.AliveIconId = value;
             Plugin.Instance.Config.Save();
             lastSignature = string.Empty;
         });
 
-        DrawIconSetting("已擊殺目標", Config.DeadIconId, DefaultDeadIconId, value =>
+        GameIcons.DrawIconIdSetting("已擊殺目標", Config.DeadIconId, DefaultDeadIconId, value =>
         {
             Config.DeadIconId = value;
             Plugin.Instance.Config.Save();
@@ -914,38 +914,5 @@ public sealed class HuntTrainOnMappy : TcModule
 
         ZoneNameCache[territoryId] = name;
         return name;
-    }
-    private static void DrawIconSetting(string label, uint current, uint defaultValue, Action<uint> apply)
-    {
-        using var id = ImRaii.PushId(label);
-
-        // 哨兵 0 ＝ 跟隨內建預設值；畫圖與輸入框一律顯示「實際會用的編號」，不要讓使用者看到 0。
-        var effective = current is 0 ? defaultValue : current;
-
-        var wrap = GameIcons.TryGet(effective);
-        if (wrap != null)
-        {
-            ImGui.Image(wrap.Handle, new Vector2(24f, 24f));
-            ImGui.SameLine();
-        }
-
-        ImGui.SetNextItemWidth(120f);
-        var value = (int)effective;
-        if (ImGui.InputInt(label, ref value))
-        {
-            // 🔴 清空／輸入 0 一律寫回哨兵 0，不要寫具體常數：寫具體常數＝把編號烙死，
-            //    日後修正 Default…IconId 對這個人靜默無效。
-            apply(value <= 0 ? 0u : (uint)value);
-        }
-
-        ImGui.SameLine();
-        if (ImGui.SmallButton($"預設（目前 {defaultValue}）")) apply(0);
-
-        if (ImGui.IsItemHovered())
-        {
-            ImGui.SetTooltip(
-                $"寫回「跟隨內建預設值」（目前是 {defaultValue}）。\n"
-                + "跟隨的意思是：日後內建預設值若有修正，你會自動吃到。");
-        }
     }
 }

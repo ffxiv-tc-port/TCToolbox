@@ -1,3 +1,5 @@
+using System;
+using Dalamud.Interface.Utility.Raii;
 using System.Collections.Generic;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Textures;
@@ -97,5 +99,53 @@ public static class GameIcons
         return ImGui.ImageButton(wrap.Handle, new System.Numerics.Vector2(size, size),
                                  System.Numerics.Vector2.Zero, System.Numerics.Vector2.One, 0,
                                  new System.Numerics.Vector4(0f, 0f, 0f, 0f), tint);
+    }
+
+    /// <summary>
+    /// 「圖示編號」設定控制項：畫出目前的圖示 ＋ 一個輸入框 ＋ 一顆「預設」。
+    /// </summary>
+    /// <param name="label">欄位標籤。</param>
+    /// <param name="current">目前的設定值（<b>哨兵 0＝跟隨內建預設值</b>）。</param>
+    /// <param name="defaultValue">內建預設值。</param>
+    /// <param name="apply">寫回設定（傳 0 代表「跟隨內建預設值」）。</param>
+    /// <remarks>
+    /// <para>
+    /// 📌 <b>存在的理由</b>：圖示的<b>存在</b>可以離線驗證（直讀 sqpack 的 index），
+    /// <b>長什麼樣子</b>不行。所以凡是寫死圖示編號的地方都該讓使用者自己換，
+    /// 而且把圖示直接畫出來讓他對照——不然「這顆圖示在台服長得不對」只能等改版。
+    /// </para>
+    /// <para>
+    /// 🔴 <b>清空／輸入 0 一律寫回哨兵 0，不要寫具體常數。</b>寫具體常數等於把編號烙死：
+    /// 日後修正內建預設值時，對<b>所有既有使用者靜默無效</b>，哨兵機制形同虛設。
+    /// </para>
+    /// </remarks>
+    public static void DrawIconIdSetting(string label, uint current, uint defaultValue, Action<uint> apply)
+    {
+        using var id = ImRaii.PushId(label);
+
+        // 哨兵 0 ＝ 跟隨內建預設值；畫圖與輸入框一律顯示「實際會用的編號」，不要讓使用者看到 0。
+        var effective = current is 0 ? defaultValue : current;
+
+        var wrap = TryGet(effective);
+        if (wrap != null)
+        {
+            ImGui.Image(wrap.Handle, new System.Numerics.Vector2(24f, 24f));
+            ImGui.SameLine();
+        }
+
+        ImGui.SetNextItemWidth(120f);
+        var value = (int)effective;
+        if (ImGui.InputInt(label, ref value))
+            apply(value <= 0 ? 0u : (uint)value);
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton($"預設（目前 {defaultValue}）")) apply(0);
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                $"寫回「跟隨內建預設值」（目前是 {defaultValue}）。" + Environment.NewLine
+                + "跟隨的意思是：日後內建預設值若有修正，你會自動吃到。");
+        }
     }
 }

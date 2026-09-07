@@ -108,6 +108,8 @@ public sealed class Configuration : IPluginConfiguration
     public QueueCombatTeleportConfig QueueCombatTeleport { get; set; } = new();
     public BetterFateProgressConfig BetterFateProgress { get; set; } = new();
     public HuntTrainOnMappyConfig HuntTrainOnMappy { get; set; } = new();
+    public QuestionableStepConfig QuestionableStep { get; set; } = new();
+    public PalacePalOnMappyConfig PalacePalOnMappy { get; set; } = new();
     public CustomDeliveriesOverviewConfig CustomDeliveriesOverview { get; set; } = new();
     public TriadCardRecycleConfig TriadCardRecycle { get; set; } = new();
     public MovementSpeedMultiplierConfig MovementSpeedMultiplier { get; set; } = new();
@@ -788,6 +790,53 @@ public sealed class BetterFateProgressConfig
 /// 📌 這裡沒有「總開關」欄位——<b>模組本身的啟用狀態就是總開關</b>
 /// （與 TC Toolbox 其他模組一致：預設關閉，由使用者自己勾）。
 /// </remarks>
+/// <summary>Questionable 目前步驟顯示到 Mappy 與資訊列。</summary>
+/// <remarks>
+/// 📌 這裡沒有「啟用」欄位是刻意的：模組本身預設就是關的（所有模組都是），
+/// 不需要第二段開關。下面兩格是「開了之後要顯示哪些東西」。
+/// </remarks>
+public sealed class QuestionableStepConfig
+{
+    /// <summary>在 Mappy 地圖上標出目前這一步的位置。</summary>
+    /// <remarks>⚠️ 有些步驟本來就沒有座標（切換職業、等你手動繼續…），那時候地圖上不會有標記。</remarks>
+    public bool ShowMarker { get; set; } = true;
+
+    /// <summary>在伺服器資訊列顯示目前的互動類型。</summary>
+    /// <remarks>📌 沒在跑任務時整格藏起來，不會一直佔著資訊列的位置。</remarks>
+    public bool ShowDtr { get; set; } = true;
+
+    /// <summary>目前步驟的圖示 id。0＝用內建預設值。</summary>
+    /// <remarks>
+    /// 🔴 <b>初始器一定要是 0，不能寫具體常數。</b>寫具體常數的話「0＝用內建預設值」這個契約
+    /// 在實務上永遠不成立：任何一次 Save 就把當下的編號烙死，之後若修正
+    /// <c>DefaultStepIconId</c>（那正是這個欄位做成可設定的理由——圖示的「存在」可以離線驗證、
+    /// 「長什麼樣子」不行），修正對<b>所有既有使用者靜默無效</b>。
+    /// </remarks>
+    public uint StepIconId { get; set; }
+}
+
+/// <summary>Palace Pal 的陷阱與埋藏寶藏顯示到 Mappy。</summary>
+public sealed class PalacePalOnMappyConfig
+{
+    /// <summary>顯示陷阱。</summary>
+    public bool ShowTraps { get; set; } = true;
+
+    /// <summary>顯示埋藏的寶藏。</summary>
+    public bool ShowHoards { get; set; } = true;
+
+    /// <summary>向 Palace Pal 重新拿一次資料的間隔（秒）。</summary>
+    /// <remarks>
+    /// 📌 預設 5 秒。內容沒變的話只是比對一下字串，不會動到 Mappy 上的任何標記，
+    /// 所以這個值不必調大。⚠️ 讀取時夾在 1～60 秒（舊設定檔裡的 0 或負數不會讓它每幀跑）。
+    /// </remarks>
+    public int RefreshSeconds { get; set; } = 5;
+
+    /// <summary>陷阱的圖示 id。0＝用內建預設值（理由同 <see cref="QuestionableStepConfig.StepIconId"/>）。</summary>
+    public uint TrapIconId { get; set; }
+
+    /// <summary>埋藏寶藏的圖示 id。0＝用內建預設值。</summary>
+    public uint HoardIconId { get; set; }
+}
 public sealed class HuntTrainOnMappyConfig
 {
     /// <summary>已擊殺的目標也畫出來（用另一顆圖示）。</summary>

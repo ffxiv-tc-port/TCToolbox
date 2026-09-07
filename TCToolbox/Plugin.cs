@@ -98,6 +98,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new QueueCombatTeleport());
         Modules.Add(new BetterFateProgressUI());
         Modules.Add(new HuntTrainOnMappy());
+        Modules.Add(new PalacePalOnMappy());
 
         // ③ 部隊 · 生活
         Modules.Add(new AutoFCWSDeliver());
@@ -134,6 +135,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoNumericInputMax());
         Modules.Add(new IconReference());
         Modules.Add(new MovementSpeedMultiplier());
+        Modules.Add(new QuestionableStepOnMappy());
         Modules.Add(new FleetEmergencyStop());
 
         // 🔴 一定要在模組 Enable() 之前：模組的 OnEnable 會註冊 AddonLifecycle 監聽器，
