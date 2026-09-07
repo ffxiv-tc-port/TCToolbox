@@ -180,6 +180,42 @@ public sealed class FleetEmergencyStop : TcModule
 
         if (Config.OpenResultWindow && window != null)
             window.IsOpen = true;
+
+        AnnounceToTataru(failed);
+    }
+
+    /// <summary>整輪急停跑完之後，請塔塔露出一聲。</summary>
+    /// <param name="failed">這一輪有幾個對象是 <see cref="FleetStopOutcome.Failed"/>。</param>
+    /// <remarks>
+    /// <para>
+    /// 🔴🔴 <b>判準只看 <see cref="FleetStopOutcome.Failed"/>，<c>NotInstalled</c> 不算失敗。</b>
+    /// 「未安裝」是清單上最常見的狀態（沒有人裝滿十二個外掛），把它算進去的話
+    /// <b>每一次</b>急停都會聽到「有幾個停不下來」——那句話會立刻失去意義，
+    /// 而真正有東西沒停下來的那一次也就沒有人會當一回事了。
+    /// </para>
+    /// <para>
+    /// 📌 <b>整輪跑完才叫一次</b>，不是逐項叫。急停清單有十幾項，逐項出聲等於連續轟炸。
+    /// </para>
+    /// <para>
+    /// 📌 TataruPraise 沒安裝、總開關關著、或這個情境被使用者關掉時，這一整段是安靜的
+    /// no-op（閘門在 <see cref="TataruPraiseIpc.TryPraise"/> 裡）——急停本身的行為完全不受影響。
+    /// </para>
+    /// <para>
+    /// ⚠️ 在主執行緒上呼叫：<c>Execute</c> 的兩個入口（熱鍵的 <c>Framework.Update</c>、
+    /// 指令處理常式）都在主執行緒，而 IPC 的實作是跑在<b>呼叫端的執行緒</b>上的。
+    /// </para>
+    /// </remarks>
+    private static void AnnounceToTataru(int failed)
+    {
+        if (failed > 0)
+        {
+            TataruPraiseIpc.TryPraise(
+                TataruPraiseIpc.CategoryFleetStopFailed,
+                $"全艦隊急停有 {failed} 項失敗");
+            return;
+        }
+
+        TataruPraiseIpc.TryPraise(TataruPraiseIpc.CategoryFleetStop, "全艦隊急停全部停妥");
     }
 
     private static void Count(out int ok, out int failed, out int missing)

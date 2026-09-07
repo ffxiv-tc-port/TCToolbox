@@ -59,6 +59,25 @@ internal static class TataruPraiseIpc
     /// </remarks>
     internal const string CategoryPlayerAlert = "玩家警示";
 
+    /// <summary>
+    /// 情境「急停」——全艦隊急停跑完，而且<b>每一個對象都停妥了</b>。
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ 逐字對上 TataruPraise 的 <c>PraiseCategory.FleetStop</c>（<c>Core/PraiseCategory.cs</c>）。
+    /// 對不上的失敗形式是<b>靜默不出聲</b>（對方會寫一行 Information 說收到未知情境）。
+    /// </remarks>
+    internal const string CategoryFleetStop = "急停";
+
+    /// <summary>
+    /// 情境「急停失敗」——急停跑完了，<b>但有對象沒停下來</b>。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>與 <see cref="CategoryFleetStop"/> 是兩個不同的鍵，刻意的</b>：急停最需要它動的
+    /// 時候，正好是某個外掛已經出事的時候，而那一句要講的話與「都停好了」完全相反。
+    /// 對方那邊也是兩個獨立的池與獨立的開關。
+    /// </remarks>
+    internal const string CategoryFleetStopFailed = "急停失敗";
+
     // 建 subscriber 本身零成本；真正的探測發生在 InvokeFunc()：對方沒註冊同名端點就丟 IpcNotReadyError。
     private static readonly Lazy<ICallGateSubscriber<string, bool>> IsAvailableForGate =
         new(() => Svc.PluginInterface.GetIpcSubscriber<string, bool>(TagIsAvailableFor));
