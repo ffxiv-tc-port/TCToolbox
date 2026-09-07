@@ -109,6 +109,13 @@ internal static class FleetStop
     private static readonly Lazy<ICallGateSubscriber<bool, object>> GbrSetAutoGatherEnabled =
         new(() => Svc.PluginInterface.GetIpcSubscriber<bool, object>("GatherBuddyReborn.SetAutoGatherEnabled"));
 
+    // AutoHook/IPC/AutoHookIPC.cs:73 [EzIPC] public void SetPluginState(bool) → EzIPC.Init(this, "AutoHook")
+    // 🔑 刻意用 SetPluginState 而不是 SetPluginStatePersistent：前者走 IpcConfigOverrides，
+    //    只改執行期的值、存檔時換回使用者自己的設定 ⇒ 急停關掉釣魚，但不會把使用者的
+    //    「啟用 AutoHook」永久改成關。急停要停的是現在，不是下次開遊戲。
+    private static readonly Lazy<ICallGateSubscriber<bool, object>> AutoHookSetPluginState =
+        new(() => Svc.PluginInterface.GetIpcSubscriber<bool, object>("AutoHook.SetPluginState"));
+
     // ICE/IPC/IceCosmicExplorationIPC.cs:33 [EzIPC] public void Disable() → EzIPC.Init(this) ⇒ 前綴＝內部名 "ICE"
     // 📌 同源的 ExplorersIcebox 沒有任何 IPC 提供端，所以這一條只會打到 ICE。
     private static readonly Lazy<ICallGateSubscriber<object>> IceDisable =
@@ -163,6 +170,11 @@ internal static class FleetStop
         {
             GbrSetAutoGatherEnabled.Value.InvokeAction(false);
             return "GatherBuddyReborn.SetAutoGatherEnabled(false)";
+        }));
+        results.Add(Invoke("AutoHook", () =>
+        {
+            AutoHookSetPluginState.Value.InvokeAction(false);
+            return "AutoHook.SetPluginState(false)（只改執行期，不會寫進對方的設定檔）";
         }));
         results.Add(Invoke("ICE 宇宙探索", () =>
         {
