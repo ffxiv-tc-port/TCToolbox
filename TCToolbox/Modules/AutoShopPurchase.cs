@@ -50,6 +50,14 @@ public sealed unsafe class AutoShopPurchase : TcModule
 
     private const int MaxIndexButtons = 200;
 
+    /// <summary>送給 GilDelta 的歸因提示有效期（毫秒）。</summary>
+    /// <remarks>
+    /// 📌 15 秒：本模組只負責「叫出購買對話框」，真正扣錢是使用者自己在那扇對話框裡按下去的，
+    /// 中間那段時間完全由人決定。太短的話提示會先過期，那筆消費就退回 GilDelta 自己的推論規則
+    /// （分類仍然會對，只是少了「是 TC Toolbox 叫出來的」這個歸屬）。
+    /// </remarks>
+    private const int HintTtlMs = 15_000;
+
     private AutoShopPurchaseConfig Config => Plugin.Instance.Config.AutoShopPurchase;
 
     // 擷取用暫存欄位。
@@ -94,6 +102,18 @@ public sealed unsafe class AutoShopPurchase : TcModule
         //    ListItemClick 是輸入事件，對關閉中的視窗送就是攔不到的存取違規。
         if (!AddonPressGuard.TryBeginPress(addon, $"list:{preset.ListNodeId}:{preset.ClickIndex}"))
             return "剛剛才對同一項送出過點擊，請稍候再試。";
+
+        // 🔑 先送 GilDelta 的歸因提示、再重播點擊：提示必須早於錢包變動，順序反了那筆錢
+        //    已經被對方用推論規則歸完類了。對方沒安裝時這一行是安靜的無操作。
+        //    ⚠️ note 帶的是<b>預設名</b>而不是道具名與數量：這條路徑只重播「點清單第 N 項」，
+        //    道具名不在我們手上（要走 AtkComponentListItemRenderer 的節點樹去撈），
+        //    數量更是使用者稍後在遊戲自己的對話框裡才決定的。預設名是使用者自己取的，
+        //    對「這筆錢是哪來的」這個問題反而比道具名更有用。
+        //    ttl 給 15 秒：中間隔著使用者自己按購買確認那段時間。
+        GilDeltaIpc.TryHint(
+            GilDeltaIpc.CategoryNpcShopBuy,
+            $"商店快速購買「{preset.Name}」（{preset.AddonName} 第 {preset.ClickIndex} 項）",
+            HintTtlMs);
 
         // 重播那一項的點擊——叫出遊戲自己的購買對話框。不代按任何確認框。
         list->DispatchItemEvent(preset.ClickIndex, AtkEventType.ListItemClick);
