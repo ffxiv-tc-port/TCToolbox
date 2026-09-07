@@ -6,6 +6,7 @@
 
 - `/tctoolbox`：開啟主視窗
 - `/tcstop`：停止目前正在進行的導航／自動化（多個模組共用）
+- `/tcstopall`、`/tcpanic`：全艦隊急停，把所有會自己動的外掛一次叫停
 - `/tcicons`：圖示對照表（開發輔助）
 - `/tcspeed`：切換移動速度倍率模組
 - `/tcduty`、`/tcdf`：把任務搜尋器開到指定副本
@@ -108,3 +109,4 @@
 - **解除互動限制**：關閉視野外／被遮擋／距離過遠等客端互動限制檢查
 - **聊天座標自動開地圖**：聊天訊息出現地圖座標連結時自動開地圖並插旗標
 - **點擊移動**：按住修飾鍵點地面即自動走過去（需要 vnavmesh）
+- **全艦隊急停**：一顆熱鍵或 `/tcstopall` 把 vnavmesh／Lifestream／AutoDuty／Questionable／visland／BossmodReborn AI／WrathCombo／AutoRetainer／Artisan／GatherBuddy Reborn／ICE／SomethingNeedDoing 一次叫停，逐項顯示成功／失敗／未安裝

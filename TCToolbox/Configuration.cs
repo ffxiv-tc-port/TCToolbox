@@ -110,6 +110,7 @@ public sealed class Configuration : IPluginConfiguration
     public CustomDeliveriesOverviewConfig CustomDeliveriesOverview { get; set; } = new();
     public TriadCardRecycleConfig TriadCardRecycle { get; set; } = new();
     public MovementSpeedMultiplierConfig MovementSpeedMultiplier { get; set; } = new();
+    public FleetEmergencyStopConfig FleetEmergencyStop { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
 
@@ -1823,4 +1824,45 @@ public sealed class LargerIMECandidatesConfig
     /// </para>
     /// </remarks>
     public float Scale { get; set; } = 1.0f;
+}
+
+/// <summary>
+/// 一組可綁定的熱鍵（主鍵＋修飾鍵）。
+/// </summary>
+/// <remarks>
+/// 🔴 <b>預設是「未綁定」（<see cref="KeyCode"/> 為 0）。</b>新增的熱鍵一律不預先佔用按鍵——
+/// 使用者的鍵盤上每一顆鍵都可能已經綁了遊戲技能，替他決定綁哪一顆就是替他改遊戲行為。
+/// <para>
+/// 📌 邏輯與挑鍵 UI 在 <c>Core/Hotkey.cs</c>；這裡只是存檔的形狀。
+/// </para>
+/// </remarks>
+public sealed class HotkeyConfig
+{
+    /// <summary>主鍵的 <c>VirtualKey</c> 值。0＝未綁定。</summary>
+    public int KeyCode;
+
+    /// <summary>需要按著 CTRL。</summary>
+    public bool Ctrl;
+
+    /// <summary>需要按著 SHIFT。</summary>
+    public bool Shift;
+
+    /// <summary>需要按著 ALT。</summary>
+    public bool Alt;
+}
+
+public sealed class FleetEmergencyStopConfig
+{
+    /// <summary>觸發急停的熱鍵。預設未綁定。</summary>
+    public HotkeyConfig Hotkey { get; set; } = new();
+
+    /// <summary>在聊天視窗顯示結果摘要（以及逐項失敗）。</summary>
+    /// <remarks>
+    /// 📌 預設開啟：急停多半是用熱鍵按的，那時候主視窗是關著的——
+    /// 沒有這一行的話，使用者完全沒有「我剛剛真的按到了」的回饋。
+    /// </remarks>
+    public bool AnnounceInChat = true;
+
+    /// <summary>急停之後自動把結果視窗打開。</summary>
+    public bool OpenResultWindow = true;
 }

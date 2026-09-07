@@ -133,6 +133,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoNumericInputMax());
         Modules.Add(new IconReference());
         Modules.Add(new MovementSpeedMultiplier());
+        Modules.Add(new FleetEmergencyStop());
 
         // 🔴 一定要在模組 Enable() 之前：模組的 OnEnable 會註冊 AddonLifecycle 監聽器，
         //    而同一個事件的監聽器是依註冊順序在同一次派送裡逐一呼叫的。守衛留到「第一次按下」
