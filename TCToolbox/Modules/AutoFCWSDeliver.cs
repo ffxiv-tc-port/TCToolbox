@@ -9,6 +9,7 @@ using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Component.GUI;
+using Lumina.Excel.Sheets;
 using TCToolbox.Core;
 using ValueType = FFXIVClientStructs.FFXIV.Component.GUI.ValueType;
 
@@ -147,6 +148,21 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
     private const string FcwsPromptAnchor = "合建設備";
 
     /// <summary>
+    /// 交納流程<b>第二種</b>會冒出來的確認框：含 HQ 素材時的「確定要交易優質道具嗎？」。
+    /// </summary>
+    /// <remarks>
+    /// 🔑 用 <c>Addon</c> 表的列號查客戶端自己的字串，不寫死中文——與 <see cref="AutoRequestItemSubmit"/>
+    /// 用的是同一組列（台服 7.20 EXD 已核對：5450「繳交優質道具」、11514「遞交優質道具」、
+    /// 102434「確定要交易優質道具嗎？」，全形問號）。
+    /// ⚠️ <b>本模組必須自己認得它</b>：<c>AutoRequestItemSubmit</c> 在合建視窗開著時會整支讓路
+    /// （見那支的 <c>ShouldYieldToFcwsDeliver</c>），所以這一扇沒有別人會按。
+    /// </remarks>
+    private static readonly uint[] HighQualityPromptRows = [5450, 11514, 102434];
+
+    /// <summary>解析好的優質道具確認框字串（<see cref="OnEnable"/> 建一次；台服沒有的列不收）。</summary>
+    private readonly HashSet<string> highQualityPrompts = new(StringComparer.Ordinal);
+
+    /// <summary>
     /// 上一輪解析結果的指紋（首項 Index ＋ 清單長度），用來偵測「零進展」。
     /// </summary>
     private (uint Index, int Count, uint ItemId, uint Owned)? lastParseFingerprint;
@@ -200,6 +216,18 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
     {
         queue.OnTimeout = step => Svc.Chat.PrintError($"[TC Toolbox] 合建交納步驟逾時，已停止：{step}");
 
+        highQualityPrompts.Clear();
+        foreach (var row in HighQualityPromptRows)
+        {
+            var text = Svc.Data.GetExcelSheet<Addon>().GetRowOrDefault(row)?.Text.ExtractText().Trim();
+            if (!string.IsNullOrWhiteSpace(text)) highQualityPrompts.Add(text);
+        }
+
+        // 這一行同時是「新版本真的被載進去了」的離線證據：使用者的 log 裡有它，才代表跑的是含修正的版本。
+        Svc.Log.Information(
+            $"[AutoFCWSDeliver] 會自動按下的確認框判準：含「{FcwsPromptAnchor}」字樣，或優質道具 " +
+            $"{highQualityPrompts.Count}/{HighQualityPromptRows.Length} 條：{string.Join(" | ", highQualityPrompts)}");
+
         Svc.AddonLifecycle.RegisterListener(AddonEvent.PreFinalize, "SubmarinePartsMenu", OnMenuFinalize);
         Svc.Framework.Update += OnUpdate;
         Svc.PluginInterface.UiBuilder.Draw += DrawOverlay;
@@ -211,6 +239,7 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
         Svc.Framework.Update -= OnUpdate;
         Svc.PluginInterface.UiBuilder.Draw -= DrawOverlay;
         queue.Abort();
+        highQualityPrompts.Clear();
     }
 
     private void OnUpdate(IFramework framework) => queue.Tick();
@@ -456,9 +485,9 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
         var yesno = UiHelper.FindReadyAddon(UiHelper.SelectYesnoAddonName);
         if (yesno != null)
         {
-            var prompt = UiHelper.GetSelectYesnoText(yesno);
+            var prompt = ReadPrompt(yesno);
             // 🔴 讀出替換字元＝窗的記憶體正在變動（崩潰前實機 log 的亂碼 prompt 就是這徵兆），這幀不碰。
-            if (AddonPrompt.LooksMidUpdate(prompt))
+            if (LooksMidUpdateNoisy(prompt))
                 return false;
             if (prompt.Contains(FcwsPromptAnchor, StringComparison.Ordinal))
             {
@@ -529,6 +558,89 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
     }
 
     /// <summary>
+    /// 讀這一扇確認框的提示文字，<b>payload 已經剝掉，只剩純文字</b>。
+    /// </summary>
+    /// <remarks>
+    /// 🔴🔴 <b>2026-09-09 修正的根因就是這一行讀法。</b>舊碼走
+    /// <c>UiHelper.GetSelectYesnoText(yesno)</c>，那支底下是 <c>Utf8String.ToString()</c>
+    /// ——它把 SeString 的 <b>payload 控制位元組原樣一起解碼</b>。合建確認框的道具名是
+    /// item link payload，所以那串位元組<b>永遠</b>解不成合法 UTF-8，解碼器每次都吐出
+    /// U+FFFD 替換字元。實機 log 逐字為證（2026-08-31 20:53:12，模組自己印出來的）：
+    /// <code>確定要為合建設備提供\x02H\x04�\x02%\x03\x02I\x04�\x02&amp;\x03鬚鯨級船體骨架\x02I\x02\x01\x03\x02H\x02\x01\x03×1嗎？</code>
+    /// ⇒ 緊接在後面的 <c>AddonPrompt.LooksMidUpdate</c>（判「字串裡有沒有 U+FFFD」）對
+    /// <b>每一扇合建確認框、每一幀</b>都回 <see langword="true"/>，
+    /// <see cref="ConfirmRequest"/> 於是永遠在按下去之前就 <c>return false</c>。
+    /// <para>
+    /// 🔑 <b>失敗形式是「看得到、但一次都按不下去」，而且全程零 log。</b>實機語料的分界線乾淨得可怕：
+    /// 全部 22 份 <c>dalamud*.log</c> 裡「交納確認框按下『是』」共 113 次，<b>最後一次是
+    /// 2026-09-02 18:20:08</b>；那之後（含 09-03 的 86 次與 09-08 的 20 次交納）<b>一次都沒有</b>
+    /// ——正好是把這道 mid-update 檢查加進本檔的那顆 commit（<c>d9ede27</c>，2026-09-02）之後的第一次重載。
+    /// 這道檢查本身是對的（它防的是關閉中的窗），錯的是<b>餵給它的字串</b>。
+    /// </para>
+    /// <para>
+    /// ⇒ 改讀 <see cref="AddonPrompt.ReadSelectYesnoText"/>（<c>MemoryHelper.ReadSeString().TextValue</c>），
+    /// 與本 repo 其他確認框判定（<c>AutoRequestItemSubmit</c>／<c>OptimizedFreeShop</c>／
+    /// <c>AutoJoinPartyFinder</c>）同一個基準。剝掉 payload 之後只剩純文字，
+    /// U+FFFD 就恢復成它原本的語意：<b>真的</b>讀到半個字元＝窗的記憶體正在變動。
+    /// </para>
+    /// </remarks>
+    private static string ReadPrompt(AtkUnitBase* yesno)
+    {
+        // 🔴 兩道空指標閘門逐字沿用 UiHelper.ReadSelectYesnoText：AddonPrompt 那一支只判 addon 與
+        //    PromptText，沒有判 NodeText.StringPtr。StringPtr 為 null 而 Length 還留著殘值時，
+        //    Utf8String.AsSpan() 會建出一個長度非零、指向位址 0 的 Span——列舉下去就是
+        //    AccessViolationException（corrupted-state exception，try/catch 攔不到）。
+        //    這條路每幀都會走（確認框開著時），所以閘門要放在這裡而不是靠呼叫端。
+        if (!UiHelper.IsReady(yesno)) return string.Empty;
+
+        var node = ((AddonSelectYesno*)yesno)->PromptText;
+        if (node == null || !node->NodeText.StringPtr.HasValue) return string.Empty;
+
+        return AddonPrompt.ReadSelectYesnoText(yesno).Trim();
+    }
+
+    /// <summary>
+    /// <see cref="AddonPrompt.LooksMidUpdate"/>，但命中時<b>寫一行 log</b>。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 加這一行的理由就是上面那個 bug：舊碼在這條路上 <c>return false</c> 是<b>完全靜默</b>的，
+    /// 於是「模組看到確認框卻一扇都按不下去」在實機 log 裡沒有留下任何痕跡，
+    /// 只能從「看到 N 扇、按下 0 扇」這個間接指標反推。節流 1 秒，卡住時每秒一行就夠定案。
+    /// </remarks>
+    private static bool LooksMidUpdateNoisy(string prompt)
+    {
+        if (!AddonPrompt.LooksMidUpdate(prompt)) return false;
+
+        if (Throttle.Pass("AutoFCWSDeliver-YesnoMidUpdate", 1_000))
+            Svc.Log.Information(
+                $"[AutoFCWSDeliver] 確認框的提示文字含替換字元（視窗記憶體變動中），這一幀不按：「{prompt}」");
+
+        return true;
+    }
+
+    /// <summary>這扇確認框是不是「這條交納流程自己叫出來的」——只有這兩種才准自動按「是」。</summary>
+    /// <remarks>
+    /// 🔴 優質道具那一組刻意用<b>包含</b>而不是<b>逐字相等</b>。
+    /// <c>AutoRequestItemSubmit</c> 用的是逐字相等，而全部 22 份實機 <c>dalamud*.log</c> 裡
+    /// 「已確認優質道具交易」與「交易中出現未認得的確認框」<b>兩句都是 0 次</b>
+    /// ——那條相等比對從來沒有被實機驗證過（它平常沒機會跑：合建視窗開著時那個模組整支讓路）。
+    /// 把沒驗證過的嚴格比對放進這條流程的必經路徑上，失敗形式會是「HQ 素材的那一項卡到步驟逾時」。
+    /// 包含比對比它寬鬆，不可能比它更難命中，而誤中的風險被前置條件壓得很低：
+    /// 這一段只有「本模組剛按下交出鈕、還沒收尾」的數百毫秒會執行。
+    /// </remarks>
+    private bool IsFcwsFlowPrompt(string prompt)
+    {
+        if (prompt.Contains(FcwsPromptAnchor, StringComparison.Ordinal)) return true;
+
+        foreach (var needle in highQualityPrompts)
+        {
+            if (prompt.Contains(needle, StringComparison.Ordinal)) return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// 記下「這一幀看到一扇確認框」，同一扇連看好幾幀只算一扇。
     /// </summary>
     /// <remarks>
@@ -575,10 +687,36 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
             confirmStallSince = null; // 看得到窗就不算卡住
             NoteYesnoSeen(yesno);
 
-            var prompt = UiHelper.GetSelectYesnoText(yesno);
+            var prompt = ReadPrompt(yesno);
             // 🔴 讀出替換字元＝窗的記憶體正在變動，這幀不碰（下一幀重讀）。
-            if (AddonPrompt.LooksMidUpdate(prompt))
+            if (LooksMidUpdateNoisy(prompt))
                 return false;
+
+            // 🔴🔴 2026-09-09：這裡以前<b>完全不做文字判定</b>（註解寫「這個時點的確認框就是這條流程的」）。
+            //    改成白名單有兩個理由，第二個才是主要的：
+            //    ① 這一段是「交出鈕按下之後」的數百毫秒，別的來源照樣可以在這期間彈確認框
+            //       （組隊邀請、交易邀請…），無差別按「是」等於幫使用者做決定。
+            //    ② 判準本身就是<b>診斷</b>：認不得的框會寫一行 Information 指名它，
+            //       而舊碼在「看到卻沒按」時整段靜默——那正是這個模組的按框功能死了六天沒人發現的原因。
+            //    ⚠️ 判準只有兩條，都是這條流程自己會叫出來的：合建交納框與（含 HQ 素材時的）優質道具框。
+            if (prompt.Length == 0)
+            {
+                // 讀不出字＝判不出這是誰的框（窗剛建好還沒填字，或文字節點不在）。判不出來就不按。
+                if (Throttle.Pass("AutoFCWSDeliver-YesnoNoText", 1_000))
+                    Svc.Log.Information("[AutoFCWSDeliver] 確認框讀不到提示文字，這一幀不按（下一幀重讀）。");
+
+                return false;
+            }
+
+            if (!IsFcwsFlowPrompt(prompt))
+            {
+                if (Throttle.Pass("AutoFCWSDeliver-YesnoUnknown", 3_000))
+                    Svc.Log.Information(
+                        $"[AutoFCWSDeliver] 交納途中出現不認得的確認框，本模組不按（留給使用者或 YesAlready 決定）：" +
+                        $"「{prompt}」。判準：含「{FcwsPromptAnchor}」字樣，或 {string.Join(" | ", highQualityPrompts)}");
+
+                return false;
+            }
 
             // 回 false＝守衛擋下（這一扇剛按過、還沒觀察到它收掉），下一輪再來，不是錯誤。
             if (UiHelper.TryFireCallback(yesno, true, 0))
@@ -646,11 +784,16 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
         // 🔴 這一行是使用者唯一看得到的歸因：分辨「這一扇是本模組按的」還是「別人（YesAlready
         //    的強制熱鍵、或使用者自己點）按掉的」。兩種都會讓交納成功，但只有前者代表模組正常運作
         //    ——2026-09-02 實機 log 裡 86 次交納「本模組按下 0 扇」正是靠這行才看得出來。
+        // 🔴 2026-09-09 文案修正：第三種情況以前寫「確認框未出現」，那是<b>本模組推不出來的斷言</b>——
+        //    實機 log 直證它是錯的：2026-09-08 23:48:43.903 YesAlready 按掉「確定要為合建設備提供
+        //    超硬加隆德鋼×3嗎？」，而同一項在 23:48:44.503 印的是「確認框未出現」。
+        //    輪詢每幀一次，別人在同一幀就按掉的框我們本來就看不到 ⇒ 只能說「本模組沒看到」，
+        //    不能說「沒出現」。事後追查時這兩句話會把人帶去完全相反的方向。
         var attribution = yesnoPressedThisItem > 0
             ? $"確認框已出現，本模組按下 {yesnoPressedThisItem} 扇"
             : yesnoSeenThisItem > 0
                 ? $"確認框已出現但本模組一扇都沒按到（看到 {yesnoSeenThisItem} 扇；由 YesAlready 或手動處理）"
-                : "確認框未出現（本模組全程沒看到；由 YesAlready 或手動處理，也可能這一項本來就不跳確認框）";
+                : "本模組全程沒看到確認框（多半是 YesAlready 或使用者在同一幀就按掉了，也可能這一項本來就不跳確認框——不代表確認框沒出現）";
         Svc.Log.Information($"[AutoFCWSDeliver] 第 {deliveredCount} 項交納完成（{attribution}）。");
         return true;
     }
