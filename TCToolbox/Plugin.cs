@@ -26,6 +26,12 @@ public sealed class Plugin : IDalamudPlugin
     /// <summary>自動園圃作業的 IPC 端點（供本機腳本細項操作用；與模組開關無關，恆常註冊）。</summary>
     private readonly GardeningIpc gardeningIpc;
 
+    /// <summary>
+    /// 自動園圃作業的聊天指令。與 <see cref="gardeningIpc"/> 同樣<b>恆常註冊</b>：
+    /// 模組關著時要回一句看得懂的話，而不是讓遊戲回「無此指令」。
+    /// </summary>
+    private readonly GardeningCommand gardeningCommand;
+
     public Plugin(IDalamudPluginInterface pluginInterface)
     {
         Instance = this;
@@ -158,6 +164,7 @@ public sealed class Plugin : IDalamudPlugin
         LogModuleState();
 
         gardeningIpc = new GardeningIpc();
+        gardeningCommand = new GardeningCommand();
 
         mainWindow = new MainWindow(this);
         WindowSystem.AddWindow(mainWindow);
@@ -295,6 +302,13 @@ public sealed class Plugin : IDalamudPlugin
     /// <summary>開關主視窗。給模組用（例如 DTR 的右鍵動作）。</summary>
     public void ToggleMainWindow() => mainWindow.Toggle();
 
+    /// <summary>開啟主視窗；已經開著就維持開著。</summary>
+    /// <remarks>
+    /// 🔴 指令要的是「開起來」不是「切換」。用 <see cref="ToggleMainWindow"/> 的話，
+    /// 視窗已經開著時打指令會把它<b>關掉</b>——那正好是最容易被讀成「指令壞了」的行為。
+    /// </remarks>
+    public void OpenMainWindow() => mainWindow.IsOpen = true;
+
     private void OnCommand(string command, string args) => mainWindow.Toggle();
 
     public void Dispose()
@@ -302,6 +316,7 @@ public sealed class Plugin : IDalamudPlugin
         Svc.Commands.RemoveHandler(Command);
 
         gardeningIpc.Dispose();
+        gardeningCommand.Dispose();
 
         Svc.PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
         Svc.PluginInterface.UiBuilder.OpenConfigUi -= mainWindow.Toggle;

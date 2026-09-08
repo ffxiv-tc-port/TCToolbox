@@ -1704,6 +1704,19 @@ public sealed class AutoGardensWorkConfig
     /// <summary>「自動整理」跑完後在聊天視窗列出逐格的決定（記錄一律會寫，不受這格影響）。</summary>
     /// <remarks>⚠️ 預設<b>關閉</b>：一座 3×8 的庭院會刷 24 行。要查為什麼某一格沒被動到時再打開。</remarks>
     public bool AnnounceEachDecision;
+
+    /// <summary>缺種子／土壤／肥料而有格子被跳過時，在聊天視窗提醒一次。</summary>
+    /// <remarks>
+    /// 📌 <b>預設開啟</b>，因為它修的正是一個實機觀察到的靜默失敗：
+    /// 自動整理開著、每 60 秒跑一輪，八格地壟每一格都判成「空地壟，但沒有可用的種子或土壤」，
+    /// 連續好幾輪一件事都沒做，而畫面上完全沒有任何提示（那幾行只有 Debug 級）。
+    /// 模組列與設定畫面上的提示對「當下沒在看那扇視窗」的人是到不了的。
+    /// <para>
+    /// 🔴 兩道保險讓它不會變成噪音：<b>只在缺的東西變了的時候送</b>，
+    /// 而且兩則之間至少隔 5 分鐘。關掉之後缺料仍然看得到（模組列與設定畫面照舊）。
+    /// </para>
+    /// </remarks>
+    public bool AnnounceMaterialShortage = true;
 }
 
 /// <summary>信箱一鍵收取。</summary>

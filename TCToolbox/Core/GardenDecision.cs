@@ -79,12 +79,38 @@ public enum WitheredPolicy
     DisposeAndReplant = 2,
 }
 
+/// <summary>這一格的決定被「缺材料」影響到的種類。</summary>
+/// <remarks>
+/// 🔴 <b>存在的理由是「不要靠比對理由字串來判斷缺料」。</b>
+/// <see cref="GardenDecision.Reason"/> 是給人看的句子，改一個字就會讓任何字串比對靜默失效，
+/// 而失效的形式正好就是這個旗標要修掉的那一種：畫面上什麼都不說。
+/// <para>
+/// 📌 零值是 <see cref="None"/>：「沒有被材料擋到」是預設。
+/// </para>
+/// </remarks>
+public enum GardenMaterial
+{
+    /// <summary>沒有被材料擋到。</summary>
+    None = 0,
+
+    /// <summary>想播種（含收穫／處理之後重種）但沒有可用的種子或土壤。</summary>
+    SeedOrSoil = 1,
+
+    /// <summary>想施肥但沒有可用的肥料。</summary>
+    Fertilizer = 2,
+}
+
 /// <summary>對一格園圃的決定。</summary>
 /// <param name="Action">要執行的動作；<c>null</c>＝這一格什麼都不做。</param>
 /// <param name="Replant">這一格處理完之後，要不要在同一輪的最後把目標作物種回去。</param>
 /// <param name="Reason">寫進記錄與 UI 的理由（一句話）。</param>
+/// <param name="Missing">
+/// 這一格有沒有因為缺材料而做不成本來想做的事。
+/// ⚠️ <b>不等於「什麼都沒做」</b>：「收穫（想重種但沒有可用的種子或土壤）」照樣會收穫，
+/// 但那仍然是一個使用者該知道的缺料狀況。
+/// </param>
 public readonly record struct GardenDecision(
-    AutoGardenAction? Action, bool Replant, string Reason);
+    AutoGardenAction? Action, bool Replant, string Reason, GardenMaterial Missing = GardenMaterial.None);
 
 /// <summary>決策層會產出的動作。與模組內部的 <c>GardenAction</c> 一一對應，刻意分開宣告。</summary>
 /// <remarks>
@@ -149,7 +175,9 @@ public static class GardenDecisionMaker
 
             case PatchState.Empty:
                 if (!plantWhenEmpty) return new GardenDecision(null, false, "空地壟（設定為不播種）");
-                if (!canPlant) return new GardenDecision(null, false, "空地壟，但沒有可用的種子或土壤");
+                if (!canPlant)
+                    return new GardenDecision(
+                        null, false, "空地壟，但沒有可用的種子或土壤", GardenMaterial.SeedOrSoil);
                 return new GardenDecision(AutoGardenAction.Plant, false, "空地壟，播種目標作物");
 
             case PatchState.Withered:
@@ -161,7 +189,7 @@ public static class GardenDecisionMaker
                         new GardenDecision(AutoGardenAction.Dispose, true, "已枯萎，處理掉並重種"),
                     WitheredPolicy.DisposeAndReplant =>
                         new GardenDecision(AutoGardenAction.Dispose, false,
-                            "已枯萎，處理掉（想重種但沒有可用的種子或土壤）"),
+                            "已枯萎，處理掉（想重種但沒有可用的種子或土壤）", GardenMaterial.SeedOrSoil),
                     _ => new GardenDecision(null, false, "已枯萎（設定為不動）"),
                 };
 
@@ -181,7 +209,7 @@ public static class GardenDecisionMaker
                         new GardenDecision(AutoGardenAction.Harvest, true, $"{who}已成熟，收穫並重種"),
                     MatureCropPolicy.HarvestAndReplant =>
                         new GardenDecision(AutoGardenAction.Harvest, false,
-                            $"{who}已成熟，收穫（想重種但沒有可用的種子或土壤）"),
+                            $"{who}已成熟，收穫（想重種但沒有可用的種子或土壤）", GardenMaterial.SeedOrSoil),
                     _ => new GardenDecision(null, false, $"{who}已成熟（設定為跳過）"),
                 };
             }
@@ -194,19 +222,33 @@ public static class GardenDecisionMaker
 
             case PatchState.Growing:
             {
-                if (!canFertilize) return new GardenDecision(null, false, "生長中（沒有可用的肥料）");
-
                 var isTarget = targetCropItemId != 0 && cropItemId == targetCropItemId;
-                return fertilize switch
+
+                // 🔴 <b>先問策略要不要施肥，再問肥料夠不夠。</b>順序顛倒的話，選了「不施肥」
+                //    卻剛好沒有肥料的人會被告知「沒有可用的肥料」——那是一句正確但完全誤導的話，
+                //    而缺料提示要是照著它去算，畫面上就會對一個根本不需要肥料的人喊缺肥料。
+                //    （行為兩邊相同：這兩條路都是不動手，改的只有理由字串與缺料歸因。）
+                var wantsFertilizer = fertilize switch
                 {
-                    FertilizePolicy.All =>
-                        new GardenDecision(AutoGardenAction.Fertilize, false, "生長中，施肥"),
-                    FertilizePolicy.TargetOnly when isTarget =>
-                        new GardenDecision(AutoGardenAction.Fertilize, false, "生長中的目標作物，施肥"),
-                    FertilizePolicy.TargetOnly =>
-                        new GardenDecision(null, false, "生長中，但不是目標作物（設定為只對目標施肥）"),
-                    _ => new GardenDecision(null, false, "生長中（設定為不施肥）"),
+                    FertilizePolicy.All => true,
+                    FertilizePolicy.TargetOnly => isTarget,
+                    _ => false,
                 };
+
+                if (!wantsFertilizer)
+                {
+                    return fertilize == FertilizePolicy.TargetOnly
+                        ? new GardenDecision(null, false, "生長中，但不是目標作物（設定為只對目標施肥）")
+                        : new GardenDecision(null, false, "生長中（設定為不施肥）");
+                }
+
+                if (!canFertilize)
+                    return new GardenDecision(
+                        null, false, "生長中，想施肥但沒有可用的肥料", GardenMaterial.Fertilizer);
+
+                return fertilize == FertilizePolicy.TargetOnly
+                    ? new GardenDecision(AutoGardenAction.Fertilize, false, "生長中的目標作物，施肥")
+                    : new GardenDecision(AutoGardenAction.Fertilize, false, "生長中，施肥");
             }
 
             default:

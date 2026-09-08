@@ -85,6 +85,54 @@ public sealed unsafe partial class AutoGardensWork
     /// <summary>上一次閘門擋下來的理由，只給設定畫面看（空字串＝沒被擋）。</summary>
     private string lastLoopBlockReason = string.Empty;
 
+    // ── 缺材料 ──────────────────────────────────────────────────────────────
+    // 🔴 這一區存在的理由是一個實機觀察到的靜默：使用者的自動整理開著、每 60 秒跑一輪，
+    //    八格地壟每一格都判成「空地壟，但沒有可用的種子或土壤」，連續好幾輪一件事都沒做，
+    //    而畫面上完全沒有任何提示——那幾行只有 Debug 級。他最後把模組關掉了。
+    //    ⇒ 缺料必須在<b>模組列上</b>看得見，不能只寫進記錄。
+
+    /// <summary>目前策略要用、但現在拿不到的材料（空字串＝都拿得到）。</summary>
+    private string materialShortage = string.Empty;
+
+    /// <summary>缺料評估的節流：上一次評估的 tick。</summary>
+    private long materialCheckTick;
+
+    /// <summary>評估當下附近有沒有園圃（決定要不要把缺料畫在模組列上）。</summary>
+    private bool materialCheckNearPatch;
+
+    /// <summary>已經有一輪真的被材料擋到了（在缺料解除之前一直為真）。</summary>
+    /// <remarks>
+    /// 🔑 有了它，使用者走開之後模組列上的提示不會跟著消失——
+    /// 「跑了一輪什麼都沒做」這件事必須留在看得見的地方，直到他把材料補好。
+    /// </remarks>
+    private bool sawMaterialBlockedRound;
+
+    /// <summary>這一輪有沒有格子被材料擋到（<see cref="GardenMaterial.None"/>＝沒有）。</summary>
+    private GardenMaterial roundMissing;
+
+    /// <summary>上一次<b>宣告過</b>的缺料內容（狀態變化偵測用；空字串＝上次宣告的是「不缺」）。</summary>
+    private string announcedShortage = string.Empty;
+
+    /// <summary>缺料評估的間隔（毫秒）。</summary>
+    /// <remarks>
+    /// 📌 <see cref="RowNotice"/> 每幀都會被讀，而評估要掃背包與物件表 ⇒ 一律讀快取，
+    /// 快取由框架執行緒上的 <c>OnUpdate</c> 每秒更新一次。
+    /// 🔴 反過來做（在 <c>RowNotice</c> 裡評估）等於把原生記憶體掃描放進 ImGui 的繪製路徑，
+    /// 而那條路徑上擲一次例外就是整個介面到重載為止都不見。
+    /// </remarks>
+    private const int MaterialCheckIntervalMs = 1000;
+
+    /// <summary>兩則「缺料」聊天訊息之間至少要隔多久。</summary>
+    /// <remarks>
+    /// 🔴 這是<b>狀態變化偵測之外</b>的第二道保險。只靠狀態變化的話，
+    /// 「背包剛好只剩一份種子」這種會來回翻轉的情況可以每一輪都算一次變化，
+    /// 而這個迴圈預設每 60 秒跑一次 ⇒ 就是每分鐘一行聊天訊息。
+    /// </remarks>
+    private static readonly TimeSpan ShortageChatFloor = TimeSpan.FromMinutes(5);
+
+    /// <summary>上一次送出缺料聊天訊息的時間（UTC）。<c>MinValue</c>＝還沒送過。</summary>
+    private DateTime lastShortageChatUtc = DateTime.MinValue;
+
     // ── 狀態擷取 ────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -198,6 +246,11 @@ public sealed unsafe partial class AutoGardensWork
 
         job.Reason = decision.Reason;
 
+        // 🔴 這一輪「有沒有格子因為缺材料而做不成想做的事」是<b>決策層說了算</b>，
+        //    不是事後去比對理由字串。旗標一設就不再清掉：只要有任何一格被擋到，
+        //    這一輪的彙總就要把它講出來（原本的失敗形式是八格各寫一行 Debug、畫面上一個字都沒有）。
+        if (decision.Missing != GardenMaterial.None) roundMissing = decision.Missing;
+
         if (decision.Action is not { } action)
         {
             RecordDecision(job, null);
@@ -305,6 +358,7 @@ public sealed unsafe partial class AutoGardensWork
         skippedCount = 0;
         replantQueue.Clear();
         autoDecisions.Clear();
+        roundMissing = GardenMaterial.None;
         ResetWalkRound();
 
         var targetCrop = GardenCropData.CropOfSeed(Config.SeedItemId);
@@ -332,9 +386,15 @@ public sealed unsafe partial class AutoGardensWork
             var replantCount = replantQueue.Count;
             queue.Enqueue("彙總結果", () =>
             {
+                // 🔴 缺料要先算：它會被寫進 lastSummary，而 lastSummary 同時是聊天訊息、
+                //    記錄與 IPC 的 GetLastSummary 三邊的來源。順序顛倒的話，
+                //    使用者在聊天視窗看到的那一行就會漏掉「為什麼一件事都沒做」。
+                var shortage = ReportRoundShortage();
+
                 lastSummary = $"園圃「自動整理」完成：處理 {doneCount} 格、跳過 {skippedCount} 格"
                               + (replantCount > 0 ? $"，其中重種 {replantCount} 格" : string.Empty)
-                              + (walkedCount > 0 ? $"；走位 {walkedCount} 次" : string.Empty);
+                              + (walkedCount > 0 ? $"；走位 {walkedCount} 次" : string.Empty)
+                              + (shortage.Length > 0 ? $"；缺料：{shortage}" : string.Empty);
                 AnnounceRoundResult();
                 return true;
             });
@@ -442,6 +502,207 @@ public sealed unsafe partial class AutoGardensWork
         StartAutoBatch(startedByLoop: true);
     }
 
+    // ── 缺材料的偵測與呈現 ─────────────────────────────────────────────────
+
+    /// <summary>模組停用時把缺料狀態清乾淨（下次啟用重新評估）。</summary>
+    private void ResetMaterialShortage()
+    {
+        materialShortage = string.Empty;
+        materialCheckTick = 0;
+        materialCheckNearPatch = false;
+        sawMaterialBlockedRound = false;
+        roundMissing = GardenMaterial.None;
+        announcedShortage = string.Empty;
+    }
+
+    /// <summary>每幀被呼叫，但每秒才真的重算一次。<b>只在框架執行緒上跑。</b></summary>
+    private void UpdateMaterialShortage()
+    {
+        var now = Environment.TickCount64;
+        if (now - materialCheckTick < MaterialCheckIntervalMs) return;
+        materialCheckTick = now;
+
+        materialShortage = BuildMaterialShortage();
+
+        // 缺料補齊了就把「曾經被擋住」忘掉，模組列上的提示跟著消失。
+        if (materialShortage.Length == 0)
+        {
+            sawMaterialBlockedRound = false;
+            announcedShortage = string.Empty;
+        }
+
+        // 🔴 順序：沒缺料就不必掃物件表。掃描本身很便宜（不在自宅時第一個判斷就回傳），
+        //    但這是每秒都會走的路徑，能不掃就不掃。
+        materialCheckNearPatch = materialShortage.Length > 0
+                                 && AnyPatchWithinRange(WalkEnabled ? SearchRange : InteractRange);
+    }
+
+    /// <summary>
+    /// 目前的策略要用、但現在拿不到的材料；空字串＝都拿得到。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>只講這套策略真的會用到的東西。</b>一個只想收穫、把施肥設成「不施肥」的人
+    /// 被告知「缺肥料」，跟什麼都不講一樣糟——他會去查一個根本不存在的問題，
+    /// 然後學會忽略這一行字。
+    /// <para>
+    /// 🔑 「有沒有貨」一律走 <see cref="FindInventoryItem"/>，也就是<b>決策層用的同一個判準</b>。
+    /// 換成 <c>GetInventoryItemCount</c>（設定畫面的下拉選單用的那個）會把裝備欄／兵器庫也算進去，
+    /// 失敗形式是「面板說有、跑起來說沒有」——那正好是這次要修掉的那種矛盾。
+    /// </para>
+    /// </remarks>
+    private string BuildMaterialShortage()
+    {
+        var missing = new List<string>();
+
+        if (NeedsSeedAndSoil)
+        {
+            AddIfMissing(missing, "種子", Config.SeedItemId);
+            AddIfMissing(missing, "土壤", Config.SoilItemId);
+        }
+
+        if (NeedsFertilizer)
+            AddIfMissing(missing, "肥料", Config.FertilizerItemId);
+
+        return missing.Count == 0 ? string.Empty : string.Join("、", missing);
+    }
+
+    /// <summary>目前的策略會不會用到種子與土壤（空地播種，或任何一條「做完之後重種」）。</summary>
+    private bool NeedsSeedAndSoil =>
+        Config.PlantWhenEmpty
+        || Config.TargetMaturePolicy == MatureCropPolicy.HarvestAndReplant
+        || Config.OtherMaturePolicy == MatureCropPolicy.HarvestAndReplant
+        || Config.WitheredMode == WitheredPolicy.DisposeAndReplant;
+
+    /// <summary>目前的策略會不會用到肥料。</summary>
+    private bool NeedsFertilizer => Config.FertilizeMode != FertilizePolicy.None;
+
+    /// <summary>
+    /// 把「還沒選」與「選了但背包沒有」分開講，並把道具名一起帶上。
+    /// </summary>
+    /// <remarks>
+    /// 📌 道具名走 <see cref="ItemNames.Get"/>（Lumina <c>Item</c> 表，台服自帶繁中），
+    /// 程式碼裡沒有寫死任何道具名稱。
+    /// ⚠️ 兩種缺法的處理方式完全不同（一個去設定畫面選、一個去買），
+    /// 合成同一句「缺種子」會讓使用者往錯的方向找。
+    /// </remarks>
+    private static void AddIfMissing(List<string> missing, string label, uint itemId)
+    {
+        if (itemId == 0)
+        {
+            missing.Add($"{label}（還沒在設定裡選）");
+            return;
+        }
+
+        if (FindInventoryItem(itemId) == null)
+            missing.Add($"{label}「{ItemNames.Get(itemId)}」（背包裡沒有）");
+    }
+
+    /// <summary>
+    /// 一輪跑完時處理缺料：回傳要寫進彙總的那段字（空字串＝這一輪沒被材料擋到）。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>判準是決策層的旗標，不是「這一輪做了幾格」。</b>
+    /// 一輪可以「收了三格、另外五格因為沒種子沒種回去」——那仍然要講。
+    /// <para>
+    /// 📌 記錄一律寫（<c>Information</c>，而且只在<b>狀態變化</b>時寫一行，
+    /// 不是每一輪寫一行——這個迴圈預設每 60 秒跑一次）。
+    /// 聊天訊息另外還有一道 <see cref="ShortageChatFloor"/> 的下限。
+    /// </para>
+    /// </remarks>
+    private string ReportRoundShortage()
+    {
+        if (roundMissing == GardenMaterial.None) return string.Empty;
+
+        sawMaterialBlockedRound = true;
+
+        // 🔴 這裡重算一次而不是用快取：快取最舊可能是一秒前的，而這一輪跑了幾十秒，
+        //    背包在這中間變過（剛好用完最後一份種子）是很正常的事。
+        materialShortage = BuildMaterialShortage();
+        materialCheckTick = Environment.TickCount64;
+
+        // 決策層說被擋了，但重算之後看起來不缺——那多半是這一輪跑到一半才用完的。
+        // 仍然要講，只是講不出是哪一項。
+        var text = materialShortage.Length > 0
+            ? materialShortage
+            : roundMissing == GardenMaterial.Fertilizer ? "肥料（這一輪中途用完）" : "種子或土壤（這一輪中途用完）";
+
+        if (text == announcedShortage) return text;
+
+        announcedShortage = text;
+        Svc.Log.Information($"[{InternalName}] 缺料：{text}（這一輪有格子因此沒做成想做的事）。");
+
+        if (Config.AnnounceMaterialShortage && DateTime.UtcNow - lastShortageChatUtc >= ShortageChatFloor)
+        {
+            lastShortageChatUtc = DateTime.UtcNow;
+            Svc.Chat.Print($"[TC Toolbox] 園圃自動整理缺料：{text}。補齊之前這幾格不會被處理。");
+        }
+
+        return text;
+    }
+
+    /// <summary>
+    /// 模組列上的提示。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>這是 ImGui 的繪製路徑，只准讀快取欄位、不准掃記憶體、不准擲例外。</b>
+    /// 實際的評估在 <see cref="UpdateMaterialShortage"/>（框架執行緒、每秒一次）。
+    /// <para>
+    /// 📌 模組關著時回 <see langword="null"/>：關著就不會有任何一輪跑起來，
+    /// 這時候在列上喊「缺種子」只是噪音。
+    /// </para>
+    /// <para>
+    /// 🔑 <b>只在「講了有用」的時候講</b>：人就在園圃旁邊，或者已經有一輪真的被擋掉了。
+    /// 否則一個把策略設成會重種、但人在外面跑本的使用者，會看到一句永遠掛在那裡的橘字。
+    /// </para>
+    /// </remarks>
+    public override ModuleNotice? RowNotice
+    {
+        get
+        {
+            if (!IsEnabled) return null;
+            if (materialShortage.Length == 0) return null;
+            if (!materialCheckNearPatch && !sawMaterialBlockedRound) return null;
+
+            return new ModuleNotice(
+                ModuleNoticeLevel.Warning,
+                $"缺料：{materialShortage}",
+                "「自動整理」現在的策略會用到這些東西，但拿不到 ——\n"
+                + "被它擋到的那幾格會被安靜地跳過（記錄裡是「沒有可用的種子或土壤」這一類的字樣）。\n"
+                + "補齊之後這一行會自己消失；不想用到的話，把對應的策略關掉也會消失。");
+        }
+    }
+
+    /// <summary>設定畫面上的缺料一行。與模組列上那句同一個來源。</summary>
+    /// <remarks>
+    /// 📌 這裡<b>不</b>看「在不在園圃旁邊」：使用者已經打開設定畫面在看這個功能了，
+    /// 出門前先知道自己少帶什麼正是他要的。
+    /// </remarks>
+    private void DrawMaterialShortage()
+    {
+        if (materialShortage.Length == 0)
+        {
+            // 🔑 「不缺」與「根本用不到」是兩件事，分開講。
+            //    全部策略都設成不動的人看到「材料都齊了」會以為它等一下會去做什麼。
+            ImGui.TextDisabled(NeedsSeedAndSoil || NeedsFertilizer
+                ? "材料：目前的策略會用到的種子／土壤／肥料都拿得到。"
+                : "材料：目前的策略不會用到種子、土壤或肥料（只做收穫／護理之類不消耗東西的事）。");
+            return;
+        }
+
+        ImGui.TextColored(new Vector4(1f, 0.65f, 0.25f, 1f), $"缺料：{materialShortage}");
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "被它擋到的那幾格會被跳過（例如「空地壟，但沒有可用的種子或土壤」）。\n"
+                + "只列出目前策略真的會用到的東西：設成不施肥就不會提肥料，\n"
+                + "沒有任何一條策略要重種也不會提種子與土壤。");
+        }
+
+        if (sawMaterialBlockedRound)
+            ImGui.TextDisabled("上一輪已經有格子因為這個被跳過了。");
+    }
+
     // ── 記錄 ────────────────────────────────────────────────────────────────
 
     /// <summary>逐格的診斷記錄：手動按的時候是 <c>Information</c>，自動重跑時降成 <c>Debug</c>。</summary>
@@ -501,6 +762,11 @@ public sealed unsafe partial class AutoGardensWork
                 "再依策略決定收穫／護理／施肥／處理／播種，最後把該重種的種回去。\n" +
                 "策略預設是保守的：非目標作物跳過、不施肥、枯萎不動。");
         }
+
+        // 🔑 緊接在按鈕下面：「按了什麼都沒發生」的第一個問句是「為什麼」，
+        //    答案要就在旁邊，不要藏在下面的策略區裡、更不要只寫進記錄。
+        ImGui.Spacing();
+        DrawMaterialShortage();
 
         ImGui.Spacing();
 
@@ -577,6 +843,21 @@ public sealed unsafe partial class AutoGardensWork
 
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("一座 3×8 的庭院會刷 24 行；記錄一律會寫，不受這格影響。");
+
+            var announceShortage = Config.AnnounceMaterialShortage;
+            if (ImGui.Checkbox("缺材料時在聊天視窗提醒一次", ref announceShortage))
+            {
+                Config.AnnounceMaterialShortage = announceShortage;
+                Plugin.Instance.Config.Save();
+            }
+
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip(
+                    "只在「缺的東西變了」的時候送一則，而且兩則之間至少隔 5 分鐘 ——\n"
+                    + "不是每一輪都送（這個迴圈預設每 60 秒跑一次）。\n"
+                    + "關掉的話缺料仍然看得到：模組列上與上面那一行都照樣顯示。");
+            }
         }
 
         if (autoDecisions.Count > 0)

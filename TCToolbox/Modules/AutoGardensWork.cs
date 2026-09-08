@@ -37,7 +37,8 @@ public sealed unsafe partial class AutoGardensWork : TcModule
         "另有「自動整理」：先讀出每一格種了什麼、成熟了沒、枯萎了沒，再依你設定的策略" +
         "（非目標作物怎麼辦、要不要施肥、枯萎的要不要清掉）逐格決定動作，最後把該重種的種回去。"
         + "另有「自動重跑」（預設開）：只要你人就在園圃旁，每隔一段時間自己跑一輪。預設不走位、不傳送，戰鬥製作過場或別的外掛正在移動時一律讓開。"
-        + "想讓它自己在園圃之間移動的話，另有「自動走位」（預設關，需要 vnavmesh）：只在目前這張圖裡走地面路線，不傳送、不跨區、不上坐騎，走不到就安靜放棄。";
+        + "想讓它自己在園圃之間移動的話，另有「自動走位」（預設關，需要 vnavmesh）：只在目前這張圖裡走地面路線，不傳送、不跨區、不上坐騎，走不到就安靜放棄。"
+        + "指令：/tcgarden＝跑一輪自動整理，/tcgarden ui／status／stop／harvest／tend／fertilize／plant。";
 
     public override ModuleCategory Category => ModuleCategory.Company;
 
@@ -199,6 +200,7 @@ public sealed unsafe partial class AutoGardensWork : TcModule
         queue.Abort();
         scannedActions.Clear();
         ResetAutoLoop();
+        ResetMaterialShortage();
 
         // 使用者在我們發起的移動還在跑的時候關掉模組——是我們讓他跑起來的，就由我們收掉。
         // 🔴 順序不能顛倒：Release 會把 /tcstop 登出，先停再放才不會留下「還在走、但停不了」。
@@ -218,6 +220,10 @@ public sealed unsafe partial class AutoGardensWork : TcModule
         // 🔴 先 Tick 再評估迴圈：兩者的順序決定了「剛跑完的那一幀」算不算閒。
         //    反過來的話，上一輪的最後一步還在佇列裡，而迴圈已經看到 IsBusy 是 false。
         TickAutoLoop();
+
+        // 缺料評估放在框架執行緒上（自己節流成每秒一次）：模組列與設定畫面只讀快取。
+        // 🔴 那兩處都在 ImGui 的繪製路徑上，不可以在那裡掃背包與物件表。
+        UpdateMaterialShortage();
     }
 
     /// <summary>遊戲字串一律走 Lumina sheet；此表無 EXDSchema 定義，用 RawRow 直讀。</summary>
@@ -820,6 +826,45 @@ public sealed unsafe partial class AutoGardensWork : TcModule
 
     public string LastSummary => lastSummary;
 
+    /// <summary>目前的策略要用、但拿不到的材料（空字串＝都拿得到）。給指令與 UI 用。</summary>
+    /// <remarks>⚠️ 讀的是每秒更新一次的快取，模組停用時恆為空字串。</remarks>
+    public string MaterialShortage => materialShortage;
+
+    /// <summary>
+    /// 聊天指令的批次入口。回傳空字串＝已經排進佇列，非空＝<b>沒有開始</b>的 zh-TW 理由。
+    /// </summary>
+    /// <param name="action">
+    /// <see cref="GardenAction.Auto"/>＝一輪「自動整理」；其餘走原本的單一動作批次。
+    /// </param>
+    /// <remarks>
+    /// 🔴 <b>這裡套了 <see cref="AutomationGate"/>，而設定畫面上的按鈕沒有套。</b>
+    /// 兩者刻意不同：按按鈕的人正看著這個面板，而快捷列上的一顆巨集是可以在任何情況下被按到的
+    /// （副本裡、別的外掛正在帶著角色走、剛按完全艦隊急停）。在那些時候開一連串互動選單
+    /// 會把別人的流程打斷，而使用者根本不知道是誰動的手。
+    /// <para>
+    /// 🔑 <b>擋下來一定要說話。</b>指令回傳理由、呼叫端印出來——
+    /// 「按了沒反應」正是這一輪整個任務要修掉的那種失敗。
+    /// </para>
+    /// <para>
+    /// 📌 除了這道閘門之外，指令走的是與按鈕<b>完全同一條</b>路徑（同一個 <see cref="StartAutoBatch"/>／
+    /// <see cref="StartBatch"/>），一個決策都沒有另外寫。
+    /// </para>
+    /// </remarks>
+    public string RunBatchFromCommand(GardenAction action)
+    {
+        if (!IsEnabled) return "自動園圃作業模組未啟用（請在 TC Toolbox 設定視窗開啟）。";
+
+        if (queue.IsBusy)
+            return $"園圃批次正在跑：{CurrentStepName}（完成 {doneCount} 格、跳過 {skippedCount} 格）。";
+
+        if (AutomationGate.TryGetBusyReason(out var busy)) return $"現在不動手：{busy}。";
+
+        if (action == GardenAction.Auto) StartAutoBatch();
+        else StartBatch(action);
+
+        return string.Empty;
+    }
+
     /// <summary>環境是否可執行園圃操作；回傳空字串代表可用，否則為 zh-TW 失敗原因。</summary>
     public string GetUnavailableReason()
     {
@@ -1016,7 +1061,12 @@ public sealed unsafe partial class AutoGardensWork : TcModule
         ImGui.TextDisabled("純裝飾用的花盆（例如南瓜花盆）不能種東西，不會被列入。");
         ImGui.Spacing();
         ImGui.TextDisabled("本模組啟用時另提供 TCToolbox.Gardening.* IPC，讓本機腳本（如 SND）逐格操作；");
-        ImGui.TextDisabled("腳本只能一次操作一格，整座庭院的批次入口只有上面這些按鈕。");
+        ImGui.TextDisabled("腳本只能一次操作一格，整座庭院的批次入口只有上面這些按鈕與 /tcgarden 指令。");
+        ImGui.Spacing();
+        ImGui.TextDisabled("指令：/tcgarden＝跑一輪自動整理（可以放進快捷列）；");
+        ImGui.TextDisabled("　　　/tcgarden ui／status／stop／harvest／tend／fertilize／plant。");
+        ImGui.TextDisabled("⚠️ 指令與按鈕唯一的差別：指令會先看「現在方不方便」（戰鬥中、別的外掛正在移動、");
+        ImGui.TextDisabled("　　剛按過全艦隊急停等），擋下來時會在聊天視窗說是被什麼擋的。");
     }
 
     /// <summary>種子／土壤／肥料清單資料驅動：Item 表 ItemUICategory 82（園藝用品），FilterGroup 20／21／22。</summary>
