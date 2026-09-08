@@ -159,10 +159,36 @@ internal static unsafe class AddonPressGuard
     /// </para>
     /// <para>
     /// ⚠️ <b>沒有這種證據的名字一律不要加。</b>猜錯的方向是危險的：把一扇「會被銷毀」的窗誤標成常駐，
-    /// 等於在它拆除途中提早 <see cref="HiddenReleaseFrames"/> 幀解除封鎖。已知的候選但<b>證據不足、
-    /// 刻意沒收</b>的是 <c>ContextIconMenu</c>（與 <c>ContextMenu</c> 同一個 <c>AgentContext</c> 家族，
-    /// 直覺上同樣常駐，但實機 log 裡沒有它的逃生口紀錄，無從證實）——
-    /// 憑直覺把它加進來，就是把一個沒被驗證的假設寫進安全關鍵路徑。
+    /// 等於在它拆除途中提早 <see cref="HiddenReleaseFrames"/> 幀解除封鎖。
+    /// </para>
+    /// <para>
+    /// 📌 <c>ContextIconMenu</c> <b>2026-09-09 補收</b>（在此之前是「證據不足、刻意沒收」的候選）。
+    /// 補收的證據是實機 <c>dalamud.log</c>（2026-09-08 22:55 起那一場）直接量出來的三件事：
+    /// <list type="number">
+    /// <item>整場 91 次送出<b>只有一個實例位址</b>（<c>0x22BE8A2C390</c>，23:48~00:18 全程不變）。</item>
+    /// <item>同位址的 89 個送出間隔裡 <b>64 個落在 2.000~2.010 秒</b>（＝<see cref="ReleaseTimeoutMs"/>），
+    /// 最小值 2.000 秒、<b>沒有任何一個小於 1.95 秒</b> ⇒ 每一次解除都來自逾時，
+    /// 生命週期事件<b>一次都沒有</b>到過。</item>
+    /// <item>守衛自己的逾時放行訊息逐字寫著「按下後 <b>6431</b> 毫秒」與「<b>9561</b> 毫秒」
+    /// 既沒有被銷毀也沒有重新建立。</item>
+    /// </list>
+    /// 🔑 <b>而且是五份互不相干的守衛副本給出同一個答案</b>：同一批實機 log 裡
+    /// ChilledLeves（258 幀）、YesAlready（289 幀）、TextAdvance（311 幀）、visland（90 幀）
+    /// 各自對 <c>ContextIconMenu</c> 印出同一種「既沒有被銷毀也沒有重新建立」的放行訊息。
+    /// </para>
+    /// <para>
+    /// 📌 <b>對照組</b>：<c>ContextMenu</c> 的「是常駐視窗（隱藏而不銷毀）」那一行在
+    /// 2026-09-08 20:16:53 的實機 log 裡出現過 ⇒ <see cref="ReleaseHiddenPersistent"/> 的
+    /// 「連續隱藏 N 幀」對同一個 <c>AgentContext</c> 家族的窗在這台機器上確實觸發得了，
+    /// 不是一條從來沒跑過的死路。
+    /// </para>
+    /// <para>
+    /// 🔴 <b>萬一這個判斷錯了，失敗方向是安全的</b>：假如 <c>ContextIconMenu</c> 收起來時
+    /// <c>IsVisible</c> 仍為 <see langword="true"/>，<see cref="LookUpVisibility"/> 會回
+    /// <see cref="AddonVisibility.Visible"/> ⇒ 幀數歸零 ⇒ 記號改由既有的 2 秒逾時解除，
+    /// 也就是<b>逐字退回改動前的行為</b>，不會提早解除任何一次封鎖。
+    /// 判斷對不對在下一場實機 log 裡看得見：解除路徑真的接上時會寫一行
+    /// 「<c>ContextIconMenu</c> 是常駐視窗（隱藏而不銷毀）」。
     /// </para>
     /// <para>
     /// 🔴 <b>加名字進來的代價：這份名單同時是「送出前必須可見」的名單。</b>
@@ -181,6 +207,7 @@ internal static unsafe class AddonPressGuard
     private static readonly HashSet<string> PersistentAddons = new(StringComparer.Ordinal)
     {
         "ContextMenu",
+        "ContextIconMenu",
     };
 
     /// <summary>

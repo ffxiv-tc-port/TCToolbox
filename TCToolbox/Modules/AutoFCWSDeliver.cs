@@ -540,6 +540,16 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
             // 🔴 選了就關：關閉中那幾幀 IsReady 照過，這裡又是每 tick 回來、沒有節流——
             //    守衛（ContextIconMenu 是併鍵的單答窗）擋住對同一實例的第二次，
             //    而且只有真的送出去才推進游標，否則游標會多跳、漏填格。
+            // 🔴🔴 2026-09-09：這一步就是使用者回報「選擇道具要等約三秒」的地方，
+            //    而真因不在本檔：ContextIconMenu 是<b>常駐視窗</b>（整場遊戲同一個實例位址、
+            //    收起來只是被隱藏），AddonPressGuard 的兩個生命週期解除點對它都不會發生
+            //    ⇒ 上一項按下的記號要撐滿 ReleaseTimeoutMs（2 秒）才逾時放行，
+            //    於是「下一項的道具選單」一開起來就被上一項的記號擋住，每一項都卡到滿 2 秒。
+            //    實機 dalamud.log（2026-09-08 22:55 那一場）：91 項裡 62 項（68%）在這一步被擋，
+            //    中位數 1.183 秒，整趟多花 73.4 秒；沒被擋的那 28 項只花 8~12 毫秒。
+            //    ⇒ 修法是把 ContextIconMenu 收進 AddonPressGuard.PersistentAddons，
+            //      改由「連續隱藏 20 幀」解除、並同時多一道互為邏輯反面的「送出前必須可見」——
+            //      不是把等待調小，也沒有動到任何一道崩潰防護。
             if (UiHelper.TryFireCallback(contextIcon, false, 0, 0, 1021003, 0, 0))
                 fillSlotCursor++;
             return false;
