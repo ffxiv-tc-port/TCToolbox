@@ -36,7 +36,8 @@ public sealed unsafe partial class AutoGardensWork : TcModule
         "亦可選定種子與土壤後批次播種。距離太遠或狀態不符的會自動跳過。" +
         "另有「自動整理」：先讀出每一格種了什麼、成熟了沒、枯萎了沒，再依你設定的策略" +
         "（非目標作物怎麼辦、要不要施肥、枯萎的要不要清掉）逐格決定動作，最後把該重種的種回去。"
-        + "另有「自動重跑」（預設開）：只要你人就在園圃旁，每隔一段時間自己跑一輪。不走位、不傳送，戰鬥製作過場或別的外掛正在移動時一律讓開。";
+        + "另有「自動重跑」（預設開）：只要你人就在園圃旁，每隔一段時間自己跑一輪。預設不走位、不傳送，戰鬥製作過場或別的外掛正在移動時一律讓開。"
+        + "想讓它自己在園圃之間移動的話，另有「自動走位」（預設關，需要 vnavmesh）：只在目前這張圖裡走地面路線，不傳送、不跨區、不上坐騎，走不到就安靜放棄。";
 
     public override ModuleCategory Category => ModuleCategory.Company;
 
@@ -177,6 +178,16 @@ public sealed unsafe partial class AutoGardensWork : TcModule
             lastSummary = $"步驟逾時已中止：{step}（完成 {doneCount} 格、跳過 {skippedCount} 格）。";
             Svc.Chat.PrintError($"[TC Toolbox] 園圃步驟逾時，批次已停止：{step}（已完成 {doneCount} 格）");
         };
+
+        // 走位會發起 vnavmesh 的移動 ⇒ 借用共用的停止設施：註冊 /tcstop、並讓補送看門狗
+        // 蓋住「按了停止、路徑還在背景計算、算完才開走」那幾秒。
+        // 📌 引用計數的，走位沒打開也照樣 Acquire——它只決定指令與看門狗掛不掛得起來，
+        //    本身不會讓任何東西動起來。
+        NavStop.Acquire();
+        walkStartedNav = false;
+        lastWalkGiveUpReason = string.Empty;
+        ResetWalkRound();
+
         Svc.Framework.Update += OnUpdate;
         Svc.ClientState.TerritoryChanged += OnTerritoryChanged;
     }
@@ -188,6 +199,13 @@ public sealed unsafe partial class AutoGardensWork : TcModule
         queue.Abort();
         scannedActions.Clear();
         ResetAutoLoop();
+
+        // 使用者在我們發起的移動還在跑的時候關掉模組——是我們讓他跑起來的，就由我們收掉。
+        // 🔴 順序不能顛倒：Release 會把 /tcstop 登出，先停再放才不會留下「還在走、但停不了」。
+        //    （補送窗口本身會活過最後一次 Release，見 NavStop.Release。）
+        StopWalkIfMoving();
+        NavStop.Release();
+        walkStartedNav = false;
     }
 
     /// <summary>換區後地壟 ObjectId 會重來，掃描結果一律作廢，避免拿到別座庭院的舊狀態。</summary>
@@ -281,9 +299,10 @@ public sealed unsafe partial class AutoGardensWork : TcModule
 
         doneCount = 0;
         skippedCount = 0;
+        ResetWalkRound();
 
         foreach (var (patchId, _) in patches)
-            EnqueuePatch(patchId, action, Config.FertilizerItemId, Config.SeedItemId, Config.SoilItemId);
+            EnqueuePatch(patchId, action, Config.FertilizerItemId, Config.SeedItemId, Config.SoilItemId, allowWalk: true);
 
         var plotCount = patches.Count(x => x.Kind == PatchKind.Plot);
         var potCount = patches.Count - plotCount;
@@ -300,11 +319,26 @@ public sealed unsafe partial class AutoGardensWork : TcModule
     /// <param name="fertilizerItemId">施肥用；批次走設定值，IPC 走呼叫端指定值。</param>
     /// <param name="seedItemId">播種用種子。</param>
     /// <param name="soilItemId">播種用土壤。</param>
-    private void EnqueuePatch(ulong gameObjectId, GardenAction action, uint fertilizerItemId, uint seedItemId, uint soilItemId)
+    /// <param name="allowWalk">
+    /// 這一格允許先走過去嗎（還要看使用者有沒有打開走位設定）。
+    /// 🔴 <b>預設 <see langword="false"/>，而且 IPC 那條路徑刻意不傳 <see langword="true"/>。</b>
+    /// <c>TCToolbox.Gardening.*</c> 的契約是「一次一格、由呼叫端決策與推進」，
+    /// 腳本作者呼叫 <c>Harvest(id)</c> 時角色突然自己走起來是他沒有要求的行為改變。
+    /// （那條路徑本來就會在距離超過 <see cref="InteractRange"/> 時直接回一句失敗原因。）
+    /// </param>
+    private void EnqueuePatch(
+        ulong gameObjectId, GardenAction action, uint fertilizerItemId, uint seedItemId, uint soilItemId,
+        bool allowWalk = false)
     {
         // 🔴 只存 GameObjectId，不存 IGameObject 也不存位址：每一步都自己重查。
         //    本 pin 的 ObjectTable 包裝是每格預配、就地改寫 Address 的，跨幀持有會靜默換人。
         var job = new PatchJob { GameObjectId = gameObjectId, Chosen = action };
+
+        // 🔴 關著的時候<b>連步驟都不排</b>，不是排一個立刻回 true 的空步驟——
+        //    後者每一格都要多花一幀，而且會在「執行中：走到地壟旁」閃一下，
+        //    讓沒開走位的人以為模組要走路了。
+        if (allowWalk && WalkEnabled)
+            EnqueueWalkToPatch(job);
 
         queue.Enqueue("互動地壟", () =>
         {
@@ -662,17 +696,26 @@ public sealed unsafe partial class AutoGardensWork : TcModule
     }
 
     /// <summary>
-    /// <see cref="InteractRange"/> 之內有沒有至少一格可種植的容器。
+    /// 指定半徑之內有沒有至少一格可種植的容器。
     /// </summary>
+    /// <param name="range">
+    /// 判定半徑（碼）。無人值守迴圈傳的是 <see cref="InteractRange"/>（走位關著＝只算站得到的），
+    /// 走位打開時傳 <see cref="SearchRange"/>（走得過去的都算）。
+    /// </param>
     /// <remarks>
-    /// 🔴 <b>刻意不複用 <see cref="TryGetGardenPatches"/>。</b>那一支用的是
-    /// <see cref="SearchRange"/>（30 碼），而實際能互動的只有 <see cref="InteractRange"/>（6 碼）。
-    /// 無人值守的迴圈拿 30 碼當閘門的話，使用者只是路過自家庭院就會觸發一輪，
-    /// 而那一輪的每一格都會在「互動地壟」那一步因為距離而跳過——
-    /// 白跑一輪、還把「跳過 N 格」寫進記錄。
+    /// 🔴 <b>刻意不複用 <see cref="TryGetGardenPatches"/>。</b>那一支永遠用
+    /// <see cref="SearchRange"/>（30 碼），而走位關著時實際能互動的只有
+    /// <see cref="InteractRange"/>（6 碼）。無人值守的迴圈在那種情況下拿 30 碼當閘門的話，
+    /// 使用者只是路過自家庭院就會觸發一輪，而那一輪的每一格都會在「互動地壟」那一步因為距離
+    /// 而跳過——白跑一輪、還把「跳過 N 格」寫進記錄。
+    /// <para>
+    /// 🔑 反過來說，<b>走位打開之後這道閘門非改不可</b>：不改的話使用者必須先自己站到某一格旁邊
+    /// 迴圈才會醒過來，而「不必先走過去」正是走位這個功能存在的理由——
+    /// 失敗形式是「勾了走位但它從來不動」，而且完全靜默。
+    /// </para>
     /// <para>📌 只問「有沒有」，找到第一個就收工；住宅區以外一律回 <see langword="false"/>。</para>
     /// </remarks>
-    private static bool AnyPatchWithinInteractRange()
+    private static bool AnyPatchWithinRange(float range)
     {
         var localPlayer = Svc.Objects.LocalPlayer;
         if (localPlayer == null) return false;
@@ -685,7 +728,7 @@ public sealed unsafe partial class AutoGardensWork : TcModule
 
         foreach (var obj in Svc.Objects)
         {
-            if (Vector3.Distance(localPlayer.Position, obj.Position) > InteractRange) continue;
+            if (Vector3.Distance(localPlayer.Position, obj.Position) > range) continue;
             if (TryClassify(obj, out _)) return true;
         }
 
@@ -898,6 +941,11 @@ public sealed unsafe partial class AutoGardensWork : TcModule
     {
         if (!queue.IsBusy) return;
         queue.Abort();
+
+        // 🔴 佇列清掉不會讓角色停下來——走位是交給 vnavmesh 跑的，它不知道我們放棄了。
+        //    這裡不補一句停止的話，表現是「按了停止，角色照樣走到下一格才站住」。
+        StopWalkIfMoving();
+
         lastSummary = $"已停止（完成 {doneCount} 格、跳過 {skippedCount} 格）。";
     }
 

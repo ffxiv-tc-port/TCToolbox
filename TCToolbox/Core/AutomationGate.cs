@@ -1,3 +1,4 @@
+using System;
 using Dalamud.Game.ClientState.Conditions;
 
 namespace TCToolbox.Core;
@@ -28,6 +29,34 @@ namespace TCToolbox.Core;
 /// </remarks>
 internal static class AutomationGate
 {
+    /// <summary>全艦隊急停之後，所有共用這道閘門的無人值守迴圈要靜多久。</summary>
+    /// <remarks>
+    /// 🔴 <b>光靠 <see cref="NavStop.IsEnforcing"/> 那三秒是不夠的。</b>那三秒只涵蓋
+    /// 「確保 vnavmesh 真的停下來」，窗口一關，一個到期的無人值守迴圈下一幀就會自己再開一輪
+    /// ——使用者剛按下急停，角色又動了起來，而且看起來像急停沒有生效。
+    /// <para>
+    /// 📌 60 秒是刻意訂得比園圃重跑的預設間隔（60 秒）不短：急停的語意是「先停下來，我要接手」，
+    /// 至少要留給使用者一個週期的時間去做他要做的事。
+    /// </para>
+    /// </remarks>
+    public const int EmergencyStopCooldownSeconds = 60;
+
+    /// <summary>急停冷卻到什麼時候為止（UTC）。<c>MinValue</c>＝沒有冷卻中。</summary>
+    private static DateTime emergencyStopUntil = DateTime.MinValue;
+
+    /// <summary>
+    /// 通知這道閘門「剛剛執行過一次急停」，開始冷卻。
+    /// </summary>
+    /// <remarks>⚠️ 只在主執行緒呼叫（急停本身走指令處理常式／熱鍵，都是主執行緒）。</remarks>
+    public static void NotifyEmergencyStop()
+    {
+        emergencyStopUntil = DateTime.UtcNow.AddSeconds(EmergencyStopCooldownSeconds);
+
+        // 🔴 Information 級：「急停之後我的自動流程到底停了多久」出事後只能從記錄回推。
+        Svc.Log.Information(
+            $"[AutomationGate] 收到全艦隊急停：本外掛的無人值守例行工作暫停 {EmergencyStopCooldownSeconds} 秒。");
+    }
+
     /// <summary>
     /// 現在有沒有理由不要動手。
     /// </summary>
@@ -44,6 +73,20 @@ internal static class AutomationGate
         {
             reason = "還沒登入";
             return true;
+        }
+
+        // 🔴 急停冷卻排在所有遊戲狀態之前：使用者剛剛明確要求「全部停下」，
+        //    這段期間不管遊戲狀態多空閒都不該有東西自己醒過來。
+        if (emergencyStopUntil != DateTime.MinValue)
+        {
+            var remaining = emergencyStopUntil - DateTime.UtcNow;
+            if (remaining > TimeSpan.Zero)
+            {
+                reason = $"剛執行過全艦隊急停（{remaining.TotalSeconds:F0} 秒後恢復）";
+                return true;
+            }
+
+            emergencyStopUntil = DateTime.MinValue;
         }
 
         if (Svc.Condition[ConditionFlag.BetweenAreas] || Svc.Condition[ConditionFlag.BetweenAreas51])

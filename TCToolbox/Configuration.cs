@@ -1682,6 +1682,24 @@ public sealed class AutoGardensWorkConfig
     /// </remarks>
     public int AutoLoopIntervalSeconds = 60;
 
+    // ── 在園圃之間自動走位 ───────────────────────────────
+
+    /// <summary>批次處理時自己走到下一格園圃旁邊（需要 vnavmesh）。</summary>
+    /// <remarks>
+    /// 🔴 <b>預設關閉。</b>這是「角色會自己移動」的功能，升級上來的人行為必須完全不變——
+    /// 要用的人自己去勾。
+    /// <para>
+    /// 📌 只在<b>目前這張圖</b>裡走，不傳送、不跨區、不上坐騎（一律地面路線）。
+    /// 走不到、逾時、卡住、或別的外掛正在移動角色時，這一輪就退回原本的行為
+    /// （只處理站得到的那幾格），<b>不重試</b>。
+    /// </para>
+    /// <para>
+    /// ⚠️ 房屋內部與庭園有沒有可用的導航網格，取決於 vnavmesh 在那張圖建不建得出來——
+    /// 建不出來時每一輪會在記錄裡留一行 Information，功能自己降級，不會卡住也不會亂走。
+    /// </para>
+    /// </remarks>
+    public bool WalkBetweenPatches;
+
     /// <summary>「自動整理」跑完後在聊天視窗列出逐格的決定（記錄一律會寫，不受這格影響）。</summary>
     /// <remarks>⚠️ 預設<b>關閉</b>：一座 3×8 的庭院會刷 24 行。要查為什麼某一格沒被動到時再打開。</remarks>
     public bool AnnounceEachDecision;

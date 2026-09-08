@@ -149,7 +149,14 @@ public sealed class FleetEmergencyStop : TcModule
     /// <param name="source">誰觸發的（寫進記錄；出事時這是唯一分得出來的線索）。</param>
     internal void Execute(string source)
     {
+        // 🔴 <b>先停自己再停別人。</b>本外掛自己也有會發起移動的無人值守流程
+        //    （園圃自動整理的走位）。順序顛倒的話，FleetStop 已經把 vnavmesh 停下來了，
+        //    而我們自己的佇列還活著、下一格照樣送一次新的導航請求——
+        //    表現是「按了急停，角色停一下又走了」，而且看起來像 vnavmesh 沒停。
+        var selfResult = StopOwnAutomation();
+
         var results = FleetStop.StopAll();
+        results.Insert(0, selfResult);
 
         LastResults.Clear();
         LastResults.AddRange(results);
@@ -182,6 +189,51 @@ public sealed class FleetEmergencyStop : TcModule
             window.IsOpen = true;
 
         AnnounceToTataru(failed);
+    }
+
+    /// <summary>
+    /// 把<b>本外掛自己</b>會自己動的流程叫停，並讓共用閘門進入急停冷卻。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 <b>「別的外掛都停了」不等於「全部停了」。</b>急停對象清單列的都是別人，
+    /// 而本外掛自己也有會發起移動與互動的無人值守流程。漏掉自己的失敗形式最難歸因：
+    /// 使用者看到角色停了一下又動起來，而急停結果視窗上每一項都是綠的。
+    /// </para>
+    /// <para>
+    /// 🔴 <b>光是中止佇列不夠，還要壓住「下一個週期」。</b>園圃的無人值守重跑是按時間排程的，
+    /// 佇列清掉之後它下一次到期就會自己再開一輪。所以這裡另外通知
+    /// <see cref="AutomationGate"/> 進入冷卻——<c>NavStop</c> 那三秒補送窗口只涵蓋
+    /// 「確保 vnavmesh 真的停下來」，涵蓋不到排程。
+    /// </para>
+    /// <para>
+    /// 📌 <b>三態一律回 <see cref="FleetStopOutcome.Ok"/>。</b>「沒有東西正在跑」在這裡不是
+    /// 「未安裝」——模組就在這裡，冷卻也真的設下去了，畫成灰色會讓使用者以為自己這一項沒生效。
+    /// </para>
+    /// </remarks>
+    private static FleetStopResult StopOwnAutomation()
+    {
+        var stopped = new List<string>();
+
+        foreach (var module in Plugin.Instance.Modules)
+        {
+            // ⚠️ 只挑真的會發起移動／長流程的模組，逐個具名。
+            //    用「全部模組一律 Disable」那種寫法會把使用者的開關關掉，而急停不該改設定。
+            if (module is not AutoGardensWork garden) continue;
+            if (!garden.IsBusy) continue;
+
+            var step = garden.CurrentStepName;
+            garden.StopBatch();
+            stopped.Add($"園圃自動作業（中止於「{step}」）");
+        }
+
+        AutomationGate.NotifyEmergencyStop();
+
+        var detail = stopped.Count > 0
+            ? $"已中止：{string.Join("、", stopped)}；並暫停無人值守重跑 {AutomationGate.EmergencyStopCooldownSeconds} 秒"
+            : $"沒有正在跑的批次；已暫停無人值守重跑 {AutomationGate.EmergencyStopCooldownSeconds} 秒";
+
+        return new FleetStopResult("TC Toolbox 自己", FleetStopOutcome.Ok, detail);
     }
 
     /// <summary>整輪急停跑完之後，請塔塔露出一聲。</summary>

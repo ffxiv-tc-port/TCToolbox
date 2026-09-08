@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.Text.SeStringHandling.Payloads;
 using Dalamud.Interface.Utility.Raii;
@@ -304,16 +305,20 @@ public sealed unsafe partial class AutoGardensWork
         skippedCount = 0;
         replantQueue.Clear();
         autoDecisions.Clear();
+        ResetWalkRound();
 
         var targetCrop = GardenCropData.CropOfSeed(Config.SeedItemId);
         LogPerPatch(
             $"[{InternalName}] 自動整理開始：{patches.Count} 格；目標種子 {Config.SeedItemId}"
             + $" → 目標作物 {targetCrop}；策略 目標成熟={Config.TargetMaturePolicy}"
             + $" 非目標成熟={Config.OtherMaturePolicy} 施肥={Config.FertilizeMode}"
-            + $" 枯萎={Config.WitheredMode} 護理={Config.TendWhenNeeded} 空地播種={Config.PlantWhenEmpty}");
+            + $" 枯萎={Config.WitheredMode} 護理={Config.TendWhenNeeded} 空地播種={Config.PlantWhenEmpty}"
+            + $" 走位={WalkEnabled}");
 
         foreach (var (patchId, _) in patches)
-            EnqueuePatch(patchId, GardenAction.Auto, Config.FertilizerItemId, Config.SeedItemId, Config.SoilItemId);
+            EnqueuePatch(
+                patchId, GardenAction.Auto, Config.FertilizerItemId, Config.SeedItemId, Config.SoilItemId,
+                allowWalk: true);
 
         queue.Enqueue("排入重種", () =>
         {
@@ -322,13 +327,14 @@ public sealed unsafe partial class AutoGardensWork
             //    這正是重種必須放在這裡而不是 StartAutoBatch 的理由：哪幾格要重種，
             //    要等前面每一格都真的做完才知道。
             foreach (var id in replantQueue)
-                EnqueuePatch(id, GardenAction.Plant, 0, Config.SeedItemId, Config.SoilItemId);
+                EnqueuePatch(id, GardenAction.Plant, 0, Config.SeedItemId, Config.SoilItemId, allowWalk: true);
 
             var replantCount = replantQueue.Count;
             queue.Enqueue("彙總結果", () =>
             {
                 lastSummary = $"園圃「自動整理」完成：處理 {doneCount} 格、跳過 {skippedCount} 格"
-                              + (replantCount > 0 ? $"，其中重種 {replantCount} 格" : string.Empty);
+                              + (replantCount > 0 ? $"，其中重種 {replantCount} 格" : string.Empty)
+                              + (walkedCount > 0 ? $"；走位 {walkedCount} 次" : string.Empty);
                 AnnounceRoundResult();
                 return true;
             });
@@ -360,8 +366,10 @@ public sealed unsafe partial class AutoGardensWork
     /// </summary>
     /// <remarks>
     /// <para>
-    /// 🔴 <b>這裡不走位、也不叫任何人走位。</b>條件是「站在有花盆的地方」而不是
-    /// 「走去有花盆的地方」——後者才是需要使用者裁決的自動化，這個功能刻意不做。
+    /// 🔴 <b>走位預設關著。</b>關著的時候條件是「站在有花盆的地方」而不是「走去有花盆的地方」，
+    /// 行為與加走位之前完全一樣。使用者自己打開
+    /// <see cref="AutoGardensWorkConfig.WalkBetweenPatches"/> 之後，條件才放寬成
+    /// 「<see cref="SearchRange"/> 內有花盆」，由 <c>EnqueueWalkToPatch</c> 逐格帶過去。
     /// </para>
     /// <para>
     /// 🔑 <b>決策與佇列與手動按鈕完全共用</b>：這支唯一做的事是決定「要不要呼叫
@@ -414,9 +422,15 @@ public sealed unsafe partial class AutoGardensWork
             return;
         }
 
-        if (!AnyPatchWithinInteractRange())
+        // 🔴 閘門的半徑必須跟著走位開關走。走位打開時仍然只看互動距離的話，
+        //    使用者得先自己站到某一格旁邊迴圈才會醒過來——那正好是走位要解掉的那件事，
+        //    而失敗形式是「勾了走位但它從來不動」，完全靜默。
+        var gateRange = WalkEnabled ? SearchRange : InteractRange;
+        if (!AnyPatchWithinRange(gateRange))
         {
-            lastLoopBlockReason = "互動距離內沒有園圃地壟或花盆";
+            lastLoopBlockReason = WalkEnabled
+                ? $"{gateRange:F0} 碼內沒有園圃地壟或花盆"
+                : "互動距離內沒有園圃地壟或花盆";
             return;
         }
 
@@ -487,6 +501,12 @@ public sealed unsafe partial class AutoGardensWork
                 "再依策略決定收穫／護理／施肥／處理／播種，最後把該重種的種回去。\n" +
                 "策略預設是保守的：非目標作物跳過、不施肥、枯萎不動。");
         }
+
+        ImGui.Spacing();
+
+        // 🔑 走位放在「自動重跑」之前：它同時影響手動按的批次與無人值守重跑，
+        //    放進重跑那一區的話會被讀成「只有自動重跑才會走」。
+        DrawWalkSection();
 
         ImGui.Spacing();
         DrawAutoLoopSection();
@@ -592,7 +612,8 @@ public sealed unsafe partial class AutoGardensWork
                 "打開之後，只要你人站在自家（或有權限的）園圃／花盆旁邊，模組就會自己\n" +
                 "每隔一段時間跑一輪上面那個「自動整理」，用的是同一套策略。\n" +
                 "\n" +
-                "不會走位、不會傳送、不會替你上坐騎——只處理站得到的那幾格。\n" +
+                "預設不會走位、不會傳送、不會替你上坐騎——只處理站得到的那幾格。\n" +
+                "要它自己在園圃之間移動的話，另外勾下面那格「自動走位」。\n" +
                 "戰鬥中、製作中、過場中、別的外掛正在移動角色時一律讓開。\n" +
                 "\n" +
                 "⚠️ 你在上面調的策略從此會自己跑。不想讓它自己動的話關掉這格，\n" +
@@ -619,6 +640,61 @@ public sealed unsafe partial class AutoGardensWork
         }
 
         DrawAutoLoopStatus();
+    }
+
+    /// <summary>「自動走位」那一小區的 UI。</summary>
+    /// <remarks>
+    /// 🔑 vnavmesh 在不在、上一次為什麼放棄，都畫在<b>列上</b>而不是 tooltip：
+    /// 這兩件事屬於「它現在到底會不會動」，使用者要能一眼掃到。
+    /// tooltip 藏的是「為什麼這樣設計」，不是「有沒有問題」。
+    /// </remarks>
+    private void DrawWalkSection()
+    {
+        var walk = Config.WalkBetweenPatches;
+        if (ImGui.Checkbox("自動走位（自己走到下一格園圃旁，需要 vnavmesh）", ref walk))
+        {
+            Config.WalkBetweenPatches = walk;
+            Plugin.Instance.Config.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "打開之後，批次處理時會自己走到下一格園圃旁邊，不必你一格一格走過去。\n" +
+                "\n" +
+                "只在目前這張圖裡走：不傳送、不跨區、不上坐騎（一律地面路線）。\n" +
+                "別的外掛（vnavmesh／Lifestream／AutoDuty／BossMod AI）正在移動角色時不搶，\n" +
+                "整輪讓開等下一次。\n" +
+                "\n" +
+                $"走不到、逾時（{WalkHopTimeout.TotalSeconds:F0} 秒）、卡住、或這裡根本沒有導航網格時，\n" +
+                "這一輪就退回原本的行為（只處理站得到的那幾格），不會重試、不會亂走。\n" +
+                $"隨時可用 {NavStop.Command} 或全艦隊急停停下來。\n" +
+                "\n" +
+                "⚠️ 房屋內部與庭園有沒有可用的導航網格要看 vnavmesh 在那張圖建不建得出來，\n" +
+                "而且玩家擺的家具與柵欄不會出現在導航網格上——路徑可能穿過它們然後卡住。");
+        }
+
+        if (!Config.WalkBetweenPatches) return;
+
+        using var indent = ImRaii.PushIndent();
+
+        // 外掛在不在，直接畫在列上（做法同 /gotoflag 那個模組）。
+        var vnavReady = ExternalNav.IsVnavmeshReady();
+        if (vnavReady)
+        {
+            ImGui.TextDisabled($"vnavmesh：導航網格就緒（走到 {WalkArriveDistance:F1} 碼內就開始互動）。");
+        }
+        else if (ExternalNav.IsVnavmeshInstalled())
+        {
+            ImGui.TextColored(new Vector4(1f, 0.85f, 0.35f, 1f), "vnavmesh：導航網格尚未就緒，走位暫時不能用。");
+        }
+        else
+        {
+            ImGui.TextColored(new Vector4(1f, 0.5f, 0.4f, 1f), "vnavmesh：未偵測到，走位不能用（會退回只處理站得到的那幾格）。");
+        }
+
+        if (lastWalkGiveUpReason.Length > 0)
+            ImGui.TextDisabled($"上次放棄走位：{lastWalkGiveUpReason}");
     }
 
     /// <summary>自動重跑現在到底會不會動——一句話講完。</summary>

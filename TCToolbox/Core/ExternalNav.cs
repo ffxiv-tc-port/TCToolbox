@@ -36,6 +36,27 @@ internal static class ExternalNav
     private static readonly Lazy<ICallGateSubscriber<Vector3, bool, bool>> VnavMoveToGate =
         new(() => Svc.PluginInterface.GetIpcSubscriber<Vector3, bool, bool>("vnavmesh.SimpleMove.PathfindAndMoveTo"));
 
+    // 📌 vnavmesh/IPCProvider.cs 的
+    //    RegisterFunc("SimpleMove.PathfindAndMoveCloseTo", (Vector3 dest, bool fly, float range) => move.MoveTo(dest, fly, range))
+    //    比 PathfindAndMoveTo 多一個「到這麼近就算到了」的容許值，最後會變成 FollowPath 的
+    //    DestinationTolerance：那一段的實作是「距離最後一個路徑點小於容許值就把路徑點清空」
+    //    （vnavmesh/Movement/FollowPath.cs 的 Update）。
+    // 🔑 對「走到某個物件旁邊互動」這種需求，這支才是對的工具：目的地是那個物件本身，
+    //    而物件本身通常是站不上去的（地壟、花盆、NPC），用 PathfindAndMoveTo 等於要求
+    //    走進障礙物裡面。
+    private static readonly Lazy<ICallGateSubscriber<Vector3, bool, float, bool>> VnavMoveCloseToGate =
+        new(() => Svc.PluginInterface.GetIpcSubscriber<Vector3, bool, float, bool>("vnavmesh.SimpleMove.PathfindAndMoveCloseTo"));
+
+    // 📌 vnavmesh/IPCProvider.cs 的
+    //    RegisterFunc("Query.Mesh.NearestPoint", (Vector3 p, float halfExtentXZ, float halfExtentY) => navmeshManager.Query?.FindNearestPointOnMesh(p, halfExtentXZ, halfExtentY))
+    // 🔴🔴 回傳型別<b>必須</b>宣告成 <c>Vector3?</c>，不能寫成 <c>Vector3</c>。
+    //    CallGateChannel.InvokeFunc 只在型別「不同」時才走 ConvertObject，而 ConvertObject
+    //    對 null 輸入立刻回 null ⇒ 最後那個 (TRet)result 對值型別擲的是
+    //    NullReferenceException。失敗形式是「有值時一切正常，只有查不到的那一次擲一個
+    //    看起來與 IPC 完全無關的 NRE」——正是這種缺陷可以長期潛伏不被發現的原因。
+    private static readonly Lazy<ICallGateSubscriber<Vector3, float, float, Vector3?>> VnavNearestPoint =
+        new(() => Svc.PluginInterface.GetIpcSubscriber<Vector3, float, float, Vector3?>("vnavmesh.Query.Mesh.NearestPoint"));
+
     // 📌 vnavmesh 端這兩個是 RegisterAction／RegisterFunc（見 vnavmesh/IPCProvider.cs:35-36）：
     //    Path.Stop 無參數無回傳 → 訂閱型別是 ICallGateSubscriber<object> 且用 InvokeAction()，
     //    寫成 InvokeFunc() 會在執行期炸（型別對不上），編譯期看不出來。
@@ -305,25 +326,7 @@ internal static class ExternalNav
     /// </remarks>
     public static bool TryMoveTo(Vector3 destination, bool fly, out bool started, string? source = null)
     {
-        if (fly && !CanFly())
-        {
-            fly = false;
-
-            // 節流的理由：目前三個會傳 fly:true 的呼叫端都是離散的使用者動作
-            // （點擊放開、按鈕、聊天指令），這道閘門幾乎一定放行，節流形同不存在。
-            // 它在的目的是保險——將來若接上每幀重試的呼叫端，沒有它就會把聊天視窗與 log 洗爆。
-            if (Throttle.Pass("ExternalNav-FlyNeedsMount", 2_000))
-            {
-                var tag = string.IsNullOrEmpty(source) ? string.Empty : $"{source}：";
-                Svc.Chat.Print(
-                    $"[TC Toolbox] {tag}目的地需飛行但未乘坐騎，改走地面路線；請先乘上坐騎再下指令。");
-
-                // 使用者回報用的定錨點：出事時這一行是唯一能證明「飛行被降級了、是誰要求的」的證據。
-                Svc.Log.Information(
-                    $"[ExternalNav] 飛行降級為地面路線（未乘坐騎）：呼叫端={source ?? "未指名"}"
-                    + $" 目的地={destination:F1}");
-            }
-        }
+        fly = DegradeFlyIfNotMounted(fly, destination, source);
 
         try
         {
@@ -336,6 +339,104 @@ internal static class ExternalNav
             started = false;
             return false;
         }
+    }
+
+    /// <summary>
+    /// 同 <see cref="TryMoveTo"/>，但只要走到距離目的地 <paramref name="range"/> 碼以內就算到了。
+    /// </summary>
+    /// <param name="destination">目的地世界座標（通常就是要互動的那個物件本身的位置）。</param>
+    /// <param name="fly">是否允許飛行路線。⚠️ 沒乘坐騎時會在這裡被就地降級成地面路線。</param>
+    /// <param name="range">
+    /// 容許值（碼）。<b>0 等於沒有容許值</b>（vnavmesh 端是 <c>DestinationTolerance &gt; 0</c> 才判），
+    /// 也就是退化成 <see cref="TryMoveTo"/>。
+    /// </param>
+    /// <param name="started">vnavmesh 是否收下了這次導航。</param>
+    /// <param name="source">呼叫端模組名，只用在降級訊息裡指名；null＝不指名。</param>
+    /// <remarks>
+    /// 🔴 <b><paramref name="started"/> 回 <see langword="true"/> 幾乎沒有資訊量。</b>
+    /// vnavmesh 的 <c>AsyncMoveRequest.MoveTo</c> 現在對「上一筆還在跑」是接手而不是拒絕，
+    /// 兩條路徑都回 true ⇒ 呼叫端<b>不可以</b>拿它當「走得到」的證據，
+    /// 一定要自己用距離判定抵達、自己設上限判定走不到。
+    /// </remarks>
+    public static bool TryMoveCloseTo(
+        Vector3 destination, bool fly, float range, out bool started, string? source = null)
+    {
+        fly = DegradeFlyIfNotMounted(fly, destination, source);
+
+        try
+        {
+            started = VnavMoveCloseToGate.Value.InvokeFunc(destination, fly, range);
+            return true;
+        }
+        catch (IpcError ex)
+        {
+            Svc.Log.Warning(ex, "[ExternalNav] 呼叫 vnavmesh.SimpleMove.PathfindAndMoveCloseTo 失敗");
+            started = false;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 問 vnavmesh：這個位置附近的導航網格上，最近的一個點在哪裡。
+    /// </summary>
+    /// <remarks>
+    /// 🔑 <b>這是「這裡到底有沒有導航網格」唯一便宜可靠的判法。</b>
+    /// <see cref="IsVnavmeshReady"/> 只說「這張圖建出了一張網格」，不保證<b>你要去的那個角落</b>
+    /// 在網格上（室內、庭園、被家具圍住的區塊都可能整塊沒有）。
+    /// 而 vnavmesh 對「終點不在網格上」的處置是<b>算不出路徑</b>——呼叫端拿到的仍然是
+    /// <c>started == true</c>，然後角色站著不動。
+    /// <para>
+    /// ⚠️ <paramref name="halfExtentY"/> 的預設在 vnavmesh 端是 5：只有 X／Z 而 Y 隨便給
+    /// （例如 0 或 1024）時一定查不到。這裡要求呼叫端明確給值，就是為了不讓那個預設值
+    /// 被靜默套用。物件表拿到的座標本來就是完整三維的，直接傳進來即可。
+    /// </para>
+    /// </remarks>
+    /// <returns><see langword="false"/>＝vnavmesh 未安裝、網格沒好，或這個位置附近沒有網格。</returns>
+    public static bool TryFindNearestMeshPoint(
+        Vector3 probe, float halfExtentXZ, float halfExtentY, out Vector3 point)
+    {
+        try
+        {
+            var result = VnavNearestPoint.Value.InvokeFunc(probe, halfExtentXZ, halfExtentY);
+            if (result == null)
+            {
+                point = default;
+                return false;
+            }
+
+            point = result.Value;
+            return true;
+        }
+        catch (IpcError ex)
+        {
+            Svc.Log.Warning(ex, "[ExternalNav] 呼叫 vnavmesh.Query.Mesh.NearestPoint 失敗");
+            point = default;
+            return false;
+        }
+    }
+
+    /// <summary>沒乘坐騎就把飛行請求降級成地面路線，並（節流地）說一聲。</summary>
+    /// <returns>實際要傳給 vnavmesh 的 fly 值。</returns>
+    private static bool DegradeFlyIfNotMounted(bool fly, Vector3 destination, string? source)
+    {
+        if (!fly || CanFly()) return fly;
+
+        // 節流的理由：會傳 fly:true 的呼叫端都是離散的使用者動作
+        // （點擊放開、按鈕、聊天指令），這道閘門幾乎一定放行，節流形同不存在。
+        // 它在的目的是保險——將來若接上每幀重試的呼叫端，沒有它就會把聊天視窗與 log 洗爆。
+        if (Throttle.Pass("ExternalNav-FlyNeedsMount", 2_000))
+        {
+            var tag = string.IsNullOrEmpty(source) ? string.Empty : $"{source}：";
+            Svc.Chat.Print(
+                $"[TC Toolbox] {tag}目的地需飛行但未乘坐騎，改走地面路線；請先乘上坐騎再下指令。");
+
+            // 使用者回報用的定錨點：出事時這一行是唯一能證明「飛行被降級了、是誰要求的」的證據。
+            Svc.Log.Information(
+                $"[ExternalNav] 飛行降級為地面路線（未乘坐騎）：呼叫端={source ?? "未指名"}"
+                + $" 目的地={destination:F1}");
+        }
+
+        return false;
     }
 
     /// <summary>
