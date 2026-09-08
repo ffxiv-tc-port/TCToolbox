@@ -395,7 +395,10 @@ public sealed unsafe class FlagCommands : TcModule
             return;
         }
 
-        // 前一趟就此作廢。vnavmesh 對「還在算路徑時又收到新請求」是直接拒絕的。
+        // 前一趟就此作廢。
+        // ⚠️ 理由不是「vnavmesh 會拒絕新請求」——它現在是接手（supersede）不是拒絕。
+        //    先送停止的理由是：接手時舊路徑要等新路徑算完才會被換掉，
+        //    中間角色會繼續朝舊目標走。
         if (ExternalNav.IsVnavmeshPathRunning() || ExternalNav.IsVnavmeshPathfindInProgress())
             NavStop.RequestStop();
 
@@ -407,11 +410,15 @@ public sealed unsafe class FlagCommands : TcModule
 
         if (!started)
         {
-            Svc.Chat.PrintError("[TC Toolbox] vnavmesh 拒絕了這次導航（多半是上一個路徑還在計算中），請稍候再試。");
+            // ⚠️ 實際上走不到這裡：MoveTo 恆回 true（見 ExternalNav.TryMoveTo 的說明）。
+            //    這道防護保留給「將來 vnavmesh 改回會拒絕」，但訊息不可以再指名一個
+            //    已經不存在的原因。
+            Svc.Chat.PrintError("[TC Toolbox] vnavmesh 沒有開始這次導航。");
             return;
         }
 
-        // 走到這裡＝vnavmesh 真的收下了這趟移動，停用模組時要負責收掉。
+        // 走到這裡＝這趟移動已經交給 vnavmesh 了（不代表走得到，那件事這裡查不到），
+        // 停用模組時要負責去收掉它。
         hasStartedNav = true;
 
         Svc.Log.Information(

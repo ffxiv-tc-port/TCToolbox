@@ -286,7 +286,9 @@ public sealed unsafe partial class AutoGardensWork
 
         if (!started)
         {
-            GiveUpWalking("vnavmesh 沒有接受這次導航");
+            // ⚠️ 實際上走不到這裡：MoveTo 恆回 true（見 ExternalNav.TryMoveCloseTo 的說明）。
+            //    防護保留，但不指名一個查不到的原因。走不走得到由下面的監看去判。
+            GiveUpWalking("vnavmesh 沒有開始這次導航");
             return true;
         }
 

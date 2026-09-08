@@ -241,7 +241,8 @@ public sealed unsafe class ClickToMove : TcModule
         }
 
         // 前一趟就此作廢：使用者點了新的地方，意思就是不要舊的了。
-        // vnavmesh 對「還在算路徑時又收到新請求」是直接拒絕的，所以要先停。
+        // ⚠️ 理由不是「vnavmesh 會拒絕新請求」——它現在是接手（supersede）不是拒絕。
+        //    先停的理由是：接手時舊路徑要等新路徑算完才換掉，中間角色會繼續朝舊目標走。
         if (vnavPathRunning || vnavPathfinding)
             NavStop.RequestStop();
 
@@ -252,11 +253,13 @@ public sealed unsafe class ClickToMove : TcModule
             return;
         }
 
+        // ⚠️ 實際上走不到這裡：MoveTo 恆回 true（見 ExternalNav.TryMoveTo 的說明）。
+        //    防護保留，但訊息不指名一個已經不存在的原因。
         if (!started)
         {
             Throttle.Reset("ClickToMove-VnavProbe");
             if (Throttle.Pass("ClickToMove-Refused", 2_000))
-                Svc.Chat.Print("[TC Toolbox] 點擊移動：vnavmesh 拒絕了這次導航（多半是上一個路徑還在計算中），請稍候再試。");
+                Svc.Chat.Print("[TC Toolbox] 點擊移動：vnavmesh 沒有開始這次導航。");
             return;
         }
 

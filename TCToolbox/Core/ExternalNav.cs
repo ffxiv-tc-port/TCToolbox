@@ -318,11 +318,29 @@ internal static class ExternalNav
     /// <summary>呼叫 vnavmesh 就地導航到世界座標；只下指令，不等待走到、不接後續互動。</summary>
     /// <param name="destination">目的地世界座標。</param>
     /// <param name="fly">是否允許飛行路線。⚠️ 沒乘坐騎時會在這裡被就地降級成地面路線（見備註）。</param>
-    /// <param name="started">vnavmesh 是否收下了這次導航（不代表走得到）。</param>
+    /// <param name="started">
+    /// 🔴 <b>本 pin 的 vnavmesh 恆為 <see langword="true"/>，不要拿它當「導航成功」的判準。</b>
+    /// <c>AsyncMoveRequest.MoveTo</c> 全檔只有兩個 <c>return</c>，兩個都是 <c>return true</c>：
+    /// 上一筆還在跑時它<b>接手</b>（把新請求寫進單格佇列）而不是拒絕，其餘情況走 <c>StartMove</c>
+    /// 也是無條件回 true。⇒ 這個值只代表「IPC 呼叫回來了」。
+    /// </param>
     /// <param name="source">呼叫端模組名，只用在降級訊息裡指名；null＝不指名。</param>
     /// <remarks>
     /// 🔴 <b>刻意不替使用者自動乘坐騎</b>——本外掛不新增自動化。降級成地面路線是保守處置：
     /// 走得到就走過去，走不到 vnavmesh 自己會拒絕或半路停下，兩種都比「站著不動又零訊息」好。
+    /// <para>
+    /// 🔴🔴 <b>這支沒有可靠的「導航失敗」訊號，呼叫端不要假裝有。</b>
+    /// 回 <see langword="false"/> 只代表 <c>IpcError</c>（vnavmesh 沒安裝／沒載入）；
+    /// <paramref name="started"/> 見上，恆為 true。
+    /// 而「導航網格還沒載入」那一種失敗<b>既不是 false 也不是 IpcError</b>——
+    /// vnavmesh 的 <c>NavmeshManager.QueryPath</c> 在 <c>_currentCTS</c> 為 null 時直接擲一個普通的
+    /// <c>Exception</c>（訊息 Can't initiate query - navmesh is not loaded），
+    /// 經 <c>Delegate.DynamicInvoke</c> 包成 <c>TargetInvocationException</c>，
+    /// <b>穿過下面那個 <c>catch (IpcError)</c></b>。
+    /// ⇒ 呼叫端能誠實說的只有「已經把這趟交給 vnavmesh 了」；
+    /// 真要知道走不走得到，只能像 <c>AutoGardensWork</c> 的走位那樣自己用距離與
+    /// <c>Path.IsRunning</c>／<c>PathfindInProgress</c> 監看。
+    /// </para>
     /// </remarks>
     public static bool TryMoveTo(Vector3 destination, bool fly, out bool started, string? source = null)
     {
@@ -350,7 +368,7 @@ internal static class ExternalNav
     /// 容許值（碼）。<b>0 等於沒有容許值</b>（vnavmesh 端是 <c>DestinationTolerance &gt; 0</c> 才判），
     /// 也就是退化成 <see cref="TryMoveTo"/>。
     /// </param>
-    /// <param name="started">vnavmesh 是否收下了這次導航。</param>
+    /// <param name="started">恆為 <see langword="true"/>；只代表 IPC 呼叫回來了。見下面的備註。</param>
     /// <param name="source">呼叫端模組名，只用在降級訊息裡指名；null＝不指名。</param>
     /// <remarks>
     /// 🔴 <b><paramref name="started"/> 回 <see langword="true"/> 幾乎沒有資訊量。</b>

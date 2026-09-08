@@ -666,10 +666,12 @@ public sealed class FateTracker : TcModule
 
         if (!started)
         {
-            // vnavmesh 收到了但拒絕了。已知的原因是它手上還有一個沒算完的路徑
-            // （AsyncMoveRequest.MoveTo 在 _pendingTask 非 null 時直接回 false）。
+            // ⚠️ 實際上走不到這裡：AsyncMoveRequest.MoveTo 全檔兩個 return 都是 true
+            //    （上一筆還在跑時它接手並把新請求排進單格佇列，不是拒絕）。
+            //    防護保留給「將來 vnavmesh 改回會拒絕」，但訊息不可以再指名一個
+            //    已經不存在的原因。
             Throttle.Reset("FateTracker-VnavProbe");
-            Svc.Chat.Print("[TC Toolbox] vnavmesh 拒絕了這次導航（多半是上一個路徑還在計算中），請稍候再試。");
+            Svc.Chat.Print("[TC Toolbox] vnavmesh 沒有開始這次導航。");
             return;
         }
 

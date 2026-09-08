@@ -874,7 +874,13 @@ public sealed class CustomDeliveriesOverview : TcModule
         navQueue.Enqueue("下達導航指令", () => IssueWalkOrFallback(npc, loc));
     }
 
-    /// <summary>下達 vnavmesh 導航指令；失敗（未安裝／網格未就緒）就退化成標旗＋開地圖。</summary>
+    /// <summary>下達 vnavmesh 導航指令；呼叫不通就退化成標旗＋開地圖。</summary>
+    /// <remarks>
+    /// ⚠️ 原本這行寫的是「未安裝／網格未就緒」，<b>後半是錯的</b>：導航網格還沒載入時
+    /// vnavmesh 擲的是普通例外（穿過 <c>catch (IpcError)</c>），根本走不到這條退路。
+    /// 真正會退化的只有「呼叫不通」（沒安裝／沒載入 ⇒ <c>IpcError</c>）。
+    /// <c>started</c> 恆為 true，見 <see cref="ExternalNav.TryMoveTo"/>。
+    /// </remarks>
     private static void IssueWalkOrFallback(NpcStaticInfo npc, NpcLocation loc)
     {
         if (ExternalNav.TryMoveTo(loc.WorldPosition, false, out var started) && started)

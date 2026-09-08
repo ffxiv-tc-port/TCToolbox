@@ -1094,7 +1094,13 @@ public sealed unsafe class AetherCurrentTracker : TcModule
         navQueue.Enqueue("下達導航指令", () => IssueWalkOrFallback(point));
     }
 
-    /// <summary>下達 vnavmesh 導航指令；失敗就退化成標旗＋開地圖。</summary>
+    /// <summary>下達 vnavmesh 導航指令；呼叫不通就退化成標旗＋開地圖。</summary>
+    /// <remarks>
+    /// ⚠️ <b>這條退路只涵蓋「呼叫不通」</b>（vnavmesh 沒安裝／沒載入 ⇒ <c>IpcError</c>）。
+    /// <c>started</c> 恆為 true，而「路徑算不出來」與「導航網格還沒載入」都不會走到這裡
+    /// （後者會擲例外穿過去）——見 <see cref="ExternalNav.TryMoveTo"/> 的說明。
+    /// ⇒ 走到 <c>return true</c> 只能算「已經交給 vnavmesh 了」，不是「一定會走到」。
+    /// </remarks>
     private static bool IssueWalkOrFallback(Point point)
     {
         if (ExternalNav.TryMoveTo(point.Position, false, out var started) && started) return true;
