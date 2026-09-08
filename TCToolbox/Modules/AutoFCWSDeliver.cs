@@ -841,7 +841,7 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
             Svc.Log.Information(
                 $"[AutoFCWSDeliver] 合建清單已更新（首項 Index={preDeliverFingerprint?.Index}、長度 " +
                 $"{preDeliverFingerprint?.Count} → 首項 Index={fingerprint.Item1}、長度 {fingerprint.Item2}），" +
-                "進入下一項。");
+                $"進入下一項。指紋 {DescribeFingerprint(preDeliverFingerprint)} → {DescribeFingerprint(fingerprint)}。");
             return true;
         }
 
@@ -850,9 +850,24 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
 
         Svc.Log.Information(
             $"[AutoFCWSDeliver] 等了 {ListUpdateWaitMs} 毫秒合建清單仍沒有變化，" +
-            "交給零進展保險絲判斷是不是真的沒交出去。");
+            "交給零進展保險絲判斷是不是真的沒交出去。" +
+            $"指紋 {DescribeFingerprint(preDeliverFingerprint)} → {DescribeFingerprint(fingerprint)}。");
         return true;
     }
+
+    /// <summary>把清單指紋壓成一行（首項 Index／清單長度／道具 ID／持有數），純診斷用。</summary>
+    /// <remarks>
+    /// 🔴 <b>加這一支的理由</b>：<see cref="ListUpdateWaitMs"/>（3 秒）在實機上是<b>真的會被等滿</b>的——
+    /// 2026-09-08 22:55 那一場 <c>dalamud.log</c> 裡 91 項有 <b>13 項</b>（14%）走到逾時那一行，
+    /// 合計約 39 秒，而且<b>散在整趟裡</b>（同一趟第 8、7、2、1 項都中過），不是「最後一項」這種好解釋的形狀。
+    /// 舊的逾時訊息<b>一個指紋欄位都沒印</b> ⇒ 分不出是哪一軸沒動（是清單真的沒變，
+    /// 還是 <c>Owned</c> 這一軸在這一項上本來就不會變），離線完全定案不了。
+    /// 成功那一行同樣補上完整指紋當<b>對照組</b>：沒有對照組就不知道「正常情況下動的是哪一軸」。
+    /// </remarks>
+    private static string DescribeFingerprint((uint Index, int Count, uint ItemId, uint Owned)? fingerprint) =>
+        fingerprint is null
+            ? "（無）"
+            : $"{fingerprint.Value.Index}/{fingerprint.Value.Count}/{fingerprint.Value.ItemId}/{fingerprint.Value.Owned}";
 
     /// <summary>解析合建視窗目前可交納（數量足夠且未交滿）的素材清單。</summary>
     private static List<DeliverItem> ParseDeliverables(AtkUnitBase* addon)
