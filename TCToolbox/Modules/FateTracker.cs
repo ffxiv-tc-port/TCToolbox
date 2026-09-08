@@ -658,9 +658,10 @@ public sealed class FateTracker : TcModule
 
         if (!ExternalNav.TryMoveTo(fate.Position, config.AllowFly, out var started, DisplayName))
         {
-            // IPC 整個打不通（外掛剛被拆掉之類）。快取狀態顯然過期了，強制下一幀重探。
+            // 兩種成因：IPC 整個打不通（外掛剛被拆掉之類），或 vnavmesh 端自己擲了例外
+            // （導航網格還沒載入好）。兩種都代表快取狀態過期了，強制下一幀重探。
             Throttle.Reset("FateTracker-VnavProbe");
-            Svc.Chat.Print("[TC Toolbox] 無法呼叫 vnavmesh，導航未開始。");
+            Svc.Chat.Print("[TC Toolbox] vnavmesh 沒有接下這次導航（它可能剛被停用，或導航網格還沒載入好），導航未開始。");
             return;
         }
 

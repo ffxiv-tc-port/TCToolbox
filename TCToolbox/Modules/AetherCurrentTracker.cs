@@ -1094,12 +1094,19 @@ public sealed unsafe class AetherCurrentTracker : TcModule
         navQueue.Enqueue("下達導航指令", () => IssueWalkOrFallback(point));
     }
 
-    /// <summary>下達 vnavmesh 導航指令；呼叫不通就退化成標旗＋開地圖。</summary>
+    /// <summary>下達 vnavmesh 導航指令；沒開始移動就退化成標旗＋開地圖。</summary>
     /// <remarks>
-    /// ⚠️ <b>這條退路只涵蓋「呼叫不通」</b>（vnavmesh 沒安裝／沒載入 ⇒ <c>IpcError</c>）。
-    /// <c>started</c> 恆為 true，而「路徑算不出來」與「導航網格還沒載入」都不會走到這裡
-    /// （後者會擲例外穿過去）——見 <see cref="ExternalNav.TryMoveTo"/> 的說明。
-    /// ⇒ 走到 <c>return true</c> 只能算「已經交給 vnavmesh 了」，不是「一定會走到」。
+    /// 📌 <b>2026-09-08 起這條退路才真的會生效。</b>在那之前「導航網格還沒載入」是以例外的形式
+    /// 逃過 <see cref="ExternalNav.TryMoveTo"/>，被 <see cref="TaskQueue"/> 接住並中止整條佇列
+    /// ——使用者看到的是「傳送過去了、然後什麼都沒發生」，連地圖旗都沒插。
+    /// 現在那種失敗會回 <see langword="false"/>，走到下面的標旗路徑。
+    /// <para>
+    /// ⚠️ <c>started</c> 恆為 true，所以「路徑算不出來」仍然不會走到這條退路——
+    /// 那件事在下指令的當下查不到。走到 <c>return true</c> 只能算「已經交給 vnavmesh 了」。
+    /// </para>
+    /// <para>
+    /// 📌 這一步是佇列的<b>最後一步</b>（兩條分支皆然），後面沒有任何步驟預設「已經走到了」。
+    /// </para>
     /// </remarks>
     private static bool IssueWalkOrFallback(Point point)
     {

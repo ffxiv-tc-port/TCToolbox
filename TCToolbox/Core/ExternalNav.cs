@@ -1,5 +1,6 @@
 using System;
 using System.Numerics;
+using System.Reflection;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Plugin.Ipc;
 using Dalamud.Plugin.Ipc.Exceptions;
@@ -330,13 +331,18 @@ internal static class ExternalNav
     /// 走得到就走過去，走不到 vnavmesh 自己會拒絕或半路停下，兩種都比「站著不動又零訊息」好。
     /// <para>
     /// 🔴🔴 <b>這支沒有可靠的「導航失敗」訊號，呼叫端不要假裝有。</b>
-    /// 回 <see langword="false"/> 只代表 <c>IpcError</c>（vnavmesh 沒安裝／沒載入）；
+    /// 回 <see langword="false"/> 代表<b>兩件事之一</b>：<c>IpcError</c>（vnavmesh 沒安裝／沒載入），
+    /// 或 vnavmesh 端自己擲了例外（見下一段）。<b>兩者都不是「這條路走不到」的意思。</b>
     /// <paramref name="started"/> 見上，恆為 true。
     /// 而「導航網格還沒載入」那一種失敗<b>既不是 false 也不是 IpcError</b>——
     /// vnavmesh 的 <c>NavmeshManager.QueryPath</c> 在 <c>_currentCTS</c> 為 null 時直接擲一個普通的
     /// <c>Exception</c>（訊息 Can't initiate query - navmesh is not loaded），
     /// 經 <c>Delegate.DynamicInvoke</c> 包成 <c>TargetInvocationException</c>，
-    /// <b>穿過下面那個 <c>catch (IpcError)</c></b>。
+    /// <b>而 <c>TargetInvocationException</c> 不是 <c>IpcError</c> 的子型別</b>。
+    /// 📌 <b>2026-09-08 起這支自己攔掉它了</b>（見下面的 <c>catch</c>）：那種失敗現在會變成
+    /// 一行 Information ＋ 回 <see langword="false"/>，走呼叫端本來就有的「沒有開始移動」那條路。
+    /// 在那之前它是直接逃進呼叫端的——兩個 <c>IssueWalkOrFallback</c> 因此從來沒有真的
+    /// 退化成地圖標旗過（例外被 <c>TaskQueue</c> 接住並中止整條佇列）。
     /// ⇒ 呼叫端能誠實說的只有「已經把這趟交給 vnavmesh 了」；
     /// 真要知道走不走得到，只能像 <c>AutoGardensWork</c> 的走位那樣自己用距離與
     /// <c>Path.IsRunning</c>／<c>PathfindInProgress</c> 監看。
@@ -354,6 +360,12 @@ internal static class ExternalNav
         catch (IpcError ex)
         {
             Svc.Log.Warning(ex, "[ExternalNav] 呼叫 vnavmesh.SimpleMove.PathfindAndMoveTo 失敗");
+            started = false;
+            return false;
+        }
+        catch (TargetInvocationException ex)
+        {
+            LogNavProviderFault(ex, "vnavmesh.SimpleMove.PathfindAndMoveTo");
             started = false;
             return false;
         }
@@ -375,6 +387,9 @@ internal static class ExternalNav
     /// vnavmesh 的 <c>AsyncMoveRequest.MoveTo</c> 現在對「上一筆還在跑」是接手而不是拒絕，
     /// 兩條路徑都回 true ⇒ 呼叫端<b>不可以</b>拿它當「走得到」的證據，
     /// 一定要自己用距離判定抵達、自己設上限判定走不到。
+    /// <para>
+    /// 📌 失敗語意與 <see cref="TryMoveTo"/> 完全相同（含提供端擲例外的處置），細節寫在那邊。
+    /// </para>
     /// </remarks>
     public static bool TryMoveCloseTo(
         Vector3 destination, bool fly, float range, out bool started, string? source = null)
@@ -389,6 +404,12 @@ internal static class ExternalNav
         catch (IpcError ex)
         {
             Svc.Log.Warning(ex, "[ExternalNav] 呼叫 vnavmesh.SimpleMove.PathfindAndMoveCloseTo 失敗");
+            started = false;
+            return false;
+        }
+        catch (TargetInvocationException ex)
+        {
+            LogNavProviderFault(ex, "vnavmesh.SimpleMove.PathfindAndMoveCloseTo");
             started = false;
             return false;
         }
@@ -431,6 +452,50 @@ internal static class ExternalNav
             point = default;
             return false;
         }
+    }
+
+    /// <summary>
+    /// vnavmesh 的端點實作自己擲了例外——當成「沒有開始移動」，並寫一行給使用者看的說明。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 <b>刻意只攔 <see cref="TargetInvocationException"/>，不是裸 <c>catch (Exception)</c>。</b>
+    /// <c>CallGateChannel.InvokeFunc</c> 是用 <c>Delegate.DynamicInvoke</c> 呼叫提供端的，
+    /// 所以<b>提供端擲出的東西一律被包成這一個型別</b>；本外掛自己這一側的程式錯誤
+    /// （空參考、轉型失敗）不會長成這個形狀，裸攔會把它們一起吞掉。
+    /// </para>
+    /// <para>
+    /// 📌 <b>為什麼不需要再攔別的型別</b>（逐行讀過本 pin 的 <c>CallGateChannel</c>）：
+    /// <c>IpcNotReadyError</c>／<c>IpcLengthMismatchError</c>／<c>IpcTypeMismatchError</c>／
+    /// <c>IpcValueNullError</c> 全部是 <c>IpcError</c> 的子型別，上面那個 catch 已經接住；
+    /// 而 <c>ConvertObject</c> 與最後那個 <c>(TRet)result</c> 只有在「宣告型別與提供端回傳型別不同」
+    /// 時才會走到，這兩支端點兩邊都是 <c>bool</c>，走不到。
+    /// </para>
+    /// <para>
+    /// 🔑 <b>不指名確切原因，但把證據附上。</b>最常見的成因是導航網格還沒載入好
+    /// （<c>NavmeshManager.QueryPath</c> 在 <c>_currentCTS</c> 為 null 時直接擲例外），
+    /// 但那是對方的內部訊息、隨時可能改，拿字串去比對只會變成另一種「宣稱查不到的事」。
+    /// 所以這裡說「多半是」，並且逐字附上對方擲出來的型別與訊息。
+    /// </para>
+    /// <para>
+    /// 📌 <b>Information 級、只進記錄不進聊天。</b>要不要跟使用者說話是呼叫端的事
+    /// （它們各自已經有「沒有開始移動」的訊息與退路），這裡只負責留下可回報的證據。
+    /// ⚠️ 本 pin 的聊天佇列不是執行緒安全的，而 <c>Svc.Log</c> 是——這裡走 log 也順便免疫那件事。
+    /// </para>
+    /// <para>
+    /// ⚠️ 節流 10 秒：目前每一個呼叫端不是使用者的離散動作就是幾十秒一輪的迴圈，
+    /// 這道閘門幾乎一定放行。它在的目的是保險——將來若接上每幀重試的呼叫端，
+    /// 沒有它就會把記錄洗爆。
+    /// </para>
+    /// </remarks>
+    private static void LogNavProviderFault(TargetInvocationException ex, string endpoint)
+    {
+        if (!Throttle.Pass("ExternalNav-NavProviderFault", 10_000)) return;
+
+        var inner = ex.InnerException ?? ex;
+        Svc.Log.Information(
+            $"[ExternalNav] vnavmesh 沒有接下這次導航（{endpoint}）：它的導航網格多半還沒載入好。"
+            + $" vnavmesh 端擲出 {inner.GetType().Name}：{inner.Message}");
     }
 
     /// <summary>沒乘坐騎就把飛行請求降級成地面路線，並（節流地）說一聲。</summary>

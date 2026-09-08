@@ -280,7 +280,7 @@ public sealed unsafe partial class AutoGardensWork
 
         if (!ExternalNav.TryMoveCloseTo(destination, false, WalkNavTolerance, out var started, DisplayName))
         {
-            GiveUpWalking("無法呼叫 vnavmesh，沒有開始移動");
+            GiveUpWalking("vnavmesh 沒有接下這次導航（它可能剛被停用，或導航網格還沒載入好）");
             return true;
         }
 

@@ -249,7 +249,7 @@ public sealed unsafe class ClickToMove : TcModule
         if (!ExternalNav.TryMoveTo(worldPos, Config.AllowFly, out var started, DisplayName))
         {
             Throttle.Reset("ClickToMove-VnavProbe");
-            Svc.Chat.Print("[TC Toolbox] 點擊移動：無法呼叫 vnavmesh，沒有開始移動。");
+            Svc.Chat.Print("[TC Toolbox] 點擊移動：vnavmesh 沒有接下這次導航（它可能剛被停用，或導航網格還沒載入好）。");
             return;
         }
 

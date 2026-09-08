@@ -404,7 +404,7 @@ public sealed unsafe class FlagCommands : TcModule
 
         if (!ExternalNav.TryMoveTo(destination, Config.AllowFly, out var started, DisplayName))
         {
-            Svc.Chat.PrintError("[TC Toolbox] 無法呼叫 vnavmesh，沒有開始移動。");
+            Svc.Chat.PrintError("[TC Toolbox] vnavmesh 沒有接下這次導航（它可能剛被停用，或導航網格還沒載入好），沒有開始移動。");
             return;
         }
 
