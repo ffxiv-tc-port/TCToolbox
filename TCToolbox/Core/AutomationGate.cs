@@ -29,17 +29,40 @@ namespace TCToolbox.Core;
 /// </remarks>
 internal static class AutomationGate
 {
-    /// <summary>全艦隊急停之後，所有共用這道閘門的無人值守迴圈要靜多久。</summary>
+    /// <summary>冷卻秒數可以設定到的上限。</summary>
+    /// <remarks>
+    /// ⚠️ 存在的理由不是「有人會想設十分鐘」，而是<b>設定檔是純文字、使用者手改得到</b>：
+    /// 沒有這道夾制的話，一個誤植的大數字會讓所有無人值守迴圈看起來像是永遠壞掉了，
+    /// 而且唯一的徵兆是一行沒人會去看的記錄。
+    /// </remarks>
+    public const int MaxCooldownSeconds = 600;
+
+    /// <summary>全艦隊急停之後，所有共用這道閘門的無人值守迴圈要靜多久（秒）。</summary>
     /// <remarks>
     /// 🔴 <b>光靠 <see cref="NavStop.IsEnforcing"/> 那三秒是不夠的。</b>那三秒只涵蓋
     /// 「確保 vnavmesh 真的停下來」，窗口一關，一個到期的無人值守迴圈下一幀就會自己再開一輪
     /// ——使用者剛按下急停，角色又動了起來，而且看起來像急停沒有生效。
     /// <para>
-    /// 📌 60 秒是刻意訂得比園圃重跑的預設間隔（60 秒）不短：急停的語意是「先停下來，我要接手」，
+    /// 📌 <b>預設仍然是 60 秒</b>（原本寫死的政策值），改成可調不改變既有行為。
+    /// 挑 60 的理由：不短於園圃重跑的預設間隔（60 秒），而急停的語意是「先停下來，我要接手」，
     /// 至少要留給使用者一個週期的時間去做他要做的事。
     /// </para>
+    /// <para>
+    /// 🔴 <b>0＝不冷卻</b>，是合法設定：急停照樣把正在跑的批次停掉，只是下一個到期的迴圈
+    /// 可以立刻重開。負數與超過 <see cref="MaxCooldownSeconds"/> 的值在這裡被夾回範圍內。
+    /// </para>
+    /// <para>
+    /// ⚠️ 每次讀都重新查設定，不快取：使用者在急停冷卻進行中把秒數改小，下一次判斷就該生效。
+    /// </para>
     /// </remarks>
-    public const int EmergencyStopCooldownSeconds = 60;
+    public static int EmergencyStopCooldownSeconds
+    {
+        get
+        {
+            var seconds = Plugin.Instance.Config.FleetEmergencyStop.EmergencyStopCooldownSeconds;
+            return Math.Clamp(seconds, 0, MaxCooldownSeconds);
+        }
+    }
 
     /// <summary>急停冷卻到什麼時候為止（UTC）。<c>MinValue</c>＝沒有冷卻中。</summary>
     private static DateTime emergencyStopUntil = DateTime.MinValue;
@@ -50,11 +73,18 @@ internal static class AutomationGate
     /// <remarks>⚠️ 只在主執行緒呼叫（急停本身走指令處理常式／熱鍵，都是主執行緒）。</remarks>
     public static void NotifyEmergencyStop()
     {
-        emergencyStopUntil = DateTime.UtcNow.AddSeconds(EmergencyStopCooldownSeconds);
+        var seconds = EmergencyStopCooldownSeconds;
+
+        // 🔴 0 秒要走「把冷卻清掉」而不是「設一個立刻到期的時間點」：後者能動，
+        //    但會讓 TryGetBusyReason 在下一次判斷時多繞一圈重設狀態，而且訊息會說「暫停 0 秒」。
+        emergencyStopUntil = seconds > 0 ? DateTime.UtcNow.AddSeconds(seconds) : DateTime.MinValue;
 
         // 🔴 Information 級：「急停之後我的自動流程到底停了多久」出事後只能從記錄回推。
+        //    🔑 冷卻關掉時也要寫一行——否則「急停之後馬上又自己動起來」會查不到原因。
         Svc.Log.Information(
-            $"[AutomationGate] 收到全艦隊急停：本外掛的無人值守例行工作暫停 {EmergencyStopCooldownSeconds} 秒。");
+            seconds > 0
+                ? $"[AutomationGate] 收到全艦隊急停：本外掛的無人值守例行工作暫停 {seconds} 秒。"
+                : "[AutomationGate] 收到全艦隊急停：冷卻秒數設定為 0，無人值守例行工作不暫停。");
     }
 
     /// <summary>

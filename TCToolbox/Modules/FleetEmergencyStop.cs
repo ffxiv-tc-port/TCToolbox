@@ -229,9 +229,15 @@ public sealed class FleetEmergencyStop : TcModule
 
         AutomationGate.NotifyEmergencyStop();
 
+        // 🔑 冷卻可以被設成 0，那時候說「已暫停 0 秒」是騙人的——分成兩句話講。
+        var seconds = AutomationGate.EmergencyStopCooldownSeconds;
+        var cooldownNote = seconds > 0
+            ? $"並暫停無人值守重跑 {seconds} 秒"
+            : "冷卻秒數設為 0，無人值守重跑不暫停";
+
         var detail = stopped.Count > 0
-            ? $"已中止：{string.Join("、", stopped)}；並暫停無人值守重跑 {AutomationGate.EmergencyStopCooldownSeconds} 秒"
-            : $"沒有正在跑的批次；已暫停無人值守重跑 {AutomationGate.EmergencyStopCooldownSeconds} 秒";
+            ? $"已中止：{string.Join("、", stopped)}；{cooldownNote}"
+            : $"沒有正在跑的批次；{cooldownNote}";
 
         return new FleetStopResult("TC Toolbox 自己", FleetStopOutcome.Ok, detail);
     }
@@ -320,6 +326,8 @@ public sealed class FleetEmergencyStop : TcModule
         if (ImGui.Button("開啟結果視窗##FleetEmergencyStopOpen") && window != null)
             window.IsOpen = true;
 
+        DrawCooldownSetting();
+
         ImGui.Spacing();
         DrawResults();
 
@@ -332,6 +340,52 @@ public sealed class FleetEmergencyStop : TcModule
         ImGui.PopTextWrapPos();
     }
 
+    /// <summary>急停之後無人值守流程要靜多久。</summary>
+    /// <remarks>
+    /// <para>
+    /// 🔑 <b>這個數字原本是寫死在程式裡的政策值</b>，改成可調並不改變預設行為（仍然是 60 秒）。
+    /// 會想改它的情境是真實的：常跑無人值守的人希望急停之後有更長的接手時間，
+    /// 而只把急停當「立刻剎車」用的人會希望按完就能馬上重開。
+    /// </para>
+    /// <para>
+    /// 🔴 <b>0 是合法值，而且要讓使用者看得出它代表什麼。</b>滑桿拉到 0 時，下方會多出
+    /// 一行說明——只留一個孤零零的 0，讀起來像是設定壞掉。
+    /// </para>
+    /// <para>
+    /// ⚠️ 這只影響<b>本外掛自己</b>的無人值守迴圈（目前是園圃自動整理）。
+    /// 別的外掛被急停之後會不會自己重開，是它們自己的事，這個滑桿管不到。
+    /// </para>
+    /// </remarks>
+    private static void DrawCooldownSetting()
+    {
+        var seconds = Config.EmergencyStopCooldownSeconds;
+        ImGui.SetNextItemWidth(200f);
+        if (ImGui.SliderInt(
+                "急停後暫停無人值守流程（秒）##FleetEmergencyStopCooldown",
+                ref seconds,
+                0,
+                AutomationGate.MaxCooldownSeconds))
+        {
+            Config.EmergencyStopCooldownSeconds = Math.Clamp(seconds, 0, AutomationGate.MaxCooldownSeconds);
+            Plugin.Instance.Config.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "急停會先把正在跑的批次停掉，再讓本外掛的無人值守流程靜這麼久。\n" +
+                "沒有這段冷卻的話，一個到期的迴圈下一幀就會自己再開一輪——\n" +
+                "表現成「剛按下急停，角色又動了起來」，看起來像急停失效。\n" +
+                "設成 0 就是不暫停：停下正在跑的那一輪之後，下一輪照常開始。\n" +
+                "這個設定只管本外掛自己的流程，管不到別的外掛。");
+        }
+
+        // 列上看得見「0 代表什麼」：孤零零一個 0 讀起來像是設定壞掉。
+        if (seconds <= 0)
+        {
+            ImGui.TextDisabled("目前為 0：急停不會暫停無人值守流程（正在跑的那一輪還是會被停下來）。");
+        }
+    }
     /// <summary>那顆大按鈕。設定面板與結果視窗共用同一份。</summary>
     internal void DrawBigButton()
     {

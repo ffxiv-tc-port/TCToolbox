@@ -115,6 +115,7 @@ public sealed class Configuration : IPluginConfiguration
     public MovementSpeedMultiplierConfig MovementSpeedMultiplier { get; set; } = new();
     public FleetEmergencyStopConfig FleetEmergencyStop { get; set; } = new();
     public DeepDungeonChestTargetConfig DeepDungeonChestTarget { get; set; } = new();
+    public WorldTravelPanelConfig WorldTravel { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
 
@@ -2006,6 +2007,26 @@ public sealed class FleetEmergencyStopConfig
 
     /// <summary>急停之後自動把結果視窗打開。</summary>
     public bool OpenResultWindow = true;
+
+    /// <summary>
+    /// 急停之後，所有共用 <see cref="TCToolbox.Core.AutomationGate"/> 的無人值守迴圈要靜多久（秒）。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 <b>0＝不冷卻</b>：急停照樣把正在跑的批次停掉，但下一個到期的無人值守迴圈可以立刻重開。
+    /// 那是使用者可以選的，只是預設不這麼做。
+    /// </para>
+    /// <para>
+    /// 📌 預設 60 秒是原本寫死的政策值，沿用它<b>是為了讓既有使用者更新後行為不變</b>。
+    /// 挑 60 的理由：它不短於園圃重跑的預設間隔（60 秒），而急停的語意是
+    /// 「先停下來，我要接手」——至少要留給使用者一個週期去做他要做的事。
+    /// </para>
+    /// <para>
+    /// ⚠️ 讀取端會自己夾範圍（見 <c>AutomationGate.EmergencyStopCooldownSeconds</c>），
+    /// 所以手改設定檔填進負數或天文數字也不會讓迴圈永遠醒不過來。
+    /// </para>
+    /// </remarks>
+    public int EmergencyStopCooldownSeconds { get; set; } = 60;
 }
 
 public sealed class DeepDungeonChestTargetConfig
@@ -2032,4 +2053,23 @@ public sealed class DeepDungeonChestTargetConfig
 
     /// <summary>自動鎖定的輪詢間隔（framework 幀數）。</summary>
     public int AutoPollTicks = 30;
+}
+
+/// <summary>「換 World 與副本區」面板的設定。</summary>
+/// <remarks>
+/// 📌 這個模組<b>預設關閉</b>（所有模組都是——啟用與否記在
+/// <see cref="Configuration.EnabledModules"/>），所以既有使用者更新後不會多出任何東西。
+/// </remarks>
+public sealed class WorldTravelPanelConfig
+{
+    /// <summary>會讓角色移動的按鈕要按兩次才真的送出。</summary>
+    /// <remarks>
+    /// 🔴 <b>預設開啟</b>。跨界傳送要花好幾分鐘、中途不能操作角色，而按鈕之間只隔幾個像素——
+    /// 誤觸的代價遠高於多按一下的成本。
+    /// <para>
+    /// 📌 只作用在會讓角色移動的按鈕。「中止」與「重新整理清單」永遠是按一次就生效：
+    /// 前者只往安全方向走，後者根本不碰角色。
+    /// </para>
+    /// </remarks>
+    public bool ConfirmTravel { get; set; } = true;
 }
