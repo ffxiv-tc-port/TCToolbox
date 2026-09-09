@@ -24,7 +24,7 @@ namespace TCToolbox.Modules;
 /// <item><see cref="ObjectKind.Treasure"/> —— 深宮的銅寶箱（以及一般副本的寶箱）就是這一類，
 /// 它們的 <c>BaseId</c> 是 <c>Treasure</c> 表的列號。這一軸完全不需要名字。</item>
 /// <item>銀／金寶箱與擬態怪的箱子是 <see cref="ObjectKind.EventObj"/>，
-/// 名字在 <c>EObjName</c> 表裡。這一軸拿 <see cref="ReferenceChestEObjNameRow"/> 這一列的
+/// 名字在 <c>EObjName</c> 表裡。這一軸拿 <see cref="ChestIdentity.ReferenceChestEObjNameRow"/> 這一列的
 /// <c>Singular</c> 當<b>參考字串</b>（＝遊戲自己對「寶箱」的用字，繁中客戶端讀出來就是繁中），
 /// 再把整張表裡同名的列收成一個 id 集合。<b>程式碼裡沒有任何中文物件名。</b></item>
 /// </list>
@@ -44,17 +44,6 @@ namespace TCToolbox.Modules;
 public sealed unsafe class DeepDungeonChestTarget : TcModule
 {
     public const string Command = "/tcchest";
-
-    /// <summary>
-    /// 拿來取「寶箱」這個字的 <c>EObjName</c> 列號：深宮的銀寶箱。
-    /// </summary>
-    /// <remarks>
-    /// 📌 為什麼是一個寫死的<b>列號</b>而不是寫死的字串：列號在各語系客戶端是同一個，
-    /// 讀出來的字自然是該語系的用字；寫死字串則是「換個語系就靜默零命中」。
-    /// 2026-09-08 對台服 7.20 EXD dump 實查：<c>EObjName#2007357.Singular</c>＝「寶箱」，
-    /// 金寶箱（2007358）與擬態怪的箱子（2006020）同名，所以同名收集會把三者一起收進來。
-    /// </remarks>
-    private const uint ReferenceChestEObjNameRow = 2007357;
 
     public override string InternalName => "DeepDungeonChestTarget";
 
@@ -82,17 +71,11 @@ public sealed unsafe class DeepDungeonChestTarget : TcModule
 
     private readonly HotkeyWatcher hotkey = new();
 
-    /// <summary>被判定成「寶箱」的 EventObj <c>BaseId</c>（由 <c>EObjName</c> 表同名收集而來）。</summary>
-    private readonly HashSet<uint> chestEventObjIds = [];
-
     /// <summary>自動模式已經看過的寶箱（<c>GameObjectId</c>，不是指標）。</summary>
     private readonly HashSet<ulong> seenChests = [];
 
     /// <summary>每次輪詢重新用的暫存集合，避免每格都配置一個新的 HashSet。</summary>
     private readonly HashSet<ulong> visibleChests = [];
-
-    /// <summary>第二軸（EventObj 名稱表）建不起來時的原因；空字串＝一切正常。</summary>
-    private string degradedReason = string.Empty;
 
     /// <summary>上次輪詢時的區域，用來在換區時清掉「已看過」。</summary>
     private ushort lastTerritory;
@@ -108,13 +91,13 @@ public sealed unsafe class DeepDungeonChestTarget : TcModule
     /// 「按了熱鍵沒反應」，跟「附近真的沒有寶箱」長得一模一樣。
     /// </remarks>
     public override ModuleNotice? RowNotice
-        => string.IsNullOrEmpty(degradedReason)
+        => string.IsNullOrEmpty(ChestIdentity.DegradedReason)
             ? null
-            : new ModuleNotice(ModuleNoticeLevel.Unknown, "? 只找得到銅寶箱", degradedReason);
+            : new ModuleNotice(ModuleNoticeLevel.Unknown, "? 只找得到銅寶箱", ChestIdentity.DegradedReason);
 
     protected override void OnEnable()
     {
-        BuildChestEventObjIds();
+        ChestIdentity.EnsureBuilt();
 
         Svc.Commands.AddHandler(Command, new CommandInfo(OnCommand)
         {
@@ -133,54 +116,6 @@ public sealed unsafe class DeepDungeonChestTarget : TcModule
         hotkey.Reset();
         seenChests.Clear();
         Svc.Commands.RemoveHandler(Command);
-    }
-
-    /// <summary>
-    /// 從 <c>EObjName</c> 表收集「名字與參考列相同」的所有列號。
-    /// </summary>
-    /// <remarks>
-    /// ⚠️ 這是一次性的整表走訪（台服 7.20 是 15000 列），只在模組啟用時做一次。
-    /// 失敗一律降級而不是擲例外：<c>OnEnable</c> 擲例外會讓整個模組被標成「啟用失敗」，
-    /// 而第一軸（<see cref="ObjectKind.Treasure"/>）其實還是好的。
-    /// </remarks>
-    private void BuildChestEventObjIds()
-    {
-        chestEventObjIds.Clear();
-        degradedReason = string.Empty;
-
-        try
-        {
-            var sheet = Svc.Data.GetExcelSheet<EObjName>();
-            var reference = sheet.GetRowOrDefault(ReferenceChestEObjNameRow)?.Singular.ExtractText();
-
-            if (string.IsNullOrEmpty(reference))
-            {
-                degradedReason =
-                    $"EObjName 第 {ReferenceChestEObjNameRow} 列讀不到名字，"
-                    + "所以無法辨識銀／金寶箱（那些是 EventObj，只能靠名稱表比對）。\n"
-                    + "本次只會找到銅寶箱（ObjectKind.Treasure）。";
-                Svc.Log.Information($"[DeepDungeonChestTarget] {degradedReason.Replace("\n", " ")}");
-                return;
-            }
-
-            foreach (var row in sheet)
-            {
-                if (row.Singular.ExtractText() == reference)
-                    chestEventObjIds.Add(row.RowId);
-            }
-
-            Svc.Log.Information(
-                $"[DeepDungeonChestTarget] 以 EObjName#{ReferenceChestEObjNameRow} 的名稱為基準，"
-                + $"收集到 {chestEventObjIds.Count} 個同名的 EventObj 列號。");
-        }
-        catch (Exception ex)
-        {
-            chestEventObjIds.Clear();
-            degradedReason =
-                $"建立 EventObj 寶箱對照表時發生例外：{ex.GetType().Name}：{ex.Message}\n"
-                + "本次只會找到銅寶箱（ObjectKind.Treasure）。";
-            Svc.Log.Information($"[DeepDungeonChestTarget] {degradedReason.Replace("\n", " ")}");
-        }
     }
 
     private void OnCommand(string command, string arguments) => TargetNearestChest(announce: true);
@@ -329,16 +264,14 @@ public sealed unsafe class DeepDungeonChestTarget : TcModule
         return best;
     }
 
-    /// <summary>這個物件算不算「寶箱」。兩軸，見類別說明。</summary>
-    private bool IsChest(IGameObject obj)
-    {
-        if (obj.ObjectKind == ObjectKind.Treasure) return true;
-        if (obj.ObjectKind != ObjectKind.EventObj) return false;
-
-        // 🔴 身分比對用 BaseId：本 pin 的 DataId 只是 BaseId 的過時別名，但別名帶著
-        //    [Obsolete]，而且「查表安全、比對要用 BaseId」這條規矩不要在這裡開例外。
-        return chestEventObjIds.Contains(obj.BaseId);
-    }
+    /// <summary>這個物件算不算「寶箱」。判準見 <see cref="ChestIdentity"/>。</summary>
+    /// <remarks>
+    /// 📌 <b>判準已經抽到 <see cref="ChestIdentity"/></b>，與
+    /// <see cref="NearbyOnMinimap"/>（把寶箱畫到小地圖）共用同一份對照表。
+    /// 那張表是一次 15000 列的整表走訪，而且參考列號是個魔術數字——兩個模組各留一份的話，
+    /// 改一邊忘了另一邊的失敗形式是「其中一個功能少認得兩種箱子」，而那完全靜默。
+    /// </remarks>
+    private static bool IsChest(IGameObject obj) => ChestIdentity.IsChest(obj);
 
     /// <summary>現在這個區域要不要找寶箱。</summary>
     private static bool IsChestAreaActive() => Config.AnyArea || InDeepDungeon();
@@ -437,16 +370,17 @@ public sealed unsafe class DeepDungeonChestTarget : TcModule
         ImGui.Spacing();
         ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
 
-        if (string.IsNullOrEmpty(degradedReason))
+        if (string.IsNullOrEmpty(ChestIdentity.DegradedReason))
         {
             ImGui.TextDisabled(
                 $"辨識方式：ObjectKind.Treasure（銅寶箱與一般副本寶箱）"
-                + $"＋ EObjName 表裡與第 {ReferenceChestEObjNameRow} 列同名的 {chestEventObjIds.Count} 個 EventObj"
+                + $"＋ EObjName 表裡與第 {ChestIdentity.ReferenceChestEObjNameRow} 列同名的 "
+                + $"{ChestIdentity.EventObjIds.Count} 個 EventObj"
                 + "（銀／金寶箱、擬態怪的箱子）。名稱一律取自遊戲資料表，程式碼裡沒有寫死的物件名。");
         }
         else
         {
-            ImGui.TextDisabled(degradedReason);
+            ImGui.TextDisabled(ChestIdentity.DegradedReason);
         }
 
         ImGui.PopTextWrapPos();

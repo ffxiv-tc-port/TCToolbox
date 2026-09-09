@@ -142,6 +142,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new IconReference());
         Modules.Add(new MovementSpeedMultiplier());
         Modules.Add(new QuestionableStepOnMappy());
+        Modules.Add(new NearbyOnMinimap());
         Modules.Add(new FleetEmergencyStop());
         Modules.Add(new WorldTravelPanel());
 
