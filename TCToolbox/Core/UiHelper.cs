@@ -363,6 +363,24 @@ public static unsafe class UiHelper
     /// </remarks>
     public static string GetSelectYesnoText(AtkUnitBase* addon) => ReadSelectYesnoText(addon);
 
+    /// <remarks>
+    /// 🔴 <b>一定要走 <see cref="AddonPrompt.ReadSelectYesnoText"/>（<c>MemoryHelper.ReadSeString().TextValue</c>），
+    /// 不可以用 <c>Utf8String.ToString()</c>。</b>後者是把整段位元組直接當 UTF-8 解碼，
+    /// SeString 的 payload 控制位元組會原樣被丟進解碼器——只要提示文字裡有道具連結之類的 payload，
+    /// 解出來就<b>必定</b>含 U+FFFD 替換字元。
+    /// <para>
+    /// ⇒ 下面 <see cref="ClickSelectYesno"/> 裡那道「含 U+FFFD 就當作視窗記憶體變動中，這一幀不按」的閘門
+    /// 會對那種確認框<b>每一幀都成立</b>，於是「看得到、但一次都按不下去」，而且全程零 log。
+    /// 2026-09-08 合建交納就是這樣靜默停擺六天（見 <c>AutoFCWSDeliver.ReadPrompt</c> 的實機語料）。
+    /// 剝掉 payload 之後 U+FFFD 才恢復它原本的語意：<b>真的</b>讀到半個字元＝窗的記憶體正在變動。
+    /// </para>
+    /// <para>
+    /// ⚠️ 兩道空指標閘門留在這裡不能省：<see cref="AddonPrompt.ReadSelectYesnoText"/> 只判 addon 與
+    /// <c>PromptText</c>，沒有判 <c>NodeText.StringPtr</c>。StringPtr 為 null 而 Length 還留著殘值時，
+    /// <c>Utf8String.AsSpan()</c> 會建出一個長度非零、指向位址 0 的 Span，讀下去就是
+    /// AccessViolationException（corrupted-state exception，try/catch 攔不到）。
+    /// </para>
+    /// </remarks>
     private static string ReadSelectYesnoText(AtkUnitBase* addon)
     {
         if (!IsReady(addon)) return string.Empty;
@@ -370,7 +388,7 @@ public static unsafe class UiHelper
         var node = ((AddonSelectYesno*)addon)->PromptText;
         if (node == null || !node->NodeText.StringPtr.HasValue) return string.Empty;
 
-        return node->NodeText.ToString();
+        return AddonPrompt.ReadSelectYesnoText(addon);
     }
 
     /// <summary>若 Talk 對話框開著就點掉它。</summary>
