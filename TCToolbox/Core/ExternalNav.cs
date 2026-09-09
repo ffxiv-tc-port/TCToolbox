@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 using System.Reflection;
 using Dalamud.Game.ClientState.Conditions;
@@ -589,6 +590,58 @@ internal static class ExternalNav
         if (Query(BossModAiIsNavigating)) { mover = "BossMod AI"; return true; }
 
         return false;
+    }
+
+    /// <summary>
+    /// 四個導航外掛各自的狀態，<b>三態</b>（給唯讀顯示用）。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>與 <see cref="TryGetActiveMover"/> 共用同一批訂閱物件，不另外開一份。</b>
+    /// 端點名與型別各寫一次的話遲早會分岔，而分岔的失敗形式是「面板說沒人在動、閘門說有人在動」。
+    /// <para>
+    /// 🔑 <b>差別只在「問不到」怎麼算。</b><see cref="TryGetActiveMover"/> 是<b>閘門</b>，
+    /// 它把「問不到」當成 false（沒裝的外掛不可能正在移動角色，把按鈕鎖起來才是錯的）；
+    /// 這一支是<b>顯示</b>，「問不到」必須原樣帶到列上，否則使用者會把「沒安裝」讀成「沒人在動」。
+    /// 同一個事實在兩種用途下要摺疊成不同的答案，所以是兩支方法而不是一支。
+    /// </para>
+    /// <para>
+    /// ⚠️ vnavmesh 佔<b>一列</b>但問<b>兩個</b>端點（已經在走／還在算路徑），
+    /// 理由與 <see cref="TryGetActiveMover"/> 那邊相同。兩支都問不到才算問不到。
+    /// </para>
+    /// </remarks>
+    public static List<(string Name, ControlState State)> SnapshotMovers() =>
+    [
+        ("Lifestream", QueryState(LifestreamIsBusy)),
+        ("vnavmesh", CombineAny(QueryState(VnavPathIsRunning), QueryState(VnavPathfindInProgress))),
+        ("AutoDuty", QueryState(AutoDutyIsNavigating)),
+        ("BossMod AI", QueryState(BossModAiIsNavigating)),
+    ];
+
+    /// <summary>問一個無參數的 bool 端點，保留「問不到」這個狀態。</summary>
+    private static ControlState QueryState(Lazy<ICallGateSubscriber<bool>> gate)
+    {
+        try
+        {
+            return gate.Value.InvokeFunc() ? ControlState.Active : ControlState.Idle;
+        }
+        catch (IpcError)
+        {
+            return ControlState.Unknown;
+        }
+        catch (TargetInvocationException)
+        {
+            // 🔴 提供端自己實作裡擲的例外會被 CallGate 的 DynamicInvoke 包成這一種，
+            //    catch (IpcError) 攔不到。這是唯讀顯示路徑，漏掉就是每幀擲一次例外。
+            return ControlState.Unknown;
+        }
+    }
+
+    /// <summary>兩個端點合成一列：任一 Active＝Active；兩個都 Unknown 才 Unknown。</summary>
+    private static ControlState CombineAny(ControlState a, ControlState b)
+    {
+        if (a == ControlState.Active || b == ControlState.Active) return ControlState.Active;
+        if (a == ControlState.Unknown && b == ControlState.Unknown) return ControlState.Unknown;
+        return ControlState.Idle;
     }
 
     /// <summary>問一個無參數的 bool 端點；打不通一律回 <see langword="false"/>。</summary>

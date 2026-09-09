@@ -44,6 +44,14 @@ public sealed class FleetStopWindow : Window
         ImGui.Separator();
         ImGui.Spacing();
 
+        // 📌 放在大按鈕與「上次結果」之間：這一格回答的是「我按之前該知道什麼」
+        //    與「我按了之後為什麼還在動」，兩個問題都發生在這扇視窗開著的時候。
+        ControlStatusPanel.Draw();
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
         FleetEmergencyStop.DrawResults();
 
         ImGui.Spacing();

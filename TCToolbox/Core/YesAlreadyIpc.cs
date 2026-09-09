@@ -32,10 +32,13 @@ namespace TCToolbox.Core;
 /// </para>
 /// <para>⚠️ YesAlready 沒裝／共享資料拿不到＝沒有 race，一律當沒事跳過。</para>
 /// <para>
-/// ⚠️ <b>已知殘餘窗口</b>：YesAlready 的 <c>BlockListHandler</c> 建構時會 <c>Clear()</c> 整個清單，
-/// 所以在我們掛著鎖的期間<b>重新載入 YesAlready</b> 會把我們的名字洗掉。
-/// 這是這個機制本身的性質（AutoRetainer 也一樣）；<see cref="Suppress"/> 做成冪等，
-/// 重複呼叫會把名字重新放回去。
+/// 📌 <b>「重新載入 YesAlready 會把我們的名字洗掉」這個殘餘窗口已經沒有了。</b>
+/// 提供端後來改成<b>刻意不在建構時 <c>Clear()</c></b>（<c>YesAlready/IPC/BlockListHandler.cs</c>
+/// 的建構子逐字寫著理由：清掉會在別人的序列中途讓 YesAlready 醒過來），
+/// 開場只把既有項目登記起來開始計時，並寫一行 Information。
+/// 取而代之的是一個<b>看門狗</b>：登記逾時、或持有者外掛已經不在了，它會自己把那筆移掉。
+/// ⚠️ 所以現在要留意的不是「名字被洗掉」而是「掛太久會被回收」——
+/// <see cref="Suppress"/> 仍然做成冪等，重複呼叫會把名字重新放回去。
 /// </para>
 /// </remarks>
 internal static class YesAlreadyIpc

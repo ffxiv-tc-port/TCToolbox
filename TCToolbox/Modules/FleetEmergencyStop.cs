@@ -329,6 +329,16 @@ public sealed class FleetEmergencyStop : TcModule
         DrawCooldownSetting();
 
         ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        // 唯讀：這一格什麼都不改，只是把艦隊裡本來就有、卻沒有人去讀的租約／狀態端點顯示出來。
+        ControlStatusPanel.Draw();
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
         DrawResults();
 
         ImGui.Spacing();
