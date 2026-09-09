@@ -1,5 +1,6 @@
 using Dalamud.Game.Addon.Lifecycle;
 using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
+using Dalamud.Memory;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.Game.Event;
 using FFXIVClientStructs.FFXIV.Component.GUI;
@@ -304,7 +305,7 @@ public sealed unsafe class ShopDisplayRealItemIcon : TcModule
             if (textNode == null) break;
             if (!textNode->NodeText.StringPtr.HasValue) continue;
 
-            var shownName = SanitizeName(textNode->NodeText.ToString());
+            var shownName = SanitizeName(ReadNodeText(textNode));
             if (shownName.Length == 0) continue;
 
             var icon = FindIconByName(shownName);
@@ -329,7 +330,38 @@ public sealed unsafe class ShopDisplayRealItemIcon : TcModule
         return 0;
     }
 
-    /// <summary>去掉節點文字前後的圖示佔位（SeString 內嵌圖示會被 ToString 展開成不可見字元）。</summary>
+    /// <summary>讀節點上顯示的文字，剝掉 SeString payload 之後只留看得見的字。</summary>
+    /// <remarks>
+    /// 🔴 <b>一定要走 <c>MemoryHelper.ReadSeString(...).TextValue</c>，不可以用 <c>Utf8String.ToString()</c>。</b>
+    /// 後者是把整段位元組直接丟進 UTF-8 解碼器（<c>Encoding.UTF8.GetString(AsSpan())</c>），
+    /// SeString 的 payload 控制位元組會原樣被解出來：道具連結那種帶 0xFF 長度前綴的 payload 解出 U+FFFD，
+    /// 收藏品／HQ 那種內嵌圖示 payload（<c>02 12 02 &lt;icon+1&gt; 03</c>）則會留下一個可列印的雜字元
+    /// （icon 55 ⇒ 位元組 0x38 ⇒ 字元 '8'）。
+    /// <para>
+    /// ⚠️ <see cref="SanitizeName"/> 只濾掉 &lt; U+0020 的控制字元，<b>攔不住上面兩種</b>；
+    /// 而下游 <see cref="FindIconByName"/> 是拿這串當<b>針</b>去比對
+    /// <c>Item.Name.ExtractText()</c>（那一側是<b>已經</b>剝掉 payload 的純文字）。
+    /// 兩側基準不同 ⇒ <c>Contains</c> 必定落空 ⇒ 回 0 ⇒ 圖示靜默不換，
+    /// 而那跟「這一列本來就沒有對應圖示」長得一模一樣。
+    /// </para>
+    /// <para>
+    /// 📌 這是本 repo 第三次踩同一個反樣式（合建交納的確認框、
+    /// <c>UiHelper.ReadSelectYesnoText</c> ＋ <c>GlamourStoreDuplicateGuard</c>）。
+    /// ⚠️ 呼叫端的 <c>NodeText.StringPtr</c> 判空不能省：<c>MemoryHelper.ReadSeString</c> 只判
+    /// <c>Utf8String*</c> 本身非 null，StringPtr 為 null 而 Length 還留著殘值時，
+    /// <c>AsSpan()</c> 會建出一個長度非零、指向位址 0 的 Span，讀下去就是存取違規（try/catch 攔不到）。
+    /// </para>
+    /// </remarks>
+    private static string ReadNodeText(AtkTextNode* textNode) =>
+        MemoryHelper.ReadSeString(&textNode->NodeText).TextValue;
+
+    /// <summary>
+    /// 剝完 payload 之後的收尾：去掉殘留的控制字元與前後空白。
+    /// </summary>
+    /// <remarks>
+    /// 剝 payload 是 <see cref="ReadNodeText"/> 的責任，這裡只是最後一道保險——
+    /// 換行之類的控制字元不影響顯示，但會讓字串比對落空。
+    /// </remarks>
     private static string SanitizeName(string raw)
     {
         var sb = new System.Text.StringBuilder(raw.Length);
