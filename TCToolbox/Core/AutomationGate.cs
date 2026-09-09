@@ -88,6 +88,47 @@ internal static class AutomationGate
     }
 
     /// <summary>
+    /// <b>只</b>問「全艦隊急停還在冷卻中嗎」，完全不看遊戲狀態。
+    /// </summary>
+    /// <param name="reason">
+    /// 一句話的理由（給記錄用）。回 <see langword="false"/> 時是空字串。
+    /// </param>
+    /// <returns><see langword="true"/>＝急停冷卻中，現在<b>不</b>該動手。</returns>
+    /// <remarks>
+    /// 🔴🔴 <b>這支存在的理由是「有些自走模組不能整個換成 <see cref="TryGetBusyReason"/>」。</b>
+    /// 完整閘門是為「園圃那種可以等下一輪的例行工作」設計的，它會擋
+    /// <see cref="ConditionFlag.BoundByDuty"/>、騎乘、戰鬥——而
+    /// <c>AutoCheckFoodUsage</c> 最需要生效的時機<b>正是進副本前後</b>，
+    /// <c>AutoGysahlGreens</c> 也刻意允許一票 <c>Occupied</c> 系旗標。
+    /// 把它們改成呼叫完整閘門會讓功能<b>靜默失能</b>：使用者只會發現 buff 沒續上，
+    /// 而記錄上什麼異常都沒有。
+    /// <para>
+    /// 🔑 <b>所以正解是「加一項」不是「換一份」</b>：那些模組保留自己原本的判斷，
+    /// 額外只問這一支。急停是使用者剛剛親手下的指令，沒有任何模組該無視它。
+    /// </para>
+    /// <para>
+    /// ⚠️ 與 <see cref="TryGetBusyReason"/> 共用同一份到期狀態（過期時就地清掉），
+    /// 兩支都只在框架／主執行緒上呼叫，所以不需要同步。
+    /// </para>
+    /// </remarks>
+    public static bool TryGetEmergencyStopReason(out string reason)
+    {
+        reason = string.Empty;
+
+        if (emergencyStopUntil == DateTime.MinValue) return false;
+
+        var remaining = emergencyStopUntil - DateTime.UtcNow;
+        if (remaining > TimeSpan.Zero)
+        {
+            reason = $"剛執行過全艦隊急停（{remaining.TotalSeconds:F0} 秒後恢復）";
+            return true;
+        }
+
+        emergencyStopUntil = DateTime.MinValue;
+        return false;
+    }
+
+    /// <summary>
     /// 現在有沒有理由不要動手。
     /// </summary>
     /// <param name="reason">
@@ -107,16 +148,10 @@ internal static class AutomationGate
 
         // 🔴 急停冷卻排在所有遊戲狀態之前：使用者剛剛明確要求「全部停下」，
         //    這段期間不管遊戲狀態多空閒都不該有東西自己醒過來。
-        if (emergencyStopUntil != DateTime.MinValue)
+        if (TryGetEmergencyStopReason(out var stopReason))
         {
-            var remaining = emergencyStopUntil - DateTime.UtcNow;
-            if (remaining > TimeSpan.Zero)
-            {
-                reason = $"剛執行過全艦隊急停（{remaining.TotalSeconds:F0} 秒後恢復）";
-                return true;
-            }
-
-            emergencyStopUntil = DateTime.MinValue;
+            reason = stopReason;
+            return true;
         }
 
         if (Svc.Condition[ConditionFlag.BetweenAreas] || Svc.Condition[ConditionFlag.BetweenAreas51])

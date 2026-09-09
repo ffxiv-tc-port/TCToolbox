@@ -144,8 +144,23 @@ public sealed unsafe class AutoCheckFoodUsage : TcModule
             StartRefresh();
     }
 
+    /// <summary>開一輪食物檢查。</summary>
+    /// <remarks>
+    /// 🔴 <b>全艦隊急停冷卻期間不開新的一輪。</b>這裡刻意<b>只</b>問
+    /// <see cref="AutomationGate.TryGetEmergencyStopReason"/>，而不是整個改用
+    /// <see cref="AutomationGate.TryGetBusyReason"/>——完整閘門會擋
+    /// <c>BoundByDuty</c>，而這個模組最需要生效的時機正是<b>進副本前後</b>，
+    /// 換過去等於讓它在副本裡靜默失能（<see cref="IsValidState"/> 那份判斷維持原樣）。
+    /// </remarks>
     private void StartRefresh()
     {
+        if (AutomationGate.TryGetEmergencyStopReason(out var stopReason))
+        {
+            if (Throttle.Pass("AutoCheckFoodUsage-FleetStop", 60_000))
+                Svc.Log.Information($"[{InternalName}] {stopReason}，這一次的食物檢查不開始。");
+            return;
+        }
+
         queue.Abort();
         queue.Enqueue("檢查食物", EnqueueFoodRefresh);
     }
@@ -173,6 +188,14 @@ public sealed unsafe class AutoCheckFoodUsage : TcModule
 
     private bool? TakeFood(uint itemId, bool isHq)
     {
+        // 🔴 已經排進佇列、還沒送出的那一步也要攔得住：使用者按下急停的時機多半就是
+        //    「有東西正在跑」的時候。回 null＝中止整條佇列（見 TaskQueue 的回傳值約定）。
+        if (AutomationGate.TryGetEmergencyStopReason(out var stopReason))
+        {
+            Svc.Log.Information($"[{InternalName}] {stopReason}，中止這一輪的食物補充。");
+            return null;
+        }
+
         if (!Throttle.Pass("AutoCheckFoodUsage-TakeFood", 1000)) return false;
         if (!IsValidState()) return false;
 

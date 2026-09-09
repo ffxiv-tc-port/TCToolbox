@@ -86,6 +86,22 @@ public sealed unsafe class AutoGysahlGreens : TcModule
                 $"[AutoGysahlGreens] 已達門檻但被條件擋下，這次不餵：TimeLeft={timeLeftNow:F1}s 門檻={thresholdSeconds:F0}s");
         }
 
+        // 🔴 全艦隊急停冷卻期間一律不餵。上面那份 blocked 清單是這個模組自己的判斷，
+        //    刻意保留不動——它允許一票 Occupied 系旗標，整個換成 AutomationGate 的完整閘門
+        //    會偷偷把行為改掉。這裡只額外問一件事：使用者剛剛是不是按了急停。
+        if (AutomationGate.TryGetEmergencyStopReason(out var stopReason))
+        {
+            // 只有「本來就該餵了」的那一刻才值得寫進記錄：純冷卻期間每 2 秒印一行等於洗版。
+            if (timeLeftNow > 0 && timeLeftNow <= thresholdSeconds &&
+                Throttle.Pass("AutoGysahlGreens-FleetStop", 60_000))
+            {
+                Svc.Log.Information(
+                    $"[AutoGysahlGreens] {stopReason}，這次不餵：TimeLeft={timeLeftNow:F1}s 門檻={thresholdSeconds:F0}s");
+            }
+
+            return;
+        }
+
         if (blocked) return;
         if (uiState == null) return;
 
