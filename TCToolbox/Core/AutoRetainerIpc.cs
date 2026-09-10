@@ -13,7 +13,7 @@ namespace TCToolbox.Core;
 /// <para>
 /// 🔴 <b>只呼叫「查詢」與「使用者明確要求的切換」兩類端點。</b>
 /// 絕不註冊 AutoRetainer 的 post-process 事件（<c>OnCharacterPostprocessStep</c> 那一類）——
-/// 那會把本外掛接進「雇員作業完成→自動接手下一件事」的自動化鏈裡，是艦隊紅線。
+/// 那會把本外掛接進「僱員作業完成→自動接手下一件事」的自動化鏈裡，是艦隊紅線。
 /// </para>
 /// <para>
 /// 📌 <b>為什麼用反射讀角色資料</b>：<c>AutoRetainer.GetOfflineCharacterData</c> 回傳的是
@@ -235,6 +235,165 @@ internal static class AutoRetainerIpc
             Svc.Log.Warning(ex, "[AutoRetainerIpc] 呼叫 AutoRetainer.PluginState.Relog 失敗");
             accepted = false;
             return false;
+        }
+    }
+
+    // ── 僱員道具取回（AutoRetainer.PluginState，手動觸發） ────────────────────
+
+    // 🔴 端點名逐字對齊提供端：AutoRetainer 的 IPC_PluginState 建構子呼叫的是
+    //    EzIPC.Init(this, $"{Svc.PluginInterface.InternalName}.PluginState")，
+    //    而 EzIPC 的標籤是「Prefix.方法名」⇒ 前綴固定為 "AutoRetainer.PluginState"。
+    //    ⚠️ 對方的 EzIPC.Init 沒有帶 SafeWrapper，所以提供端擲出的例外會原樣往外傳，
+    //    再被 CallGate 的 Func.DynamicInvoke 包成 TargetInvocationException。
+
+    /// <summary>本外掛認得的取回 API 版本下限。對方回的版本小於這個值就不要用下面那些端點。</summary>
+    public const int RetrieveApiVersion = 1;
+
+    // 取回端點的結果碼，逐字對齊 AutoRetainer 的 RetainerRetrieve 常數。
+    // 🔴 0 與 -1 是<b>不同</b>的答案：0＝「走遍僱員容器，確定沒有這件」，
+    //    -1＝「根本讀不到僱員容器，什麼都不能斷定」。把兩者併成一個 falsey
+    //    就是「僱員只是還在載入，卻被當成空的」那個缺陷。
+    public const int RetrieveResultNotPresent = 0;
+    public const int RetrieveResultRetainerUnavailable = -1;
+    public const int RetrieveResultCommandInFlight = -2;
+    public const int RetrieveResultInventoryFull = -3;
+    public const int RetrieveResultBlockedUnique = -4;
+    public const int RetrieveResultInCrystals = -5;
+
+    private static readonly Lazy<ICallGateSubscriber<int>> RetrieveApiVersionGate =
+        new(() => Svc.PluginInterface.GetIpcSubscriber<int>(
+            "AutoRetainer.PluginState.GetRetainerItemRetrieveApiVersion"));
+
+    private static readonly Lazy<ICallGateSubscriber<uint, bool, bool, int>> RetrieveSlotByIdGate =
+        new(() => Svc.PluginInterface.GetIpcSubscriber<uint, bool, bool, int>(
+            "AutoRetainer.PluginState.RetrieveRetainerItemSlotById"));
+
+    private static readonly Lazy<ICallGateSubscriber<uint, bool, bool, int>> OpenRetainerQuantityGate =
+        new(() => Svc.PluginInterface.GetIpcSubscriber<uint, bool, bool, int>(
+            "AutoRetainer.PluginState.GetOpenRetainerItemQuantity"));
+
+    private static readonly Lazy<ICallGateSubscriber<object>> ResetRetrieveTrackingGate =
+        new(() => Svc.PluginInterface.GetIpcSubscriber<object>(
+            "AutoRetainer.PluginState.ResetRetainerRetrieveTracking"));
+
+    /// <summary>
+    /// 這一類例外全部代表「這條 IPC 現在不能用」，而不是我們自己算錯。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <see cref="TargetInvocationException"/> 是<b>必須</b>攔的那一個，而且
+    /// <see cref="IpcError"/> 攔不到它：Dalamud 的 <c>CallGateChannel.InvokeFunc</c>
+    /// 是用 <c>Func.DynamicInvoke</c> 呼叫提供端，所以<b>提供端自己實作裡擲出來的</b>
+    /// 東西一律被包成 <see cref="TargetInvocationException"/>。
+    /// <para>
+    /// ⚠️ 「同步端點才是這個形狀」——提供端若是 <c>async</c>，例外會進 faulted Task、
+    /// <c>await</c> 時擲的是原始型別。這裡四支端點的提供端都是同步的
+    /// （AutoRetainer 的 <c>IpcFrameworkGate.Run</c> 是同步等待並用
+    /// <c>ExceptionDispatchInfo</c> 原樣重擲），所以只需要攔這一個。
+    /// </para>
+    /// <para>
+    /// 🔴 不裸 <c>catch (Exception)</c>：那會把本外掛自己的程式錯誤一起吞掉，
+    /// 表現成「AutoRetainer 怪怪的」而不是一則堆疊。
+    /// </para>
+    /// </remarks>
+    private static bool IsIpcFailure(Exception ex) =>
+        ex is IpcError or TargetInvocationException or InvalidCastException;
+
+    /// <summary>
+    /// AutoRetainer 有沒有提供「指定道具取回」這組端點，而且版本是本外掛認得的。
+    /// </summary>
+    /// <param name="version">對方回報的版本；問不到時為 0。</param>
+    /// <param name="reason">回 <see langword="false"/> 時可以直接顯示在畫面上的原因。</param>
+    public static bool SupportsItemRetrieve(out int version, out string reason)
+    {
+        version = 0;
+
+        try
+        {
+            version = RetrieveApiVersionGate.Value.InvokeFunc();
+        }
+        catch (Exception ex) when (IsIpcFailure(ex))
+        {
+            reason = "沒有偵測到 AutoRetainer 的取回端點（未安裝、未載入，或版本太舊）。";
+            return false;
+        }
+
+        if (version < RetrieveApiVersion)
+        {
+            reason = $"AutoRetainer 回報取回 API v{version}，本外掛需要 v{RetrieveApiVersion} 以上。";
+            return false;
+        }
+
+        reason = string.Empty;
+        return true;
+    }
+
+    /// <summary>
+    /// 對「目前開著的僱員」身上第一個放著 <paramref name="itemId"/> 的格子送出一次取回指令。
+    /// </summary>
+    /// <remarks>
+    /// 📌 <b>永遠是整格</b>：遊戲那個指令沒有「取回 N 個」而不跳數量對話框的形式。
+    /// 回傳的正整數就是那一格的數量，也就是呼叫端「想要少一點卻拿到更多」時的唯一告知管道。
+    /// <para>
+    /// 🔴 <b>送出不等於成功。</b>這支只送指令、不等結果（提供端的註解寫得很清楚）。
+    /// 台服對這類指令的拒絕是<b>完全靜默</b>的——伺服器不受理時那一格不會有任何變化，
+    /// 也不會有訊息。呼叫端<b>必須</b>自己觀察僱員容器的存量有沒有真的下降，
+    /// 不可以拿「回傳正整數」當成「已取回」。
+    /// </para>
+    /// </remarks>
+    /// <param name="result">
+    /// 送出成功時是那一格的數量（≥1），否則是 <c>RetrieveResult*</c> 其中一個負值或 0。
+    /// IPC 打不通時為 <see cref="RetrieveResultRetainerUnavailable"/>。
+    /// </param>
+    /// <returns>IPC 呼叫本身是否成功（<see langword="false"/>＝AutoRetainer 不能用了）。</returns>
+    public static bool TryRetrieveSlotById(uint itemId, bool hqOnly, bool includeCrystals, out int result)
+    {
+        try
+        {
+            result = RetrieveSlotByIdGate.Value.InvokeFunc(itemId, hqOnly, includeCrystals);
+            return true;
+        }
+        catch (Exception ex) when (IsIpcFailure(ex))
+        {
+            Svc.Log.Information(
+                $"[AutoRetainerIpc] RetrieveRetainerItemSlotById 呼叫失敗（{ex.GetType().Name}）：{ex.Message}");
+            // 🔴 失敗時給的是對方原本就定義過的「讀不到」值，不是新語意，也不是 0——
+            //    0 會被呼叫端讀成「確定沒有這件」。
+            result = RetrieveResultRetainerUnavailable;
+            return false;
+        }
+    }
+
+    /// <summary>目前開著的僱員身上有幾個 <paramref name="itemId"/>。</summary>
+    /// <remarks>⚠️ <see cref="RetrieveResultRetainerUnavailable"/>（-1）是「不知道」，不是「沒有」。</remarks>
+    public static int GetOpenRetainerQuantity(uint itemId, bool hqOnly, bool includeCrystals)
+    {
+        try
+        {
+            return OpenRetainerQuantityGate.Value.InvokeFunc(itemId, hqOnly, includeCrystals);
+        }
+        catch (Exception ex) when (IsIpcFailure(ex))
+        {
+            return RetrieveResultRetainerUnavailable;
+        }
+    }
+
+    /// <summary>
+    /// 請 AutoRetainer 忘掉「哪些格子已經送過取回指令」，讓下一次呼叫重新考慮每一格。
+    /// </summary>
+    /// <remarks>
+    /// 📌 每一輪開始時叫一次：伺服器拒絕（或丟掉）的指令不會讓格子有任何變化，
+    /// 對方的在途追蹤要等 10 秒逾時才會重新提供那一格。這支是最佳化不是正確性需求，
+    /// 所以失敗了也不必反應。
+    /// </remarks>
+    public static void ResetRetrieveTracking()
+    {
+        try
+        {
+            ResetRetrieveTrackingGate.Value.InvokeAction();
+        }
+        catch (Exception ex) when (IsIpcFailure(ex))
+        {
+            // 刻意吞掉：這支純粹是最佳化，失敗只代表「那一格要多等 10 秒才會被重新提供」。
         }
     }
 }
