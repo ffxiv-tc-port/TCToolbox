@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Dalamud.Game.Gui.ContextMenu;
+using Dalamud.Memory;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.STD;
 using Lumina.Excel.Sheets;
@@ -310,7 +311,18 @@ internal static unsafe class ItemContextResolver
             if (value.Type is not (ValueType.String or ValueType.ManagedString or ValueType.String8)) continue;
             if (value.String.Value == null) continue;
 
-            if (string.Equals(value.String.ToString(), label, StringComparison.Ordinal)) return true;
+            // 🔴 不可以用 value.String.ToString()：AtkValue.String 是 CStringPointer，
+            //    它的 ToString() 是把整段位元組直接丟進 UTF-8 解碼器
+            //    （CStringPointer.cs:14：Encoding.UTF8.GetString(AsSpan())），
+            //    SeString 的 payload 控制位元組會原樣被解出來：
+            //    道具連結那種帶 0xFF 長度前綴的 payload 解出 U+FFFD，
+            //    內嵌圖示 payload（02 12 02 <icon+1> 03）則留下一個可列印的雜字元。
+            //    而 label 那一側是 Addon.Text.ExtractText()（已經剝掉 payload 的純文字），
+            //    兩側基準不同 ⇒ 比對恆假 ⇒ 去重永遠不生效，
+            //    表現成「選單裡出現兩個一模一樣的項目」而不報錯。
+            //    樣板同 UiHelper.GetSelectStringEntries／AutoGardensWork／AutoPlayerCommend。
+            var text = MemoryHelper.ReadSeStringNullTerminated((nint)value.String.Value).TextValue;
+            if (string.Equals(text, label, StringComparison.Ordinal)) return true;
         }
 
         return false;

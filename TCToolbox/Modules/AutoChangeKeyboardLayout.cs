@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Hooking;
 using Dalamud.Interface.Utility.Raii;
+using Dalamud.Memory;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using TCToolbox.Core;
 
@@ -140,7 +141,16 @@ public sealed unsafe class AutoChangeKeyboardLayout : TcModule
         if (component == null) return false;
         var textNode = component->AtkTextNode;
         if (textNode == null) return false;
-        var text = textNode->NodeText.ToString();
+
+        // ⚠️ 跟著本 repo 既有的讀法走 MemoryHelper.ReadSeString（剝 SeString payload），
+        //    不用 NodeText.ToString()（那支是裸的 UTF-8 解碼，不剝 payload）。
+        //    對這一行的判斷結果而言兩者等價（payload 以 0x02 開頭，第一個字永遠不會是 '/'），
+        //    換過來是為了跟其他讀原生文字的地方一致，順便補上 StringPtr 判空：
+        //    StringPtr 為 null 而 Length 還留著殘值時，舊寫法的 AsSpan() 會對位址 0 解參考
+        //    （存取違規，try／catch 攔不到）。讀不到一律回 false，與舊行為相同。
+        if (!textNode->NodeText.StringPtr.HasValue) return false;
+
+        var text = MemoryHelper.ReadSeString(&textNode->NodeText).TextValue;
         return !string.IsNullOrEmpty(text) && text.StartsWith('/');
     }
 

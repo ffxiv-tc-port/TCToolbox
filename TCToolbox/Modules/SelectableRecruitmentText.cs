@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.Addon.Lifecycle;
 using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
+using Dalamud.Memory;
 using Dalamud.Utility;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using TCToolbox.Core;
@@ -101,7 +102,16 @@ public sealed unsafe class SelectableRecruitmentText : TcModule
         var textNode = addon->GetTextNodeById(DescriptionTextNodeId);
         if (textNode == null) return;
 
-        var text = textNode->NodeText.ToString();
+        // 🔴 不可以用 NodeText.ToString()：那支是 Encoding.UTF8.GetString(AsSpan())（Utf8String.cs:69），
+        //    不剝 SeString payload。招募說明是玩家自己打的自由文字，裡面常帶【自動翻譯】詞條
+        //    （那是 SeString payload），直接解碼會把它變成雜字元——而這段文字是要畫給使用者看、
+        //    並且拿去抓網址的，所以得跟遊戲畫面上看到的一致。
+        // ⚠️ StringPtr 判空不能省：MemoryHelper.ReadSeString 只判 Utf8String* 本身非 null，
+        //    StringPtr 為 null 而 Length 還留著殘值時，AsSpan() 會建出一個長度非零、
+        //    指向位址 0 的 Span，讀下去就是存取違規（try／catch 攔不到）。
+        if (!textNode->NodeText.StringPtr.HasValue) return;
+
+        var text = MemoryHelper.ReadSeString(&textNode->NodeText).TextValue;
         if (string.IsNullOrWhiteSpace(text)) return;
 
         if (text != currentText)
