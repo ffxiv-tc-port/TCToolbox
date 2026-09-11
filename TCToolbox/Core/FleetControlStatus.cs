@@ -144,6 +144,7 @@ internal static class FleetControlStatus
         Cached.Add(DescribeYesAlready());
         Cached.Add(DescribeAutoRetainer());
         Cached.Add(DescribeAutoHook());
+        Cached.Add(DescribeQuestVsRelog());
         return Cached;
     }
 
@@ -362,6 +363,47 @@ internal static class FleetControlStatus
             ControlState.Idle,
             effective ? "沒有人壓著（目前開著）" : "沒有人壓著（目前關著）",
             detail);
+    }
+
+    /// <summary>
+    /// 兩個自動化撞在一起：Questionable 在跑任務，而 AutoRetainer 的多角色模式會把角色登出。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 📌 <b>這一列問的不是「誰在控制」而是「誰等一下會打斷誰」</b>，但使用者會來這扇面板的時刻
+    /// 正好一樣：「怎麼跑到一半停了」。判定本身在 <see cref="QuestAutomationConflict"/>，
+    /// 與任務進度模組共用同一支——那個模組<b>預設是關的</b>，只做在它上面的話，
+    /// 沒開它的人（絕大多數）永遠看不到這個提醒。
+    /// </para>
+    /// <para>
+    /// 🔴 <b>「撞在一起」才算 <see cref="ControlState.Active"/>。</b>
+    /// 兩邊各自開著是常態（那是使用者自己開的），畫成黃色的話這一列永遠是黃的。
+    /// </para>
+    /// <para>
+    /// 🔴 <b>三種「沒有衝突」不可以併成同一句</b>：沒在跑任務／沒裝 AutoRetainer／多角色模式關著，
+    /// 三者都是綠的，但列上的句子不同——使用者要看得出這個結論是哪一種情況給的。
+    /// 問不到的那兩種（問不到 Questionable、問不到多角色模式）照舊是灰字的「？」。
+    /// </para>
+    /// </remarks>
+    private static ControlStatusRow DescribeQuestVsRelog()
+    {
+        const string subject = "跑任務 × 換角（Questionable × AutoRetainer）";
+
+        var status = QuestAutomationConflict.Evaluate();
+
+        var state = status.Verdict switch
+        {
+            QuestConflictVerdict.Conflict => ControlState.Active,
+            QuestConflictVerdict.Unknown => ControlState.Unknown,
+            QuestConflictVerdict.QuestionableUnavailable => ControlState.Unknown,
+            _ => ControlState.Idle,
+        };
+
+        return new ControlStatusRow(
+            subject,
+            state,
+            QuestAutomationConflict.ShortText(status.Verdict),
+            QuestAutomationConflict.Tooltip(status));
     }
 
     // ── 查詢輔助 ────────────────────────────────────────────────────────

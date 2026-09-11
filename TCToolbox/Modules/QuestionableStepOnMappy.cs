@@ -126,33 +126,25 @@ public sealed class QuestionableStepOnMappy : TcModule
     private bool lastMarkerPlaced;
 
     /// <summary>
-    /// Questionable 自己回報的「正在跑」。
+    /// 「Questionable 在跑任務、而 AutoRetainer 的多角色模式也開著」的最近一次判定。
     /// </summary>
     /// <remarks>
-    /// 🔴 <b>它的語意比字面寬</b>：提供端是
-    /// <c>AutomationType != Manual || questController.IsRunning</c>
-    /// （Questionable <c>External/QuestionableIpc.cs:120-122</c>，2026-09-11 逐字對照），
-    /// 也就是<b>自動模式開著但還沒動手</b>，以及<b>手動按了一步、佇列還沒跑完</b>，兩種都算 true。
+    /// 📌 <b>判定本身已經搬到 <see cref="QuestAutomationConflict"/>（Core）</b>：它與這個模組無關，
+    /// 而這個模組<b>預設是關的</b>——留在這裡的話，沒開它的人（絕大多數）永遠看不到提醒。
+    /// 「現在是誰在控制」面板問的是同一支 <see cref="QuestAutomationConflict.Evaluate"/>，
+    /// 措辭也共用同一份（<see cref="QuestAutomationConflict.ShortText"/>／
+    /// <see cref="QuestAutomationConflict.Tooltip"/>）。
     /// <para>
-    /// 🔑 <b>而且 <c>GetCurrentStepData</c> 分不出來，只會更寬</b>：它非 null 的條件是
-    /// <c>CurrentQuest != null</c>，而 <c>CurrentQuest</c> 走
-    /// <c>SimulatedQuest ?? NextQuest ?? GatheringQuest ?? StartedQuest</c>
-    /// （<c>Controller/QuestController.cs:202-229</c>）——光是「追蹤著下一個任務」就成立，
-    /// 完全沒在跑也會有步驟。所以「真的在自動跑」<b>沒有</b>更精確的端點可問，
-    /// <c>IsRunning</c> 已經是最緊的那一個。
+    /// 🔴 Questionable 那一側讀的是 <c>IsRunning</c>，<b>語意比字面寬</b>
+    /// （<c>AutomationType != Manual || questController.IsRunning</c>，
+    /// Questionable <c>External/QuestionableIpc.cs:120-122</c>，2026-09-11 逐字對照）——
+    /// 理由與「為什麼沒有更精確的端點可換」寫在 <see cref="QuestAutomationConflict.Evaluate"/> 上。
     /// </para>
     /// <para>
-    /// 📌 用在提醒上，寬的方向是安全的：寧可在「自動模式開著但還沒動」時就先提醒，
-    /// 也不要等它真的走到一半被登出，使用者才發現任務停在半路。
+    /// ⚠️ 這個欄位只在框架執行緒上寫（<see cref="OnUpdate"/>），繪製路徑只讀。
     /// </para>
     /// </remarks>
-    private bool questionableRunning;
-
-    /// <summary>AutoRetainer 多角色模式的三態；只在 <see cref="questionableRunning"/> 為真時才去問。</summary>
-    private AutoRetainerIpc.MultiModeState arMultiMode = AutoRetainerIpc.MultiModeState.Unknown;
-
-    /// <summary>上面那個三態是怎麼來的（放 tooltip，不占列上版面）。</summary>
-    private string arMultiModeDetail = string.Empty;
+    private QuestConflictStatus conflict = QuestAutomationConflict.None;
 
     /// <summary>上一次真的推上去的內容簽章；空字串＝沒有標記。</summary>
     private string lastSignature = string.Empty;
@@ -170,9 +162,7 @@ public sealed class QuestionableStepOnMappy : TcModule
         Throttle.Reset(ForceResyncThrottleKey);
         lastSignature = string.Empty;
         state = BridgeState.Unknown;
-        questionableRunning = false;
-        arMultiMode = AutoRetainerIpc.MultiModeState.Unknown;
-        arMultiModeDetail = string.Empty;
+        conflict = QuestAutomationConflict.None;
 
         Svc.Framework.Update += OnUpdate;
 
@@ -198,9 +188,7 @@ public sealed class QuestionableStepOnMappy : TcModule
         lastPosition = null;
         lastInteraction = string.Empty;
         lastQuestId = string.Empty;
-        questionableRunning = false;
-        arMultiMode = AutoRetainerIpc.MultiModeState.Unknown;
-        arMultiModeDetail = string.Empty;
+        conflict = QuestAutomationConflict.None;
     }
 
     private string PollThrottleKey => $"TCToolbox.{InternalName}.Poll";
@@ -226,9 +214,7 @@ public sealed class QuestionableStepOnMappy : TcModule
 
             // 🔑 Questionable 都不在了，「有沒有跟 AutoRetainer 撞在一起」這個問題本身消失，
             //    所以退回「不知道」而不是「沒有衝突」——兩者在畫面上是不同的東西。
-            questionableRunning = false;
-            arMultiMode = AutoRetainerIpc.MultiModeState.Unknown;
-            arMultiModeDetail = string.Empty;
+            conflict = QuestAutomationConflict.None;
 
             UpdateDtr(null);
             return;
@@ -266,40 +252,19 @@ public sealed class QuestionableStepOnMappy : TcModule
 
     // ── 「兩個自動化同時開著」的偵測 ────────────────────────────────────────
 
-    /// <summary>
-    /// 衝突提示的內文。列上只放一句話，理由放這裡。
-    /// </summary>
-    /// <remarks>
-    /// 🔴 <b>純顯示。</b>這個模組不會、也不該去關掉任何一邊——兩邊都是使用者自己開的，
-    /// 而「哪一邊該讓」只有他知道（先跑完這段任務，還是先讓僱員輪一圈）。
-    /// </remarks>
-    private const string ConflictExplanation =
-        "AutoRetainer 的多角色模式開著，而 Questionable 正在跑任務。\n"
-        + "多角色模式輪到下一個角色時會把目前這個角色登出，Questionable 就停在半路，\n"
-        + "而且它不會在新角色上自己接回去——回來之後要自己再按一次開始。\n"
-        + "要跑完這段任務就先把多角色模式關掉；要讓 AutoRetainer 換角就先把 Questionable 停下來。\n"
-        + "這個模組只顯示，不會替你關掉任何一邊。";
-
     /// <summary>兩個自動化確定同時開著。</summary>
-    private bool HasConflict =>
-        questionableRunning && arMultiMode == AutoRetainerIpc.MultiModeState.On;
+    private bool HasConflict => conflict.HasConflict;
 
     /// <summary>Questionable 在跑，但 AutoRetainer 那邊問不出來——「不知道」，不是「沒事」。</summary>
-    private bool ConflictUnknown =>
-        questionableRunning && arMultiMode == AutoRetainerIpc.MultiModeState.Unknown;
+    private bool ConflictUnknown => conflict.IsUnknown;
 
     /// <summary>
     /// 重新判斷「Questionable 在不在跑」與「AutoRetainer 的多角色模式開不開著」。
     /// </summary>
     /// <remarks>
     /// <para>
-    /// 📌 <b>只有 Questionable 在跑的時候才去問 AutoRetainer。</b>沒有人在跑任務時，
-    /// 多角色模式開著完全是正常狀態，去問它只是多打一趟 IPC、多一個沒人要看的答案。
-    /// </para>
-    /// <para>
-    /// 🔴 <b>沒裝 AutoRetainer 的人不該看到「？問不到」。</b>那不是「不知道」，
-    /// 那是「這個問題不存在」——所以三態裡特別留了
-    /// <see cref="AutoRetainerIpc.MultiModeState.NotInstalled"/>，畫面上什麼都不顯示。
+    /// 📌 判定本身在 <see cref="QuestAutomationConflict.Evaluate"/>（Core，與模組無關），
+    /// 這裡只負責「多久問一次」與「狀態變了要不要寫記錄」。
     /// </para>
     /// <para>
     /// ⚠️ 在框架執行緒上呼叫（<see cref="OnUpdate"/> 裡），IPC 的實作跑在呼叫端的執行緒上。
@@ -307,28 +272,22 @@ public sealed class QuestionableStepOnMappy : TcModule
     /// </remarks>
     private void RefreshConflict()
     {
-        // 🔑 走到這裡代表 Questionable 的 IPC 打得通（TryGetCurrentStep 已經成功回來了），
-        //    所以這一支回 false 就是真的「沒在跑」，不是「問不到」。
-        questionableRunning = QuestionableIpc.TryIsRunning(out var running) && running;
-
-        if (!questionableRunning)
-        {
-            arMultiMode = AutoRetainerIpc.MultiModeState.Unknown;
-            arMultiModeDetail = string.Empty;
-            return;
-        }
-
-        var previous = arMultiMode;
-        arMultiMode = AutoRetainerIpc.GetMultiModeState(out arMultiModeDetail);
+        var previous = conflict.Verdict;
+        conflict = QuestAutomationConflict.Evaluate();
 
         // 📌 只在狀態真的變了才寫記錄：每秒問一次，每次都寫會把記錄洗掉。
-        //    🔴 Information 級：使用者跑 LogLevel 1，而「當時到底有沒有撞在一起」
-        //       事後只能靠這一行回推。
-        if (previous == arMultiMode) return;
+        if (previous == conflict.Verdict) return;
 
+        // 📌 沒在跑任務（或 Questionable 不在）是常態，不值得寫進記錄——
+        //    否則使用者每次開始／停止跑任務都多兩行。
+        if (conflict.Verdict is QuestConflictVerdict.NotRunning
+            or QuestConflictVerdict.QuestionableUnavailable) return;
+
+        // 🔴 Information 級：使用者跑 LogLevel 1，而「當時到底有沒有撞在一起」
+        //    事後只能靠這一行回推。
         Svc.Log.Information(
-            $"[{InternalName}] Questionable 正在跑任務；AutoRetainer 多角色模式＝{arMultiMode}"
-            + $"（{arMultiModeDetail.Replace("\n", "；")}）");
+            $"[{InternalName}] Questionable 正在跑任務；衝突判定＝{conflict.Verdict}"
+            + $"（{conflict.Detail.Replace("\n", "；")}）");
     }
 
     // ── 伺服器資訊列 ────────────────────────────────────────────────────────
@@ -342,11 +301,13 @@ public sealed class QuestionableStepOnMappy : TcModule
     {
         if (dtrEntry == null) return;
 
-        var conflict = HasConflict;
+        // ⚠️ 區域變數刻意不叫 conflict：那是欄位的名字（整個判定結果），
+        //    同名的 bool 會遮住它，讀碼的人會以為兩個是同一個東西。
+        var hasConflict = HasConflict;
 
         // 🔴 <b>衝突比「沒有步驟可說」重要。</b>Questionable 可能是「自動模式開著、還沒走到
         //    任何一步」——那正是最該提醒的時機（一換角就前功盡棄），所以這種情況照樣顯示。
-        if (!Config.ShowDtr || (step == null && !conflict))
+        if (!Config.ShowDtr || (step == null && !hasConflict))
         {
             dtrEntry.Shown = false;
             return;
@@ -355,7 +316,7 @@ public sealed class QuestionableStepOnMappy : TcModule
         if (step == null)
         {
             dtrEntry.Text = new SeString(new TextPayload("任務自動化：與 AR 換角衝突"));
-            dtrEntry.Tooltip = "TC Toolbox — 兩個自動化同時開著\n" + ConflictExplanation;
+            dtrEntry.Tooltip = "TC Toolbox — 兩個自動化同時開著\n" + QuestAutomationConflict.Tooltip(conflict);
             dtrEntry.Shown = true;
             return;
         }
@@ -363,7 +324,7 @@ public sealed class QuestionableStepOnMappy : TcModule
         var interaction = InteractionLabel(step.InteractionType);
 
         dtrEntry.Text = new SeString(new TextPayload(
-            conflict ? $"跑任務中：{interaction}（與 AR 換角衝突）" : $"跑任務中：{interaction}"));
+            hasConflict ? $"跑任務中：{interaction}（與 AR 換角衝突）" : $"跑任務中：{interaction}"));
 
         var sb = new StringBuilder();
         sb.Append("TC Toolbox — Questionable 目前步驟");
@@ -377,8 +338,8 @@ public sealed class QuestionableStepOnMappy : TcModule
 
         sb.Append('\n').Append("座標：").Append(DescribePosition(step));
 
-        if (conflict)
-            sb.Append('\n').Append('\n').Append(ConflictExplanation);
+        if (hasConflict)
+            sb.Append('\n').Append('\n').Append(QuestAutomationConflict.Tooltip(conflict));
 
         dtrEntry.Tooltip = sb.ToString();
         dtrEntry.Shown = true;
@@ -610,22 +571,19 @@ public sealed class QuestionableStepOnMappy : TcModule
                 return new ModuleNotice(
                     ModuleNoticeLevel.Warning,
                     "兩個自動化同時開著，AR 換角會中斷任務",
-                    ConflictExplanation
-                    + "\n\n（判斷依據：" + arMultiModeDetail + "）");
+                    QuestAutomationConflict.Tooltip(conflict));
             }
 
             // 🔴 「不知道」要在列上看得見。AutoRetainer <b>在</b>、Questionable 也在跑，
             //    卻問不出多角色模式——那就有可能正撞在一起，只是我們說不出來。
-            //    ⚠️ 對照組：AutoRetainer 根本沒裝時 arMultiMode 是 NotInstalled，
+            //    ⚠️ 對照組：AutoRetainer 根本沒裝時判定是 NoAutoRetainer，
             //    那不是「不知道」而是「這個問題不存在」，什麼都不顯示。
             if (ConflictUnknown)
             {
                 return new ModuleNotice(
                     ModuleNoticeLevel.Unknown,
                     "？ 問不到 AutoRetainer 的多角色模式",
-                    "Questionable 正在跑任務，而 AutoRetainer 在——但問不出它的多角色模式開著沒有。\n"
-                    + "多角色模式若正開著，它換角色時會把 Questionable 中斷在半路。\n\n"
-                    + arMultiModeDetail);
+                    QuestAutomationConflict.Tooltip(conflict));
             }
 
             return state switch
@@ -783,7 +741,7 @@ public sealed class QuestionableStepOnMappy : TcModule
         {
             ImGui.TextColored(ConflictColor, "兩個自動化同時開著：AR 換角會中斷任務，而且不會自動接回");
             if (ImGui.IsItemHovered())
-                ImGui.SetTooltip(ConflictExplanation + "\n\n（判斷依據：" + arMultiModeDetail + "）");
+                ImGui.SetTooltip(QuestAutomationConflict.Tooltip(conflict));
 
             ImGui.Spacing();
             return;
@@ -793,12 +751,7 @@ public sealed class QuestionableStepOnMappy : TcModule
 
         ImGui.TextDisabled("？ Questionable 在跑，但問不到 AutoRetainer 的多角色模式");
         if (ImGui.IsItemHovered())
-        {
-            ImGui.SetTooltip(
-                "AutoRetainer 在，卻問不出它的多角色模式開著沒有——所以說不出現在有沒有撞在一起。\n"
-                + "多角色模式若正開著，它換角色時會把 Questionable 中斷在半路。\n\n"
-                + arMultiModeDetail);
-        }
+            ImGui.SetTooltip(QuestAutomationConflict.Tooltip(conflict));
 
         ImGui.Spacing();
     }

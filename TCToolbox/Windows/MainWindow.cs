@@ -33,14 +33,44 @@ public sealed class MainWindow : Window
         if (!tabs) return;
 
         // 🔴 順序即優先度：「常用」放最前面，因為它的存在理由就是「不必在分頁間找」。
+        //    「啟動中」緊接在後：它回答的是「我現在到底開著什麼」，那是掃視型的問題。
         //    「手動觸發」與「全部」是跨分類的篩選，放在四個分類分頁的右邊。
         DrawFavoritesTab();
+        DrawActiveTab();
 
         foreach (var category in ModuleCategoryInfo.DisplayOrder)
             DrawCategoryTab(category);
 
         DrawManualTab();
         DrawAllTab();
+    }
+
+    /// <summary>
+    /// 下一次要跳到哪一個分頁。<c>null</c>＝沒有人在要求跳頁。
+    /// </summary>
+    /// <remarks>
+    /// 📌 存的是 <c>###</c> 後面那段<b>固定的英文 id</b>（例如 <c>tab-Inventory</c>），
+    /// 不是分頁標題——標題帶著會變的數字。
+    /// <para>
+    /// ⚠️ <b>一定會被消化掉</b>：每一個分頁每幀都會建立一次，所以最慢下一幀就有人認領並清空。
+    /// 排在「啟動中」右邊的分頁（四個分類、手動觸發、全部）當幀就生效；
+    /// 左邊的「常用」慢一幀——按下去的感覺一樣是立刻跳。
+    /// </para>
+    /// </remarks>
+    private string? pendingTabId;
+
+    /// <summary>這個分頁這一幀要不要被強制選取。</summary>
+    /// <remarks>
+    /// 🔴 <b>認領之後一定要清掉。</b>不清的話 <see cref="ImGuiTabItemFlags.SetSelected"/> 每幀都成立，
+    /// 使用者會被黏在那一頁上、點別的分頁都跳不走，而且完全不會有錯誤訊息。
+    /// </remarks>
+    private ImGuiTabItemFlags FlagsFor(string tabId)
+    {
+        if (!string.Equals(pendingTabId, tabId, StringComparison.Ordinal))
+            return ImGuiTabItemFlags.None;
+
+        pendingTabId = null;
+        return ImGuiTabItemFlags.SetSelected;
     }
 
     /// <summary>
@@ -67,7 +97,7 @@ public sealed class MainWindow : Window
 
         var title = count > 0 ? $"常用 ({count})" : "常用";
 
-        using var tab = ImRaii.TabItem($"{title}###tab-Favorites");
+        using var tab = ImRaii.TabItem($"{title}###tab-Favorites", FlagsFor("tab-Favorites"));
         if (!tab) return;
 
         using var child = ImRaii.Child("##scroll-Favorites", Vector2.Zero, false);
@@ -93,6 +123,100 @@ public sealed class MainWindow : Window
     }
 
     /// <summary>
+    /// 「啟動中」分頁：目前所有已啟用的模組，每一列標出它平常待在哪一頁。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 📌 <b>解決的問題</b>：模組分成六個分頁之後，「我到底開了哪些東西」變成要一頁一頁翻。
+    /// 這一頁把答案聚在一起；而列上的分頁標籤是為了回答下一個問題——「那它原本在哪，我等一下去哪找」。
+    /// 標籤可以點，點了就跳到那一頁。
+    /// </para>
+    /// <para>
+    /// 🔴 <b>這是篩選不是分類</b>，與「常用」「手動觸發」同一種東西：模組照樣留在原本的分類分頁上。
+    /// </para>
+    /// <para>
+    /// ⚠️ 排序＝<b>先照分頁順序分組</b>（<see cref="ModuleCategoryInfo.DisplayOrder"/>），
+    /// 組內沿用 <c>Plugin.Modules</c> 的註冊順序（也就是「全部」分頁的順序）。
+    /// 刻意不按顯示名排序：註冊順序是有意義的（相關的模組排在一起），照名字排會把它打散。
+    /// </para>
+    /// <para>
+    /// 🔴 <b>分類不在 <see cref="ModuleCategoryInfo.DisplayOrder"/> 裡的模組不能被跳過。</b>
+    /// 那種模組在所有分類分頁上都看不到（只有「全部」找得到），正是最需要被指出來的——
+    /// 它的標籤會寫「未分類」而不是消失。
+    /// </para>
+    /// </remarks>
+    private void DrawActiveTab()
+    {
+        var count = 0;
+        foreach (var module in plugin.Modules)
+        {
+            if (module.IsEnabled) count++;
+        }
+
+        // ⚠️ 與「常用」同一個慣例：0 的時候不寫數字。「啟動中 (0)」看起來像壞掉，
+        //    「啟動中」看起來像還沒開任何東西——後者才是事實。
+        var title = count > 0 ? $"啟動中 ({count})" : "啟動中";
+
+        using var tab = ImRaii.TabItem($"{title}###tab-Active", FlagsFor("tab-Active"));
+        if (!tab) return;
+
+        using var child = ImRaii.Child("##scroll-Active", Vector2.Zero, false);
+        if (!child) return;
+
+        if (count == 0)
+        {
+            ImGui.Spacing();
+            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
+            ImGui.TextDisabled(
+                "目前沒有任何模組啟用中。\n" +
+                "所有模組預設都是關的；在別的分頁上勾起來之後，它就會出現在這一頁。\n" +
+                "每一列右邊會標出它平常待在哪一個分頁，點那個標籤就跳過去。");
+            ImGui.PopTextWrapPos();
+            return;
+        }
+
+        ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
+        ImGui.TextDisabled("目前開著的全部模組。灰色標籤＝它平常待的分頁，點一下就跳過去。");
+        ImGui.PopTextWrapPos();
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        var drawn = 0;
+
+        foreach (var category in ModuleCategoryInfo.DisplayOrder)
+        {
+            foreach (var module in plugin.Modules)
+            {
+                if (!module.IsEnabled || module.Category != category) continue;
+                DrawModuleRow(module, true);
+                drawn++;
+            }
+        }
+
+        // 🔴 收尾這一輪撿的是「分類沒被列進 DisplayOrder」的模組。
+        //    不撿的話它們會從這一頁上<b>靜默消失</b>——而那正是最該被看見的一種模組。
+        if (drawn >= count) return;
+
+        foreach (var module in plugin.Modules)
+        {
+            if (!module.IsEnabled || IsOnACategoryTab(module.Category)) continue;
+            DrawModuleRow(module, true);
+        }
+    }
+
+    /// <summary>這個分類有沒有自己的分頁（＝有沒有被列進 <see cref="ModuleCategoryInfo.DisplayOrder"/>）。</summary>
+    private static bool IsOnACategoryTab(ModuleCategory category)
+    {
+        foreach (var listed in ModuleCategoryInfo.DisplayOrder)
+        {
+            if (listed == category) return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// 「手動觸發」分頁：核心行為是「按了才動一次」的模組。
     /// </summary>
     /// <remarks>
@@ -111,7 +235,7 @@ public sealed class MainWindow : Window
             if (module.IsEnabled) enabled++;
         }
 
-        using var tab = ImRaii.TabItem($"手動觸發 ({enabled}/{total})###tab-Manual");
+        using var tab = ImRaii.TabItem($"手動觸發 ({enabled}/{total})###tab-Manual", FlagsFor("tab-Manual"));
         if (!tab) return;
 
         using var child = ImRaii.Child("##scroll-Manual", Vector2.Zero, false);
@@ -151,7 +275,7 @@ public sealed class MainWindow : Window
 
         var id = ModuleCategoryInfo.Id(category);
 
-        using var tab = ImRaii.TabItem($"{ModuleCategoryInfo.Title(category)} ({enabled}/{total})###tab-{id}");
+        using var tab = ImRaii.TabItem($"{ModuleCategoryInfo.Title(category)} ({enabled}/{total})###tab-{id}", FlagsFor($"tab-{id}"));
         if (!tab) return;
 
         // 分頁內容自己捲動，否則整條分頁列會跟著捲走。
@@ -185,7 +309,7 @@ public sealed class MainWindow : Window
             if (module.IsEnabled) enabled++;
         }
 
-        using var tab = ImRaii.TabItem($"全部 ({enabled}/{plugin.Modules.Count})###tab-All");
+        using var tab = ImRaii.TabItem($"全部 ({enabled}/{plugin.Modules.Count})###tab-All", FlagsFor("tab-All"));
         if (!tab) return;
 
         using var child = ImRaii.Child("##scroll-All", Vector2.Zero, false);
@@ -206,7 +330,12 @@ public sealed class MainWindow : Window
     /// 置頂區得在下面的清單裡把同一個模組跳過，多一條容易寫漏的規則。
     /// </para>
     /// </remarks>
-    private void DrawModuleRow(TcModule module)
+    /// <param name="module">要畫的模組。</param>
+    /// <param name="showLocation">
+    /// 列上要不要標出「這個模組平常待在哪一頁」。只有「啟動中」分頁需要——
+    /// 在分類分頁上標自己所屬的分類是廢話。
+    /// </param>
+    private void DrawModuleRow(TcModule module, bool showLocation = false)
     {
         using var id = ImRaii.PushId(module.InternalName);
 
@@ -219,6 +348,8 @@ public sealed class MainWindow : Window
 
         ImGui.SameLine();
         ImGui.TextUnformatted(module.DisplayName);
+
+        if (showLocation) DrawLocationTags(module);
 
         DrawRowNotice(module);
 
@@ -241,6 +372,95 @@ public sealed class MainWindow : Window
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
+    }
+
+    /// <summary>分頁標籤的文字色（灰，壓得比描述再低一點：它是輔助資訊不是內容）。</summary>
+    private static readonly Vector4 TagTextColor = new(0.58f, 0.58f, 0.58f, 1f);
+
+    /// <summary>標籤滑過時的底色（很淡，只是讓人知道它可以點）。</summary>
+    private static readonly Vector4 TagHoverColor = new(1f, 1f, 1f, 0.10f);
+
+    /// <summary>標籤按下去的底色。</summary>
+    private static readonly Vector4 TagActiveColor = new(1f, 1f, 1f, 0.18f);
+
+    /// <summary>
+    /// 「啟動中」分頁上那幾個灰色標籤：這個模組平常待在哪些分頁。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 📌 <b>三種標籤各回答一個問題</b>：分類標籤＝「它原本在哪一頁」；
+    /// 「手動觸發」＝「它開著也不會自己動」（這一頁全是開著的模組，那個差別正是使用者想知道的）；
+    /// 「常用」＝「它也釘在常用頁」。三者互相正交，可能同時出現。
+    /// </para>
+    /// <para>
+    /// 🔴 <b>分類不在 <see cref="ModuleCategoryInfo.DisplayOrder"/> 裡時標「未分類」，不是省略。</b>
+    /// 那種模組在任何分類分頁上都找不到——省略標籤會讓它看起來跟別人一樣正常。
+    /// 「未分類」沒有頁可跳，所以畫成純文字不是按鈕（按鈕按下去沒反應更糟）。
+    /// </para>
+    /// <para>
+    /// ⚠️ 這裡的按鈕 id 都在 <c>DrawModuleRow</c> 推的模組 id 底下，同一列不會有兩個同名標籤。
+    /// </para>
+    /// </remarks>
+    private void DrawLocationTags(TcModule module)
+    {
+        if (IsOnACategoryTab(module.Category))
+        {
+            var id = ModuleCategoryInfo.Id(module.Category);
+            DrawTabTag(
+                ModuleCategoryInfo.Title(module.Category),
+                $"tab-{id}",
+                $"這個模組平常在「{ModuleCategoryInfo.Title(module.Category)}」分頁上。點一下跳過去。");
+        }
+        else
+        {
+            // 🔴 「不知道」要在列上看得見：這個模組的分類沒有對應的分頁，
+            //    所以除了「全部」與這一頁以外哪裡都找不到它。
+            ImGui.SameLine();
+            ImGui.TextColored(TagTextColor, "［未分類］");
+
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip(
+                    "這個模組的分類沒有對應的分頁（沒被列進 ModuleCategoryInfo.DisplayOrder）。\n"
+                    + "也就是說，除了這一頁與「全部」以外，其他分頁上都找不到它。");
+            }
+        }
+
+        if (module.IsManualTrigger)
+        {
+            DrawTabTag(
+                "手動觸發",
+                "tab-Manual",
+                "開著也不會自己動作，要按下按鈕才會執行一次。\n也列在「手動觸發」分頁上，點一下跳過去。");
+        }
+
+        if (plugin.IsFavorite(module))
+            DrawTabTag("常用", "tab-Favorites", "已釘選，也列在「常用」分頁上。點一下跳過去。");
+    }
+
+    /// <summary>畫一個可以點的灰色小標籤；點下去就要求跳到 <paramref name="targetTabId"/> 那一頁。</summary>
+    /// <remarks>
+    /// ⚠️ <see cref="ImGuiCol.Button"/> 推成全透明是為了讓它看起來像標籤而不是按鈕——
+    /// 但滑過與按下的底色<b>要留著</b>，不然使用者不會知道它能點。
+    /// </remarks>
+    private void DrawTabTag(string label, string targetTabId, string tooltip)
+    {
+        ImGui.SameLine();
+
+        bool clicked;
+        using (ImRaii.PushColor(ImGuiCol.Button, Vector4.Zero))
+        using (ImRaii.PushColor(ImGuiCol.ButtonHovered, TagHoverColor))
+        using (ImRaii.PushColor(ImGuiCol.ButtonActive, TagActiveColor))
+        using (ImRaii.PushColor(ImGuiCol.Text, TagTextColor))
+        {
+            clicked = ImGui.SmallButton($"［{label}］###tag-{targetTabId}");
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(tooltip);
+
+        if (clicked)
+            pendingTabId = targetTabId;
     }
 
     /// <summary>模組設定畫面繪製失敗時，那一列顯示的紅字。</summary>
