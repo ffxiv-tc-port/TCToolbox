@@ -35,6 +35,28 @@ namespace TCToolbox.Core;
 /// </remarks>
 internal static class AutoRetainerIpc
 {
+    /// <summary>AutoRetainer 多角色模式（MultiMode）的開關狀態。</summary>
+    /// <remarks>
+    /// 🔴 <b><see cref="Unknown"/> 是零值。</b>「問不到」與「關著」是兩件事：
+    /// 多角色模式開著代表 AutoRetainer 隨時可能把角色登出換到下一個人，
+    /// 而那會把別的外掛正在跑的長流程打斷。把「問不到」畫成「關著」，
+    /// 等於在最需要提醒的那一刻保持沉默。
+    /// </remarks>
+    internal enum MultiModeState
+    {
+        /// <summary>AutoRetainer 在，但兩支多角色模式端點都問不到（或還沒問過）。</summary>
+        Unknown = 0,
+
+        /// <summary>AutoRetainer 沒安裝／沒載入——沒有衝突可談。</summary>
+        NotInstalled,
+
+        /// <summary>問到了：多角色模式關著。</summary>
+        Off,
+
+        /// <summary>問到了：多角色模式開著。</summary>
+        On,
+    }
+
     // 建立 subscriber 本身是零成本的純本地物件；真正的探測發生在 InvokeFunc()。
     private static readonly Lazy<ICallGateSubscriber<List<ulong>>> RegisteredCids =
         new(() => Svc.PluginInterface.GetIpcSubscriber<List<ulong>>("AutoRetainer.GetRegisteredCIDs"));
@@ -297,6 +319,105 @@ internal static class AutoRetainerIpc
     /// </remarks>
     private static bool IsIpcFailure(Exception ex) =>
         ex is IpcError or TargetInvocationException or InvalidCastException;
+
+    // ── 多角色模式（MultiMode）狀態 ─────────────────────────────────────────
+
+    // 🔴 端點名逐字對齊提供端。兩支讀的是<b>同一個</b> MultiMode.Enabled 欄位：
+    //    ① AutoRetainer/Modules/EzIPCManagers/IPC_PluginState.cs:88
+    //       [EzIPC] public bool GetMultiModeStatus() => MultiMode.Enabled;
+    //       該類別的建構子是 EzIPC.Init(this, $"{InternalName}.PluginState")
+    //       ⇒ 端點名前綴固定為 "AutoRetainer.PluginState"。
+    //    ② AutoRetainer/Modules/IPC.cs:48（舊的 GetIpcProvider 版本）
+    //       "AutoRetainer.GetMultiModeEnabled" → GetMultiModeEnabled() => MultiMode.Enabled。
+    // 🔑 兩支都問，是因為「端點被改名」與「同名改型別」是對方隨時可能做的事，
+    //    而只問一支的話，對方整理端點的那一天我們會<b>靜默</b>退成「不知道」。
+    // 📌 兩支在提供端都是直接讀一個 static 欄位，<b>沒有</b>經過 IpcFrameworkGate，
+    //    所以不會有「從繪製路徑呼叫、在主執行緒上等一個要靠主執行緒才跑得到的 tick」那個風險。
+
+    private static readonly Lazy<ICallGateSubscriber<bool>> MultiModeStatusGate =
+        new(() => Svc.PluginInterface.GetIpcSubscriber<bool>("AutoRetainer.PluginState.GetMultiModeStatus"));
+
+    private static readonly Lazy<ICallGateSubscriber<bool>> MultiModeEnabledGate =
+        new(() => Svc.PluginInterface.GetIpcSubscriber<bool>("AutoRetainer.GetMultiModeEnabled"));
+
+    /// <summary>
+    /// AutoRetainer 的多角色模式現在開著嗎。
+    /// </summary>
+    /// <param name="detail">
+    /// 一句話說明這個答案是怎麼來的（給 tooltip 用）。<b>永遠不是 <see langword="null"/></b>。
+    /// </param>
+    /// <remarks>
+    /// 🔑 <b>回三態而不是 <see cref="bool"/></b>：呼叫端必須分得出
+    /// 「沒裝 AutoRetainer」（沒有衝突可談，不該顯示任何東西）與
+    /// 「AutoRetainer 在但問不到」（有可能正開著，只是我們不知道）。
+    /// 把兩者併成同一個 <see langword="false"/>，後者就會被畫成「一切正常」。
+    /// <para>
+    /// ⚠️ 讀的是 <c>MultiMode.Enabled</c>（使用者的開關），不是 <c>MultiMode.Active</c>
+    /// （那是 <c>Enabled &amp;&amp; !IPC.Suppressed</c>）。這裡要的就是前者：
+    /// 被別人暫時壓著的多角色模式，壓制一結束照樣會去換角色。
+    /// </para>
+    /// <para>
+    /// ⚠️ 只在框架執行緒上呼叫（IPC 的實作跑在<b>呼叫端</b>的執行緒上）。
+    /// </para>
+    /// </remarks>
+    public static MultiModeState GetMultiModeState(out string detail)
+    {
+        if (TryQueryBool(MultiModeStatusGate, out var enabled, out var newError))
+        {
+            detail = $"AutoRetainer.PluginState.GetMultiModeStatus 回 {enabled}";
+            return enabled ? MultiModeState.On : MultiModeState.Off;
+        }
+
+        if (TryQueryBool(MultiModeEnabledGate, out enabled, out var oldError))
+        {
+            detail =
+                $"AutoRetainer.GetMultiModeEnabled 回 {enabled}"
+                + $"（新端點 AutoRetainer.PluginState.GetMultiModeStatus 打不通：{newError}）";
+            return enabled ? MultiModeState.On : MultiModeState.Off;
+        }
+
+        // 🔑 兩支都打不通時，再問一支<b>完全無關</b>的端點，才分得出
+        //    「AutoRetainer 根本不在」與「它在、只是這兩支端點沒了」。
+        try
+        {
+            IsBusyGate.Value.InvokeFunc();
+        }
+        catch (IpcError)
+        {
+            // 連最基本的狀態端點都沒註冊 ⇒ 沒安裝／沒載入。
+            detail = "沒有偵測到 AutoRetainer（未安裝或未載入）。";
+            return MultiModeState.NotInstalled;
+        }
+        catch (Exception ex) when (IsIpcFailure(ex))
+        {
+            // 端點註冊著、只是提供端自己擲了例外 ⇒ 它<b>在</b>，所以不是「沒裝」。
+            Svc.Log.Information(
+                $"[AutoRetainerIpc] 探測 AutoRetainer 是否在時遇到 {ex.GetType().Name}：{ex.Message}");
+        }
+
+        detail =
+            "AutoRetainer 在，但兩支多角色模式端點都打不通——多半是對方改了端點名或回傳型別。\n"
+            + $"AutoRetainer.PluginState.GetMultiModeStatus：{newError}\n"
+            + $"AutoRetainer.GetMultiModeEnabled：{oldError}";
+        return MultiModeState.Unknown;
+    }
+
+    /// <summary>問一個無參數的 bool 端點。回 <see langword="false"/>＝問不到（不是「值是 false」）。</summary>
+    private static bool TryQueryBool(Lazy<ICallGateSubscriber<bool>> gate, out bool value, out string error)
+    {
+        try
+        {
+            value = gate.Value.InvokeFunc();
+            error = string.Empty;
+            return true;
+        }
+        catch (Exception ex) when (IsIpcFailure(ex))
+        {
+            value = false;
+            error = ex.GetType().Name;
+            return false;
+        }
+    }
 
     /// <summary>
     /// AutoRetainer 有沒有提供「指定道具取回」這組端點，而且版本是本外掛認得的。
