@@ -76,6 +76,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new FastRetainerStore());
         Modules.Add(new RetainerBatchRename());
         Modules.Add(new RetainerBatchRetrieve());
+        Modules.Add(new CraftShoppingList());
         Modules.Add(new TriadCardRecycle());
 
         // ② 戰鬥 · 小隊

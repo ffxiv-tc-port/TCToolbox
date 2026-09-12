@@ -59,6 +59,25 @@ internal static class AllaganToolsIpc
     private static readonly Lazy<ICallGateSubscriber<string, Dictionary<uint, uint>>> FilterItemsGate =
         new(() => Svc.PluginInterface.GetIpcSubscriber<string, Dictionary<uint, uint>>("AllaganTools.GetFilterItems"));
 
+    // InventoryTools/IPC/IPCService.cs:522 GetIpcProvider<Dictionary<string,string>>("AllaganTools.GetCraftLists")
+    private static readonly Lazy<ICallGateSubscriber<Dictionary<string, string>>> CraftListsGate =
+        new(() => Svc.PluginInterface.GetIpcSubscriber<Dictionary<string, string>>("AllaganTools.GetCraftLists"));
+
+    // InventoryTools/IPC/IPCService.cs:503
+    //   GetIpcProvider<string, Dictionary<uint, uint>>("AllaganTools.GetCraftItems")
+    private static readonly Lazy<ICallGateSubscriber<string, Dictionary<uint, uint>>> CraftItemsGate =
+        new(() => Svc.PluginInterface.GetIpcSubscriber<string, Dictionary<uint, uint>>("AllaganTools.GetCraftItems"));
+
+    // InventoryTools/IPC/IPCService.cs:512
+    //   GetIpcProvider<bool, HashSet<ulong>>("AllaganTools.GetCharactersOwnedByActive")
+    private static readonly Lazy<ICallGateSubscriber<bool, HashSet<ulong>>> OwnedCharactersGate =
+        new(() => Svc.PluginInterface.GetIpcSubscriber<bool, HashSet<ulong>>(
+            "AllaganTools.GetCharactersOwnedByActive"));
+
+    // InventoryTools/IPC/IPCService.cs:458 GetIpcProvider<uint, ulong, int, uint>("AllaganTools.ItemCount")
+    private static readonly Lazy<ICallGateSubscriber<uint, ulong, int, uint>> ItemCountGate =
+        new(() => Svc.PluginInterface.GetIpcSubscriber<uint, ulong, int, uint>("AllaganTools.ItemCount"));
+
     /// <summary>這一類例外全部代表「這條 IPC 現在不能用」，而不是我們自己算錯。</summary>
     private static bool IsIpcFailure(Exception ex) =>
         ex is IpcError or TargetInvocationException or InvalidCastException;
@@ -154,6 +173,185 @@ internal static class AllaganToolsIpc
             Svc.Log.Information(
                 $"[AllaganToolsIpc] AllaganTools.GetFilterItems(\"{keyOrName}\") 呼叫失敗（{ex.GetType().Name}）：{ex.Message}");
             reason = $"AllaganTools 沒有回答清單內容（{ex.GetType().Name}）。";
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 使用者的<b>製作清單</b>：鍵是清單 key，值是顯示名稱。
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ 對方的實作是 <c>Lists.Where(c =&gt; c.FilterType == FilterType.CraftFilter
+    /// &amp;&amp; !c.CraftListDefault)</c>——<b>那個「預設製作清單」被刻意排除了</b>。
+    /// 使用者只用過那張預設清單的話，這裡會回一個空字典（而且是<b>合法</b>結果），
+    /// 所以呼叫端要留一個「直接輸入清單名稱／key」的欄位當後路：
+    /// <see cref="TryGetCraftOutputs"/> 走的是 <c>GetListByKeyOrName</c>，<b>鍵或名稱都收</b>。
+    /// <para>
+    /// 🔴 「空」與「問不到」必須分開處理：前者是「你還沒建製作清單」，後者是
+    /// 「AllaganTools 不在」。畫成同一句話的話，使用者會去建一張他根本不需要的清單。
+    /// </para>
+    /// </remarks>
+    public static bool TryGetCraftLists(out Dictionary<string, string> lists, out string reason)
+    {
+        lists = [];
+
+        if (!IsReady(out reason)) return false;
+
+        try
+        {
+            lists = CraftListsGate.Value.InvokeFunc() ?? [];
+            reason = string.Empty;
+            return true;
+        }
+        catch (Exception ex) when (IsIpcFailure(ex))
+        {
+            Svc.Log.Information(
+                $"[AllaganToolsIpc] AllaganTools.GetCraftLists 呼叫失敗（{ex.GetType().Name}）：{ex.Message}");
+            reason = $"AllaganTools 沒有回答製作清單查詢（{ex.GetType().Name}）。";
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 某個製作清單要做的<b>成品</b>：道具編號 → 要做幾個。
+    /// </summary>
+    /// <remarks>
+    /// 🔴🔴 <b>這支回的是成品，不是材料。</b>對方的 <c>GetCraftItems</c> 實作只收
+    /// <c>craftItem.IsOutputItem</c> 為真的那幾筆（<c>InventoryTools/IPC/IPCService.cs:161</c>），
+    /// 也就是「清單最上層那幾個要做的東西」。<b>材料要自己從 <c>Recipe</c> 表展開</b>
+    /// （見 <see cref="RecipeMaterials"/>）——沒有任何 IPC 端點會給你材料清單，
+    /// Artisan 也沒有「清單裡有什麼」的端點。
+    /// <para>
+    /// 🔴 <b>刻意不用 <c>AllaganTools.GetRetrievalItems</c>。</b>那支的第一件事是
+    /// <c>GetActiveCraftList()</c>——它回的是「目前<b>作用中</b>的製作清單要從僱員取回什麼」，
+    /// 沒有作用中的清單時回空字典，與「清單是空的」分不出來；而且它算的是<b>取回量</b>
+    /// 不是需求量。我們要的是「使用者挑的那一張清單」。
+    /// </para>
+    /// <para>
+    /// ⚠️ 清單型別不是製作清單時對方回<b>空字典</b>（不是例外）。這裡照樣回
+    /// <see langword="true"/>＋空字典——呼叫端顯示「這張清單沒有要做的東西」，
+    /// 而不是報錯。
+    /// </para>
+    /// </remarks>
+    /// <param name="keyOrName">清單 key 或清單名稱（對方走 <c>GetListByKeyOrName</c>，兩者都收）。</param>
+    public static bool TryGetCraftOutputs(
+        string keyOrName, out Dictionary<uint, uint> outputs, out string reason)
+    {
+        outputs = [];
+
+        if (string.IsNullOrWhiteSpace(keyOrName))
+        {
+            reason = "沒有指定製作清單。";
+            return false;
+        }
+
+        if (!IsReady(out reason)) return false;
+
+        try
+        {
+            outputs = CraftItemsGate.Value.InvokeFunc(keyOrName) ?? [];
+            reason = string.Empty;
+            return true;
+        }
+        catch (Exception ex) when (IsIpcFailure(ex))
+        {
+            Svc.Log.Information(
+                $"[AllaganToolsIpc] AllaganTools.GetCraftItems(\"{keyOrName}\") 呼叫失敗"
+                + $"（{ex.GetType().Name}）：{ex.Message}");
+            reason = $"AllaganTools 沒有回答製作清單內容（{ex.GetType().Name}）。";
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 目前角色名下所有「有道具欄的東西」的擁有者編號：角色本人、他的僱員、部隊、宅邸。
+    /// </summary>
+    /// <remarks>
+    /// 📌 對方的實作是「列舉它記得的所有道具欄擁有者，留下
+    /// <c>BelongsToActiveCharacter</c> 為真的」（<c>includeOwner: true</c> 時含角色自己）。
+    /// 所以這份清單的長度＝角色本人 ＋ 僱員數 ＋ 部隊／宅邸（若有記錄）。
+    /// <para>
+    /// ⚠️ <b>它是照 AllaganTools 的記錄回答的，不是照「現在讀得到的」。</b>
+    /// 沒有被 AllaganTools 掃過的僱員不會在裡面 —— 那是「持有量算少了」的方向，
+    /// 所以呼叫端要把這個數字顯示出來，讓使用者自己判斷合不合理。
+    /// </para>
+    /// </remarks>
+    public static bool TryGetOwnerIds(out List<ulong> ownerIds, out string reason)
+    {
+        ownerIds = [];
+
+        if (!IsReady(out reason)) return false;
+
+        try
+        {
+            var ids = OwnedCharactersGate.Value.InvokeFunc(true);
+            if (ids != null)
+            {
+                foreach (var id in ids)
+                {
+                    if (id != 0) ownerIds.Add(id);
+                }
+            }
+
+            reason = string.Empty;
+            return true;
+        }
+        catch (Exception ex) when (IsIpcFailure(ex))
+        {
+            Svc.Log.Information(
+                $"[AllaganToolsIpc] AllaganTools.GetCharactersOwnedByActive 呼叫失敗"
+                + $"（{ex.GetType().Name}）：{ex.Message}");
+            reason = $"AllaganTools 沒有回答角色／僱員清單（{ex.GetType().Name}）。";
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 某個擁有者身上這件道具的<b>總數（HQ 與 NQ 合計）</b>。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 🔴 <b>這支回的是 HQ＋NQ 合計。</b>對方的 <c>ItemCount</c> 完全不看
+    /// <c>InventoryItem.ItemFlags</c>（只有 <c>ItemCountHQ</c> 才篩 <c>HighQuality</c>），
+    /// 所以它等於「不分品質的持有量」。製作材料的缺口就是要這個——HQ 材料一樣做得出東西。
+    /// </para>
+    /// <para>
+    /// 📌 <paramref name="ownerId"/> 對應對方 <c>InventoryItem.RetainerId</c> 那一欄，
+    /// 而那一欄存的是<b>這個道具欄的擁有者</b>（角色本人也算），不是「僱員」而已。
+    /// 所以角色自己的 id 傳進去就會拿到他背包＋武具庫＋鞍袋等等的合計。
+    /// </para>
+    /// <para>
+    /// 🔴 <b>這支是重的，不要在 Draw 路徑上或每幀呼叫。</b>對方的實作是對
+    /// <c>AllItems</c>（所有已知道具欄的每一格）做一次 LINQ 全掃，而這個模組一次重新整理
+    /// 要問「材料數 × 擁有者數」次。呼叫端必須把它切開分幾幀做。
+    /// </para>
+    /// <para>
+    /// ⚠️ 第三個參數傳 <c>-1</c>＝<b>不限道具欄類型</b>（對方的實作是
+    /// <c>inventoryType == -1 || ...</c>）。傳 0 的話會變成「只算第 0 號道具欄」，
+    /// 而 0 是一個有效的道具欄編號 —— 失敗形式是靜默地只算到背包第一頁。
+    /// </para>
+    /// </remarks>
+    /// <returns><see langword="false"/>＝這條 IPC 現在不能用（<paramref name="count"/> 不可信）。</returns>
+    public static bool TryGetItemCount(uint itemId, ulong ownerId, out uint count)
+    {
+        count = 0;
+
+        if (itemId == 0) return false;
+
+        try
+        {
+            count = ItemCountGate.Value.InvokeFunc(itemId, ownerId, -1);
+            return true;
+        }
+        catch (Exception ex) when (IsIpcFailure(ex))
+        {
+            // 節流：一次重新整理會呼叫幾百次，失敗時不要寫幾百行記錄。
+            if (Throttle.Pass("AllaganToolsIpc-ItemCount-Failed", 60_000))
+            {
+                Svc.Log.Information(
+                    $"[AllaganToolsIpc] AllaganTools.ItemCount 呼叫失敗（{ex.GetType().Name}）：{ex.Message}");
+            }
+
             return false;
         }
     }
