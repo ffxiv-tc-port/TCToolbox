@@ -7,20 +7,12 @@ namespace TCToolbox.Core;
 
 /// <summary>
 /// 投影台（Glamour Dresser／<c>MirageManager</c> 的 PrismBox）共用存取層。
-///
 /// 🔴 <b>不跨幀保存任何原生指標。</b><see cref="Snapshot"/> 回傳的是**受管理的複本**，
 /// 每一次要動作時都重新取 <c>MirageManager.Instance()</c>。
-///
 /// 🔴 <b>CS 的 <c>MirageManager.Instance()</c> 在特徵碼解析失敗時是「擲例外」而不是「回 null」</b>
 /// （InteropGenerator 產生的碼會呼叫 <c>ThrowHelper.ThrowNullAddress</c>），
 /// <c>RestorePrismBoxItem</c> 也一樣。所以這裡一律先看 <c>Addresses.*.Value</c> 是不是 0，
 /// 而不是直接呼叫再期待它回 null —— 見 <see cref="IsAvailable"/>。
-///
-/// 📌 兩條特徵碼都對台服 7.20 <c>ffxiv_dx11.exe</c> 做過離線唯一性驗證
-/// （工具 <c>~/.claude/tools/sigscan/verify_cs_sigs.py</c>，校準閘門全過）：
-///   <c>MirageManager.Instance</c>        StaticAddress 命中 1 次 → 靜態指標 0x14292B520（.data）
-///   <c>RestorePrismBoxItem</c>           MemberFunction 命中 1 次 → 函式 0x14084FE10
-/// ⚠️ 這只證明「這一版解析得到」，不證明語意；語意仍以 CS 的宣告為準。
 /// </summary>
 public static unsafe class PrismBox
 {

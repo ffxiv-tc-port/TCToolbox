@@ -15,28 +15,8 @@ namespace TCToolbox.Core;
 /// <b>依序含有全部片段</b>才算命中。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 🔴 <b>為什麼不能整句完全比對</b>：確認框的句子普遍帶 placeholder（隊長名、副本名、道具名、
-/// 數量…），實際顯示的文字每次都不一樣，逐字比對永遠不會命中。
-/// </para>
-/// <para>
-/// 🔴 <b>為什麼不能「任何一段命中就算」</b>：ECommons <c>GenericHelpers.ContainsPartOf</c> 是
-/// any-match，把 needle 拆成片段後<b>任何一段</b>被含到就回 true。Addon 表的句子拆完就是好幾段
-/// 短文字，於是「拿某一列當樣板比對當下對話框」會在<b>別的 Addon 列</b>上誤中，而失敗形式是
-/// 靜默的（照樣自動按「是」，只是按在別的對話框上）。
-/// 實測（台服 7.20，全表 14850 列）：小隊邀請那句 <c>Addon#120</c> 用 any-match 會誤中
-/// 「新人頻道」與兩句「同好會邀請」；改成本類別的 all-match 依序之後只剩本句。
-/// </para>
-/// <para>
-/// 🔑 <b>比對基準</b>：兩邊都先<b>去掉所有空白字元</b>再比。原因是換行在 SeString 裡是 macro
-/// 而不是文字，遊戲把它塞進節點時渲染成什麼（真的換行／整個消失）離線證明不了 ——
-/// 去掉空白就讓這個不確定性完全不影響判定。中日文句子去空白不會損失鑑別力：
-/// 離線實測本檔目前用到的六個樣板，每一個在全表 14850 列裡都只命中它自己那一列。
-/// </para>
-/// <para>
 /// ⚠️ <b>一律 fail-closed</b>：樣板解不出來（台服沒有這列／欄位是空的）就回
 /// <see langword="false"/>，也就是「不動作」。寧可讓自動確認失效，也不要按在別人的對話框上。
-/// </para>
 /// </remarks>
 internal static unsafe class AddonPrompt
 {
@@ -136,8 +116,6 @@ internal static unsafe class AddonPrompt
     /// </summary>
     /// <remarks>
     /// 🔴 用 <c>MemoryHelper.ReadSeString(...).TextValue</c> 而不是 <c>Utf8String.ToString()</c>：
-    /// 前者是「拿掉 payload 之後的純文字」，與 <see cref="GetFragments"/> 那一側同一個基準
-    /// （做法同 AutoRequestItemSubmit）；後者會把 macro 的控制位元組一起解出來，
     /// 那些位元組會把片段從中間切斷，比對就靜默失效。
     /// </remarks>
     public static string ReadSelectYesnoText(AtkUnitBase* addon)
@@ -154,14 +132,9 @@ internal static unsafe class AddonPrompt
     /// 這串提示文字看起來是不是「讀到一半」的（含 U+FFFD 替換字元）。
     /// </summary>
     /// <remarks>
-    /// 🔴 2026-08-31 崩潰（<c>crash-20260831205734</c>）前的實機 log 裡，最後幾行讀到的
-    /// 確認框文字帶著替換字元——那是<b>視窗的記憶體正在變動</b>（多半是正在關閉）時，
-    /// UTF-8 解碼撞到半個字元的徵兆。這一幀讀到這種東西就<b>什麼都不要碰</b>，下一幀重讀即可。
-    /// <para>
     /// ⚠️ 這是<b>額外</b>的一道，不是主防線——主防線是
     /// <see cref="AddonPressGuard.TryBeginPress"/>（按過就不再按）。
     /// 只有「窗的記憶體剛好正在被改」的那幾幀讀得到替換字元，讀不到不代表安全。
-    /// </para>
     /// </remarks>
     public static bool LooksMidUpdate(string prompt) =>
         !string.IsNullOrEmpty(prompt) && prompt.Contains('�');

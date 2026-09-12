@@ -9,23 +9,9 @@ namespace TCToolbox.Core;
 /// 熱鍵：偵測「主鍵＋修飾鍵在這一幀剛被按下」，以及設定畫面上的挑鍵器。
 /// </summary>
 /// <remarks>
-/// 📌 <b>本檔之前沒有共用的熱鍵設施</b>——既有的模組（<c>AutoInventoryTransfer</c>、
-/// <c>AutoJoinPartyFinder</c>）用的是「按住修飾鍵再點滑鼠」，那是<b>按住</b>不是<b>按下</b>，
-/// 沒有邊緣偵測也沒有主鍵。要一顆真正的熱鍵就得有這一份。
-/// <para>
 /// 🔴 <c>IKeyState</c> 的索引子對<b>無效的 vkCode 會擲 <c>ArgumentException</c></b>，
 /// 而它跑在 <c>Framework.Update</c> 上——擲出去就是每幀一次例外。
 /// 所有讀取一律先過 <see cref="IsUsable"/>（內含 <c>IsVirtualKeyValid</c>）。
-/// </para>
-/// <para>
-/// 📌 <c>IKeyState</c> 包的是<b>遊戲自己的</b>按鍵狀態緩衝區：聊天框有焦點時遊戲不會把按鍵
-/// 寫進去（遊戲自己的快捷鍵也不會觸發），所以「打字時誤觸熱鍵」這件事不需要額外守衛，
-/// 行為與遊戲內建快捷鍵一致。
-/// </para>
-/// <para>
-/// ⚠️ 修飾鍵採<b>精確比對</b>：沒有勾的修飾鍵必須是放開的。
-/// 只比對「有勾的有按」的話，綁 <c>X</c> 的熱鍵會在使用者按 <c>Ctrl+X</c> 時一起觸發。
-/// </para>
 /// </remarks>
 public sealed class HotkeyWatcher
 {

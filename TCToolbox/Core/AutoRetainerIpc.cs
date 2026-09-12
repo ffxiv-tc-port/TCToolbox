@@ -10,28 +10,9 @@ namespace TCToolbox.Core;
 /// 對 AutoRetainer 的唯讀／手動 IPC 包裝。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 🔴 <b>只呼叫「查詢」與「使用者明確要求的切換」兩類端點。</b>
 /// 絕不註冊 AutoRetainer 的 post-process 事件（<c>OnCharacterPostprocessStep</c> 那一類）——
 /// 那會把本外掛接進「僱員作業完成→自動接手下一件事」的自動化鏈裡，是艦隊紅線。
-/// </para>
-/// <para>
-/// 📌 <b>為什麼用反射讀角色資料</b>：<c>AutoRetainer.GetOfflineCharacterData</c> 回傳的是
-/// AutoRetainer 自己的 <c>OfflineCharacterData</c> 型別。要在編譯期用它就得把
-/// <c>AutoRetainerAPI</c>（連帶 ECommons）拉進來當相依——而本外掛是<b>刻意零相依</b>的。
-/// 所以這裡把回傳值當成 <see cref="object"/> 收下，再用反射取 <c>Name</c>／<c>World</c>。
-/// </para>
-/// <para>
-/// ⚠️ 反射是會隨對方改版而失效的，但<b>失效方向是安全的</b>：
-/// 取不到名字 → 我們算不出目標 → 根本不會呼叫 <c>Relog</c>。
-/// 而且就算取到的是錯的字串，AutoRetainer 端的 <c>Relog</c> 會拿它跟自己的角色清單比對，
-/// 對不上就回 <c>false</c> 什麼都不做（見 AutoRetainer <c>IPC_PluginState.Relog</c>）。
-/// 兩層都是 fail-closed，不存在「切到錯的角色」這個結果。
-/// </para>
-/// <para>
-/// ⚠️ <c>OfflineCharacterData</c> 的 <c>Name</c>／<c>World</c> 是<b>欄位不是屬性</b>，
-/// 所以反射兩種都要找——只找屬性會得到「一直取不到」而且完全不報錯。
-/// </para>
 /// </remarks>
 internal static class AutoRetainerIpc
 {
@@ -97,15 +78,6 @@ internal static class AutoRetainerIpc
     /// <summary>
     /// 一次問出「AutoRetainer 在不在」與「它忙不忙」。
     /// </summary>
-    /// <remarks>
-    /// 🔑 <see cref="IsAvailable"/> 與 <see cref="IsBusy"/> 各自都會打一次 IPC，
-    /// 而它們探的是<b>同一個端點</b>——要輪詢的呼叫端用這一支就只打一次。
-    /// <para>
-    /// ⚠️ 回傳 <see langword="false"/> 有兩種意思都合法：AutoRetainer 沒裝、或它沒開這個 IPC。
-    /// 兩種情況下 <paramref name="busy"/> 都是 <see langword="false"/>，
-    /// 呼叫端該把它當成「不知道，所以不擋」而不是「確定閒置」。
-    /// </para>
-    /// </remarks>
     /// <param name="busy">AutoRetainer 是否正在忙；IPC 打不通時為 <see langword="false"/>。</param>
     /// <returns>IPC 打得通（＝AutoRetainer 已安裝並載入）就回 <see langword="true"/>。</returns>
     public static bool TryGetIsBusy(out bool busy)
@@ -241,10 +213,6 @@ internal static class AutoRetainerIpc
     /// <param name="charaNameWithWorld">「名稱＠伺服器」，必須與 AutoRetainer 自己的紀錄完全相符。</param>
     /// <param name="accepted">AutoRetainer 是否接受了這次請求。</param>
     /// <returns>IPC 呼叫本身是否成功（false＝AutoRetainer 未安裝／未載入）。</returns>
-    /// <remarks>
-    /// 📌 對方會拿這個字串去比對自己的角色清單，對不上就回 <c>false</c> 且不做任何事——
-    /// 所以這裡不需要（也無法）自己驗證名稱正確性。
-    /// </remarks>
     public static bool TryRelog(string charaNameWithWorld, out bool accepted)
     {
         try
@@ -302,33 +270,14 @@ internal static class AutoRetainerIpc
     /// 這一類例外全部代表「這條 IPC 現在不能用」，而不是我們自己算錯。
     /// </summary>
     /// <remarks>
-    /// 🔴 <see cref="TargetInvocationException"/> 是<b>必須</b>攔的那一個，而且
-    /// <see cref="IpcError"/> 攔不到它：Dalamud 的 <c>CallGateChannel.InvokeFunc</c>
-    /// 是用 <c>Func.DynamicInvoke</c> 呼叫提供端，所以<b>提供端自己實作裡擲出來的</b>
-    /// 東西一律被包成 <see cref="TargetInvocationException"/>。
-    /// <para>
-    /// ⚠️ 「同步端點才是這個形狀」——提供端若是 <c>async</c>，例外會進 faulted Task、
-    /// <c>await</c> 時擲的是原始型別。這裡四支端點的提供端都是同步的
-    /// （AutoRetainer 的 <c>IpcFrameworkGate.Run</c> 是同步等待並用
-    /// <c>ExceptionDispatchInfo</c> 原樣重擲），所以只需要攔這一個。
-    /// </para>
-    /// <para>
     /// 🔴 不裸 <c>catch (Exception)</c>：那會把本外掛自己的程式錯誤一起吞掉，
     /// 表現成「AutoRetainer 怪怪的」而不是一則堆疊。
-    /// </para>
     /// </remarks>
     private static bool IsIpcFailure(Exception ex) =>
         ex is IpcError or TargetInvocationException or InvalidCastException;
 
     // ── 多角色模式（MultiMode）狀態 ─────────────────────────────────────────
 
-    // 🔴 端點名逐字對齊提供端。兩支讀的是<b>同一個</b> MultiMode.Enabled 欄位：
-    //    ① AutoRetainer/Modules/EzIPCManagers/IPC_PluginState.cs:88
-    //       [EzIPC] public bool GetMultiModeStatus() => MultiMode.Enabled;
-    //       該類別的建構子是 EzIPC.Init(this, $"{InternalName}.PluginState")
-    //       ⇒ 端點名前綴固定為 "AutoRetainer.PluginState"。
-    //    ② AutoRetainer/Modules/IPC.cs:48（舊的 GetIpcProvider 版本）
-    //       "AutoRetainer.GetMultiModeEnabled" → GetMultiModeEnabled() => MultiMode.Enabled。
     // 🔑 兩支都問，是因為「端點被改名」與「同名改型別」是對方隨時可能做的事，
     //    而只問一支的話，對方整理端點的那一天我們會<b>靜默</b>退成「不知道」。
     // 📌 兩支在提供端都是直接讀一個 static 欄位，<b>沒有</b>經過 IpcFrameworkGate，
@@ -347,18 +296,7 @@ internal static class AutoRetainerIpc
     /// 一句話說明這個答案是怎麼來的（給 tooltip 用）。<b>永遠不是 <see langword="null"/></b>。
     /// </param>
     /// <remarks>
-    /// 🔑 <b>回三態而不是 <see cref="bool"/></b>：呼叫端必須分得出
-    /// 「沒裝 AutoRetainer」（沒有衝突可談，不該顯示任何東西）與
-    /// 「AutoRetainer 在但問不到」（有可能正開著，只是我們不知道）。
-    /// 把兩者併成同一個 <see langword="false"/>，後者就會被畫成「一切正常」。
-    /// <para>
-    /// ⚠️ 讀的是 <c>MultiMode.Enabled</c>（使用者的開關），不是 <c>MultiMode.Active</c>
-    /// （那是 <c>Enabled &amp;&amp; !IPC.Suppressed</c>）。這裡要的就是前者：
-    /// 被別人暫時壓著的多角色模式，壓制一結束照樣會去換角色。
-    /// </para>
-    /// <para>
     /// ⚠️ 只在框架執行緒上呼叫（IPC 的實作跑在<b>呼叫端</b>的執行緒上）。
-    /// </para>
     /// </remarks>
     public static MultiModeState GetMultiModeState(out string detail)
     {

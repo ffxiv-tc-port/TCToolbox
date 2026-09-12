@@ -9,45 +9,11 @@ namespace TCToolbox.Core;
 /// IPC 端點的「遊戲主執行緒閘門」。
 /// </summary>
 /// <remarks>
-/// 🔴🔴 <b>為什麼需要這一層</b>：Dalamud 的 CallGate 是<b>直接方法呼叫</b>，提供端的碼跑在
-/// <b>呼叫端的執行緒</b>上。別的外掛從自己的背景工作、<c>Task.Run</c>、或任何非 framework
-/// 執行緒打過來時，本外掛這一側就會在那條執行緒上做兩件危險的事：
-/// <list type="number">
-/// <item><b>讀遊戲的原生記憶體</b>——<c>Svc.Objects</c>／<c>Svc.Targets.Target</c>／
-/// <c>HousingManager.Instance()-&gt;</c>／<c>InventoryManager.Instance()-&gt;</c>。
-/// 那些物件由遊戲主執行緒每幀重建，讀到一半被換掉就是 AccessViolationException，
-/// 而 AVE 在 .NET Core 是 corrupted-state exception ——<b><c>try</c>/<c>catch</c> 攔不到</b>，
-/// 整個遊戲直接崩掉。</item>
-/// <item><b>寫模組自己的裸集合</b>——<see cref="TaskQueue"/> 的步驟清單是
-/// <c>List&lt;Entry&gt;</c>、零同步，而 framework 執行緒每幀在 <c>entries[0]</c>／
-/// <c>RemoveAt(0)</c>。並行插入弄壞的<b>不是「慢一拍」而是那個 List 本身</b>；
-/// <c>Stop</c> 的 <c>Abort()</c> 更是直接 <c>Clear()</c>，撞上 <c>Tick()</c> 讀隊首就是
-/// 索引越界。</item>
-/// </list>
-/// <para>
-/// 🔑 所以<b>每一個</b>對外端點都把整段工作交回主執行緒執行。交回去的是<b>整個方法體</b>，
-/// 不是只有第一行檢查 —— 這樣連下游 helper（<c>TryGetGardenPatches</c>、
-/// <c>FindInventoryItem</c>、排進佇列之前的前置檢查、聊天輸出）也一起被覆蓋，不必逐一追。
-/// </para>
-/// <para>
-/// 📌 <b>已經在主執行緒上呼叫時行為逐字不變</b>：直接就地執行，不配置 Task、不改變例外型別、
-/// 不多花任何一幀。絕大多數消費端（在自己的 <c>Framework.Update</c> 或任務佇列裡呼叫）
-/// 走的就是這條路。
-/// </para>
-/// <para>
 /// ⚠️ <b>逾時的處置</b>：等主執行緒最多 <see cref="TimeoutMs"/> 毫秒。逾時就回該端點的
 /// 「不可用」值 —— 刻意<b>與模組不存在時的回傳值相同</b>（false／空字串／0／空清單／
 /// <c>"unknown"</c>／<c>-1</c>），因為呼叫端本來就要處理那個狀態。
-/// 同時用 <see cref="Interlocked"/> 把還沒開始跑的工作標成放棄，避免「呼叫端已經拿到失敗
-/// 走人了，五秒後動作才真的排進佇列」這種形狀。
-/// </para>
-/// <para>
 /// 🔴 用 <c>RunOnFrameworkThread</c> 不是 <c>Framework.Run</c>：前者在已經是主執行緒時
 /// 就地執行，同步等它不會死結；後者一律 <c>StartNew</c>，同步等會死結。
-/// </para>
-/// <para>
-/// 📌 形狀對齊 <c>Lifestream/Lifestream/IPC/IpcFrameworkGate.cs</c>（2026-09-06 起）。
-/// </para>
 /// </remarks>
 internal static class IpcFrameworkGate
 {
@@ -123,8 +89,6 @@ internal static class IpcFrameworkGate
     /// 等於這一層完全失效、原生記憶體存取退回未保護狀態。
     /// 🔑 所以卸載期一律直接回該端點原本的「不可用」值：那一瞬間功能失效可以接受
     /// （遊戲要關了），卸載期的 AccessViolationException 不行 —— 使用者看到的是崩潰。
-    /// 📌 已經在 framework 執行緒上時不受影響（那本來就是安全的執行緒），
-    /// 所以外掛自己在 <c>Dispose</c> 裡的同步呼叫行為逐字不變。
     /// </summary>
     private static bool IsUnloading(string endpoint)
     {

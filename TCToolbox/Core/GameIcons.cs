@@ -35,13 +35,6 @@ public static class GameIcons
     /// 列舉裡，所以 <c>ITextureProvider.GetFromGameIcon(new GameIconLookup(id, language: …))</c>
     /// 對這類圖示永遠取不到，必須直接指定原始路徑。
     /// </para>
-    /// <para>
-    /// 實證方式（2026-07-31）：離線解析
-    /// <c>D:\FINAL FANTASY XIV TC\game\sqpack\ffxiv\060000.win32.index</c> 的資料夾雜湊表
-    /// （index1 存 檔名雜湊＋資料夾雜湊，可獨立驗證資料夾路徑），逐一比對候選字串——
-    /// 台服 ui/icon 底下唯一存在的語言子資料夾就是 <c>tc</c>
-    /// （120000/tc 1268 檔、121000/tc 601 檔、128000/tc 824 檔；ja／en／de／fr／chs／cht／ko 全部不存在）。
-    /// </para>
     /// </summary>
     public static IDalamudTextureWrap? TryGetLanguageIcon(uint iconId)
     {
@@ -109,15 +102,8 @@ public static class GameIcons
     /// <param name="defaultValue">內建預設值。</param>
     /// <param name="apply">寫回設定（傳 0 代表「跟隨內建預設值」）。</param>
     /// <remarks>
-    /// <para>
-    /// 📌 <b>存在的理由</b>：圖示的<b>存在</b>可以離線驗證（直讀 sqpack 的 index），
-    /// <b>長什麼樣子</b>不行。所以凡是寫死圖示編號的地方都該讓使用者自己換，
-    /// 而且把圖示直接畫出來讓他對照——不然「這顆圖示在台服長得不對」只能等改版。
-    /// </para>
-    /// <para>
     /// 🔴 <b>清空／輸入 0 一律寫回哨兵 0，不要寫具體常數。</b>寫具體常數等於把編號烙死：
     /// 日後修正內建預設值時，對<b>所有既有使用者靜默無效</b>，哨兵機制形同虛設。
-    /// </para>
     /// </remarks>
     public static void DrawIconIdSetting(string label, uint current, uint defaultValue, Action<uint> apply)
     {

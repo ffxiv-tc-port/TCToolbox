@@ -10,25 +10,9 @@ namespace TCToolbox.Core;
 /// 「這個在場物件是不是寶箱」的共用判準。
 /// </summary>
 /// <remarks>
-/// 🔴 <b>不寫死中文名。</b>判準有兩軸，兩軸都是資料驅動的：
-/// <list type="number">
-/// <item><see cref="ObjectKind.Treasure"/> —— 深宮的銅寶箱（以及一般副本的寶箱）就是這一類，
-/// 它們的 <c>BaseId</c> 是 <c>Treasure</c> 表的列號。這一軸完全不需要名字。</item>
-/// <item>銀／金寶箱與擬態怪的箱子是 <see cref="ObjectKind.EventObj"/>，名字在 <c>EObjName</c> 表裡。
-/// 這一軸拿 <see cref="ReferenceChestEObjNameRow"/> 這一列的 <c>Singular</c> 當<b>參考字串</b>
-/// （＝遊戲自己對「寶箱」的用字，繁中客戶端讀出來就是繁中），再把整張表裡同名的列收成一個
-/// id 集合。<b>程式碼裡沒有任何中文物件名。</b></item>
-/// </list>
-/// <para>
 /// ⚠️ 第二軸建不起來時（那一列不見了／名字是空的）會退回<b>只用第一軸</b>，並把原因留在
 /// <see cref="DegradedReason"/> 讓呼叫端顯示出來——「只找得到銅寶箱」與「都找得到」是兩件事，
 /// 不能靜默。
-/// </para>
-/// <para>
-/// 📌 抽出來成為共用類別的理由：這張表的建立是一次 15000 列的整表走訪，而且那個參考列號是個
-/// 魔術數字。兩個模組各留一份的話，改一邊忘了另一邊的失敗形式是「其中一個功能少認得兩種箱子」，
-/// 而那完全靜默。
-/// </para>
 /// </remarks>
 public static class ChestIdentity
 {
@@ -38,8 +22,6 @@ public static class ChestIdentity
     /// <remarks>
     /// 📌 為什麼是一個寫死的<b>列號</b>而不是寫死的字串：列號在各語系客戶端是同一個，
     /// 讀出來的字自然是該語系的用字；寫死字串則是「換個語系就靜默零命中」。
-    /// 2026-09-08 對台服 7.20 EXD dump 實查：<c>EObjName#2007357.Singular</c>＝「寶箱」，
-    /// 金寶箱（2007358）與擬態怪的箱子（2006020）同名，所以同名收集會把三者一起收進來。
     /// </remarks>
     public const uint ReferenceChestEObjNameRow = 2007357;
 

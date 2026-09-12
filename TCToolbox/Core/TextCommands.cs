@@ -9,16 +9,8 @@ namespace TCToolbox.Core;
 /// </summary>
 /// <remarks>
 /// 🔴 <b>指令字面值一律從遊戲自己的表讀出來，不寫死。</b>
-/// 台服每一列同時有中文別名與英文別名，而且分佈在四個不同欄位
-/// （<c>Alias</c>＝「/小隊頻道」、<c>ShortAlias</c>＝「/隊」、
-/// <c>Command</c>＝「/party」、<c>ShortCommand</c>＝「/p」），
-/// <b>哪一欄有值是逐列不同的</b>——例如列 3「/戰隊命令」的 <c>ShortAlias</c> 是空的。
-/// 寫死任何一種就等於賭那一欄在這一列有值，而賭輸的表現是「指令送出去但遊戲不認得」，
-/// 完全沒有錯誤訊息。
-/// <para>
 /// ⚠️ 這個型別在 ImGui 的 Draw 路徑上會被呼叫，<b>所有讀表都包在 try 裡</b>：
 /// 讀不到就回「不知道」，絕不擲例外。
-/// </para>
 /// </remarks>
 public static class TextCommands
 {
@@ -28,10 +20,6 @@ public static class TextCommands
     /// <remarks>
     /// 📌 這裡存的是<b>列號</b>而不是指令字串——列號是資料的身分，字串才是會隨語言／版本變的表現。
     /// 真正要送出去的字面值一律靠 <see cref="Resolve"/> 當場查表。
-    /// <para>
-    /// ⚠️ 對不到列（台服未開放、或表結構改了）時 <see cref="Resolve"/> 回 <c>null</c>，
-    /// 呼叫端就當這個頻道不存在——<b>fail closed，不會退回猜出來的字面值</b>。
-    /// </para>
     /// </remarks>
     public static class ChatChannelRows
     {
@@ -66,10 +54,6 @@ public static class TextCommands
         /// 🔴 <b>第一個必須是 <see cref="Echo"/></b>：它是唯一不會送給任何其他玩家的頻道，
         /// 所以是所有播報功能的預設值。清單順序就是設定 UI 上的順序，
         /// 讓「最安全的選項」永遠在第一個。
-        /// <para>
-        /// 📌 刻意不收 <c>/tell</c>（需要對象參數）與通訊貝／跨界貝（要先選好第幾個貝，
-        /// 而且送錯地方的代價是打擾一整群不相干的人）。
-        /// </para>
         /// </remarks>
         public static readonly uint[] AnnounceChoices =
         [

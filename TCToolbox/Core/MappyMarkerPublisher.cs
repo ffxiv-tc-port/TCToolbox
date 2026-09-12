@@ -10,31 +10,9 @@ namespace TCToolbox.Core;
 /// 內容沒變的原地不動。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 🔴 <b>存在的理由是「清空重放」會洗記錄。</b>Mappy 的 <c>ClearSource</c> 把整個來源從它的表裡
-/// 拿掉，於是下一次 <c>AddMarker</c> 會被判定成「新的標記來源」而寫一行 <c>Information</c>
-/// （<c>MarkerIpcController.AddMarker</c> 逐字如此）。每分鐘保險重推一次、又有好幾個來源，
-/// 使用者的記錄檔就會被這些沒有資訊量的行淹掉。
-/// ⇒ 這裡改成用 <c>RemoveMarker</c> 逐筆增量，<c>ClearSource</c> 只留給<b>模組停用／卸載</b>。
-/// </para>
-/// <para>
-/// 🔑 <b>比對的單位是「鍵 ＋ 內容簽章」。</b>Mappy 的標記建立之後不可變，所以「改一筆」
-/// 只能是<b>先刪再加</b>；靠鍵才知道要刪哪一個 handle。鍵由呼叫端給
-/// （風脈泉用 <c>AetherCurrent</c> 列號、狩獵列車用 怪 id＋分區），要求是<b>同一個東西跨次同鍵</b>。
-/// </para>
-/// <para>
-/// 🔴 <b><c>AddMarker</c> 回 0 是「被拒絕」不是例外</b>（來源／地圖／圖示為 0、座標不是有限數、
-/// 或超出 32 來源 × 512 筆的上限）。被拒絕的那一筆<b>不會進追蹤表</b>，
-/// 下一次同步會再試一次；<see cref="LastRejected"/> 讓呼叫端把這個數字顯示出來。
-/// </para>
-/// <para>
 /// ⚠️ <b>Mappy 可能在我們沒看見的時候被重新載入</b>——那時它的表是空的，而我們的追蹤表還記得
 /// 一堆 handle，於是「標記再也不出現，而且完全沒有徵兆」。呼叫端偵測到 Mappy 從「不在」變成
 /// 「在」時要呼叫 <see cref="Forget"/>，另外定期用 <c>refreshAll</c> 全量重推一次當保險。
-/// </para>
-/// <para>
-/// 📌 全部在框架執行緒上呼叫，沒有鎖。
-/// </para>
 /// </remarks>
 internal sealed class MappyMarkerPublisher
 {

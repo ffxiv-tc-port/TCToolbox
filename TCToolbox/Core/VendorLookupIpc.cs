@@ -10,23 +10,10 @@ namespace TCToolbox.Core;
 /// <c>ItemVendorLocation.GetItemVendorsWorld</c> 回傳的一筆商人資料（<b>鏡像型別</b>）。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 🔴🔴 <b>成員名是跨外掛契約，一個字都不能改。</b>對方的型別是它自己組件裡的
-/// <c>ItemVendorLocation.IPC.VendorLocationInfo</c>；我們宣告的型別不同 ⇒ Dalamud 的
-/// <c>CallGateChannel.ConvertObject</c> 會走 <b>Newtonsoft JSON 來回轉換</b>
-/// （<c>SerializeObject</c> → <c>DeserializeObject(json, 我們的型別)</c>）。
 /// 名字打錯的失敗形式是<b>那個欄位靜默變成預設值</b>，不是例外——
 /// 座標欄打錯就會得到一組 <c>(0, 0)</c>，而那正好長得像「在原點」。
-/// </para>
-/// <para>
-/// 📌 對方少給幾個欄位是安全的（維持預設值）；對方多給欄位也安全（Newtonsoft 忽略）。
-/// 所以這裡<b>刻意抄全</b>，即使目前畫面上用不到 <c>ShopSheetName</c> 之類的欄位——
-/// 抄全的成本是幾行，漏抄的代價是將來要用時忘記它其實拿得到。
-/// </para>
-/// <para>
 /// ⚠️ 屬性必須是 <c>public</c> 的 get/set：Newtonsoft 的預設 contract resolver
 /// 只認公開可寫的成員，改成唯讀或 <c>internal</c> 都會讓整份資料變成預設值而不報錯。
-/// </para>
 /// </remarks>
 public sealed class VendorLocationEntry
 {
@@ -131,31 +118,10 @@ public enum VendorLookupStatus
 /// 對 Item Vendor Location 的<b>唯讀</b> IPC 包裝：某個道具哪裡買得到。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 📌 <b>用的是新端點 <c>ItemVendorLocation.GetItemVendorsWorld</c></b>（2026-09-12 加的），
-/// 不是舊的 <c>GetItemVendors</c>。理由：舊那支只給<b>地圖座標</b>而且用巢狀 tuple，
-/// 而 <c>Lifestream.GoToMapPoint</c> 要的是<b>世界座標</b>——拿地圖座標餵進去不會有錯誤訊息，
-/// 角色只是被帶到那張圖上不相干的地方。新端點直接給世界座標。
-/// </para>
-/// <para>
 /// 🔴 <b>「沒裝」與「版本太舊」都是 <c>IpcNotReadyError</c>，分不出來。</b>
 /// 所以這裡多做一件事：端點不在時去查 Dalamud 的 <c>InstalledPlugins</c>，
 /// 讓訊息說得出「IVL 裝著但這一版沒有這支端點，請更新」。
 /// 不做這一步的話使用者會去外掛清單找一個他明明已經裝好的東西。
-/// </para>
-/// <para>
-/// ⚠️ <b>三類例外都要攔，理由各不相同</b>（與 <see cref="AllaganToolsIpc"/> 同一份契約）：
-/// <c>IpcError</c>（沒註冊／型別不合，兩者都是它的子類）、
-/// <c>TargetInvocationException</c>（<b>提供端自己實作擲出來的</b>——CallGate 用
-/// <c>DynamicInvoke</c> 呼叫同步提供端，所以會被包成這一個型別，<c>IpcError</c> 攔不到）、
-/// <c>InvalidCastException</c>（對方換了回傳值的形狀）。
-/// 一律不裸 <c>catch (Exception)</c>。
-/// </para>
-/// <para>
-/// 🔑 回傳型別是<b>參考型別</b> <c>List&lt;T&gt;</c>，所以對方回 <see langword="null"/> 是安全的
-/// （<c>CallGateChannel</c> 的 <c>(TRet)result</c> 只對<b>可空值型別</b>擲那個看起來與 IPC
-/// 毫無關係的 <c>NullReferenceException</c>）。
-/// </para>
 /// </remarks>
 internal static class VendorLookupIpc
 {
@@ -234,7 +200,6 @@ internal static class VendorLookupIpc
     /// <remarks>
     /// 📌 <b>刻意不在我們這邊重做那扇視窗。</b>IVL 的結果視窗已經處理了「同一件東西好幾家店賣」
     /// 「代價是別的道具」這些情況，重做一份只會多一份要跟著它改的碼。
-    /// 我們的表負責「缺什麼」，細節交給它。
     /// </remarks>
     /// <returns><see langword="false"/>＝IVL 未安裝／未載入（什麼都沒發生）。</returns>
     public static bool TryOpenVendorWindow(uint itemId)

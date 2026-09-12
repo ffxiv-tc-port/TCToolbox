@@ -5,17 +5,7 @@ namespace TCToolbox.Core;
 /// 🔴 <b>零值必須是一個有效分類。</b><see cref="TcModule.Category"/> 的預設值是 <see cref="Misc"/>，
 /// 而沒有零值的列舉會讓 <c>default</c> 落在無效值上——那樣的模組哪一個分類分頁都不屬於，
 /// 會從分類分頁上整個消失（只有「全部」分頁看得到），而且不會有任何錯誤訊息。
-/// <para>
-/// ⚠️ 分頁的<b>顯示順序不是列舉的數值順序</b>，而是 <see cref="ModuleCategoryInfo.DisplayOrder"/>。
-/// 兩者刻意脫鉤：要調整分頁左右順序時改那個陣列就好，不必動列舉值，
-/// 也就不會不小心破壞「<see cref="Misc"/> 是零值」這個前提。
-/// </para>
-/// <para>
 /// 🔴 <b>「手動觸發」與「常用」不在這個列舉裡，也不要加進來。</b>
-/// 那兩個分頁是<b>篩選</b>不是分類：一個看 <see cref="TcModule.IsManualTrigger"/>、
-/// 一個看設定檔裡的釘選清單，模組同時留在原本的分類分頁上。
-/// 把它們做成分類成員的話，模組會從原分頁上消失——習慣在原分頁找它的人只會覺得功能不見了。
-/// </para>
 /// </remarks>
 public enum ModuleCategory
 {

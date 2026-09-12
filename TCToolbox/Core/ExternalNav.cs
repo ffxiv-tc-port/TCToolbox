@@ -171,24 +171,9 @@ internal static class ExternalNav
     /// vnavmesh 是不是正在<b>計算</b>路徑（尚未開始走）。
     /// </summary>
     /// <remarks>
-    /// 🔴 <b>這段期間按停止是攔不住的。</b>vnavmesh 的 <c>SimpleMove</c> 把路徑計算丟到背景工作，
-    /// 算完後在自己的 Update 裡直接交給 FollowPath 開走；而 <c>Path.Stop</c> 清的是 FollowPath
-    /// 的路徑點，<b>碰不到那個還沒算完的工作</b>——所以「按了停止、幾秒後角色自己走起來」
-    /// 是真的會發生的（vnavmesh/AsyncMoveRequest.cs:60-78 直證）。
-    /// <para>
-    /// 📌 <b>2026-09-03 更正</b>：上面那段成立，但原本接著寫的「<c>Nav.PathfindCancelAll</c>
-    /// 不是用來解這個的，它的實作是 <c>navmeshManager.Reload(true)</c>」<b>已經過期，而且結論是反的</b>。
-    /// vnavmesh <c>02dcefe</c>（已隨 v7.20.0.32 出貨）把該端點改成真正的
-    /// <c>navmeshManager.CancelAllPathfinds()</c>：拆出獨立的 <c>_pathfindCTS</c> 只取消尋路批次，
-    /// <b>不動導航網格</b>。而 <c>SimpleMove</c> 的在途工作走的正是 <c>QueryPath</c>
-    /// （vnavmesh/AsyncMoveRequest.cs 的 <c>MoveTo</c>），會被那個 CTS 取消。
-    /// ⇒ <c>Nav.PathfindCancelAll</c> 現在就是解這個問題的正確工具。
-    /// </para>
-    /// <para>
     /// ⚠️ <b>但本檔目前還沒有改成去呼叫它</b>（那是使用者可見的行為變更，等裁決）。
     /// 在改之前，呼叫端仍然要嘛在這段期間擋住新的導航請求，要嘛在使用者按停止後持續補送
     /// <see cref="TryStopMovement"/> 直到這裡回 false。
-    /// </para>
     /// </remarks>
     public static bool IsVnavmeshPathfindInProgress()
     {
@@ -209,10 +194,6 @@ internal static class ExternalNav
     /// ⚠️ 這只涵蓋「已經在走」，<b>不涵蓋「還在算路徑」</b>
     /// （那是 <see cref="IsVnavmeshPathfindInProgress"/>）。呼叫端若要顯示「移動中」給使用者看，
     /// 光看這個會在剛按下按鈕、路徑還沒算完的那幾百毫秒內顯示成「沒在動」。
-    /// <para>
-    /// 📌 未安裝 vnavmesh 時回傳 false——沒有那個外掛就不可能有我們發起的移動在跑，
-    /// 語意上是對的。
-    /// </para>
     /// </remarks>
     public static bool IsVnavmeshPathRunning()
     {
@@ -233,9 +214,6 @@ internal static class ExternalNav
     /// IPC 呼叫本身是否送達（false＝vnavmesh 未安裝／未載入）。
     /// ⚠️ 回傳 true 只代表「指令送出去了」，vnavmesh 端沒有回傳值可以確認真的停了。
     /// </returns>
-    /// <remarks>
-    /// 📌 這個端點對「本來就沒在移動」的情況是安全的無操作，呼叫端不必先查 IsRunning。
-    /// </remarks>
     public static bool TryStopMovement()
     {
         try
@@ -254,12 +232,7 @@ internal static class ExternalNav
     /// 問 vnavmesh：從這個位置<b>垂直往下</b>找，地板在哪裡。
     /// </summary>
     /// <remarks>
-    /// 📌 用途是把「只有 X／Z 的座標」補成完整的三維座標。地圖旗標就是這種情況——
-    /// <c>FlagMapMarker</c> 只存 X 與 Z（世界座標），沒有高度。
-    /// vnavmesh 自己的 <c>MapUtils.FlagToPoint</c> 就是這樣做的：拿 Y=1024 當起點往下打。
-    /// <para>
     /// ⚠️ <paramref name="probe"/> 的 Y 要給一個<b>高於地形</b>的值，否則會從地板底下往下找而落空。
-    /// </para>
     /// </remarks>
     /// <param name="probe">探測起點（Y 要夠高）。</param>
     /// <param name="allowUnlandable">是否接受「站不住」的落點（例如水面）。</param>
@@ -293,24 +266,9 @@ internal static class ExternalNav
     /// 現在這一刻「飛得起來」嗎（已乘坐騎／已在飛行中／正在潛水）。
     /// </summary>
     /// <remarks>
-    /// 🔴 這道判斷存在的唯一理由是 <b>vnavmesh 對這件事的失敗是完全靜默的</b>：
-    /// <c>PathfindAndMoveTo(pos, fly: true)</c> 在玩家沒乘坐騎時照樣回傳 true、路徑也真的算得出來，
-    /// 但 <c>FollowPath.Update</c> 走到第一個「比目前高」的路徑點時判定需要起飛，
-    /// 而沒乘坐騎就直接 <c>_movement.Enabled = false; return</c>
-    /// （vnavmesh/Movement/FollowPath.cs:183-192 直證）——角色站在原地不動，<b>沒有任何訊息</b>。
-    /// <para>
-    /// 📌 三個條件與 vnavmesh 那段<b>逐項對齊</b>：已在飛行中（<c>InFlight</c>）或潛水中
-    /// （<c>Diving</c>）根本不需要起飛動作，這時候把 fly 降級反而是幫倒忙。
-    /// </para>
-    /// <para>
     /// ⚠️ <b>刻意不看 <c>ConditionFlag.Mounted2</c></b>（本 pin 已改名 <c>RidingPillion</c>，
     /// 語意是「坐在別人的坐騎後座」）。那個狀態下 <c>Mounted</c> 是 false，
     /// vnavmesh 照樣會卡在起飛判斷上——把它算成「飛得起來」等於重新製造這個 bug。
-    /// </para>
-    /// <para>
-    /// ⚠️ 這<b>不</b>檢查該區域有沒有解鎖飛行——那是另一回事，而且沒有便宜可靠的判法。
-    /// 解鎖與否的失敗形式是 vnavmesh 自己算不出飛行路徑，那條路徑上它會回報失敗，不是靜默的。
-    /// </para>
     /// </remarks>
     private static bool CanFly()
         => Svc.Condition[ConditionFlag.Mounted]
@@ -330,24 +288,6 @@ internal static class ExternalNav
     /// <remarks>
     /// 🔴 <b>刻意不替使用者自動乘坐騎</b>——本外掛不新增自動化。降級成地面路線是保守處置：
     /// 走得到就走過去，走不到 vnavmesh 自己會拒絕或半路停下，兩種都比「站著不動又零訊息」好。
-    /// <para>
-    /// 🔴🔴 <b>這支沒有可靠的「導航失敗」訊號，呼叫端不要假裝有。</b>
-    /// 回 <see langword="false"/> 代表<b>兩件事之一</b>：<c>IpcError</c>（vnavmesh 沒安裝／沒載入），
-    /// 或 vnavmesh 端自己擲了例外（見下一段）。<b>兩者都不是「這條路走不到」的意思。</b>
-    /// <paramref name="started"/> 見上，恆為 true。
-    /// 而「導航網格還沒載入」那一種失敗<b>既不是 false 也不是 IpcError</b>——
-    /// vnavmesh 的 <c>NavmeshManager.QueryPath</c> 在 <c>_currentCTS</c> 為 null 時直接擲一個普通的
-    /// <c>Exception</c>（訊息 Can't initiate query - navmesh is not loaded），
-    /// 經 <c>Delegate.DynamicInvoke</c> 包成 <c>TargetInvocationException</c>，
-    /// <b>而 <c>TargetInvocationException</c> 不是 <c>IpcError</c> 的子型別</b>。
-    /// 📌 <b>2026-09-08 起這支自己攔掉它了</b>（見下面的 <c>catch</c>）：那種失敗現在會變成
-    /// 一行 Information ＋ 回 <see langword="false"/>，走呼叫端本來就有的「沒有開始移動」那條路。
-    /// 在那之前它是直接逃進呼叫端的——兩個 <c>IssueWalkOrFallback</c> 因此從來沒有真的
-    /// 退化成地圖標旗過（例外被 <c>TaskQueue</c> 接住並中止整條佇列）。
-    /// ⇒ 呼叫端能誠實說的只有「已經把這趟交給 vnavmesh 了」；
-    /// 真要知道走不走得到，只能像 <c>AutoGardensWork</c> 的走位那樣自己用距離與
-    /// <c>Path.IsRunning</c>／<c>PathfindInProgress</c> 監看。
-    /// </para>
     /// </remarks>
     public static bool TryMoveTo(Vector3 destination, bool fly, out bool started, string? source = null)
     {
@@ -388,9 +328,6 @@ internal static class ExternalNav
     /// vnavmesh 的 <c>AsyncMoveRequest.MoveTo</c> 現在對「上一筆還在跑」是接手而不是拒絕，
     /// 兩條路徑都回 true ⇒ 呼叫端<b>不可以</b>拿它當「走得到」的證據，
     /// 一定要自己用距離判定抵達、自己設上限判定走不到。
-    /// <para>
-    /// 📌 失敗語意與 <see cref="TryMoveTo"/> 完全相同（含提供端擲例外的處置），細節寫在那邊。
-    /// </para>
     /// </remarks>
     public static bool TryMoveCloseTo(
         Vector3 destination, bool fly, float range, out bool started, string? source = null)
@@ -423,13 +360,6 @@ internal static class ExternalNav
     /// 🔑 <b>這是「這裡到底有沒有導航網格」唯一便宜可靠的判法。</b>
     /// <see cref="IsVnavmeshReady"/> 只說「這張圖建出了一張網格」，不保證<b>你要去的那個角落</b>
     /// 在網格上（室內、庭園、被家具圍住的區塊都可能整塊沒有）。
-    /// 而 vnavmesh 對「終點不在網格上」的處置是<b>算不出路徑</b>——呼叫端拿到的仍然是
-    /// <c>started == true</c>，然後角色站著不動。
-    /// <para>
-    /// ⚠️ <paramref name="halfExtentY"/> 的預設在 vnavmesh 端是 5：只有 X／Z 而 Y 隨便給
-    /// （例如 0 或 1024）時一定查不到。這裡要求呼叫端明確給值，就是為了不讓那個預設值
-    /// 被靜默套用。物件表拿到的座標本來就是完整三維的，直接傳進來即可。
-    /// </para>
     /// </remarks>
     /// <returns><see langword="false"/>＝vnavmesh 未安裝、網格沒好，或這個位置附近沒有網格。</returns>
     public static bool TryFindNearestMeshPoint(
@@ -459,35 +389,10 @@ internal static class ExternalNav
     /// vnavmesh 的端點實作自己擲了例外——當成「沒有開始移動」，並寫一行給使用者看的說明。
     /// </summary>
     /// <remarks>
-    /// <para>
     /// 🔴 <b>刻意只攔 <see cref="TargetInvocationException"/>，不是裸 <c>catch (Exception)</c>。</b>
     /// <c>CallGateChannel.InvokeFunc</c> 是用 <c>Delegate.DynamicInvoke</c> 呼叫提供端的，
     /// 所以<b>提供端擲出的東西一律被包成這一個型別</b>；本外掛自己這一側的程式錯誤
     /// （空參考、轉型失敗）不會長成這個形狀，裸攔會把它們一起吞掉。
-    /// </para>
-    /// <para>
-    /// 📌 <b>為什麼不需要再攔別的型別</b>（逐行讀過本 pin 的 <c>CallGateChannel</c>）：
-    /// <c>IpcNotReadyError</c>／<c>IpcLengthMismatchError</c>／<c>IpcTypeMismatchError</c>／
-    /// <c>IpcValueNullError</c> 全部是 <c>IpcError</c> 的子型別，上面那個 catch 已經接住；
-    /// 而 <c>ConvertObject</c> 與最後那個 <c>(TRet)result</c> 只有在「宣告型別與提供端回傳型別不同」
-    /// 時才會走到，這兩支端點兩邊都是 <c>bool</c>，走不到。
-    /// </para>
-    /// <para>
-    /// 🔑 <b>不指名確切原因，但把證據附上。</b>最常見的成因是導航網格還沒載入好
-    /// （<c>NavmeshManager.QueryPath</c> 在 <c>_currentCTS</c> 為 null 時直接擲例外），
-    /// 但那是對方的內部訊息、隨時可能改，拿字串去比對只會變成另一種「宣稱查不到的事」。
-    /// 所以這裡說「多半是」，並且逐字附上對方擲出來的型別與訊息。
-    /// </para>
-    /// <para>
-    /// 📌 <b>Information 級、只進記錄不進聊天。</b>要不要跟使用者說話是呼叫端的事
-    /// （它們各自已經有「沒有開始移動」的訊息與退路），這裡只負責留下可回報的證據。
-    /// ⚠️ 本 pin 的聊天佇列不是執行緒安全的，而 <c>Svc.Log</c> 是——這裡走 log 也順便免疫那件事。
-    /// </para>
-    /// <para>
-    /// ⚠️ 節流 10 秒：目前每一個呼叫端不是使用者的離散動作就是幾十秒一輪的迴圈，
-    /// 這道閘門幾乎一定放行。它在的目的是保險——將來若接上每幀重試的呼叫端，
-    /// 沒有它就會把記錄洗爆。
-    /// </para>
     /// </remarks>
     private static void LogNavProviderFault(TargetInvocationException ex, string endpoint)
     {
@@ -534,19 +439,7 @@ internal static class ExternalNav
     /// <param name="accepted">Lifestream 收下了這次請求（<b>不代表已抵達</b>，用 <c>Lifestream.IsBusy</c> 追蹤）。</param>
     /// <returns>IPC 呼叫本身是否送達（<see langword="false"/>＝Lifestream 未安裝／未載入）。</returns>
     /// <remarks>
-    /// <para>
-    /// 🔴 <b>座標一定是世界座標，不是地圖座標。</b>兩者差一個縮放與位移，傳錯不會有任何錯誤訊息——
-    /// 角色只是被帶到那張圖上不相干的地方。地圖座標要先換回世界座標
-    /// （<see cref="MapCoords.TryHuntHelperMapToWorld"/> 之類）再進來。
-    /// </para>
-    /// <para>
     /// 🔴 <b>絕不用聊天指令 <c>/li</c> 代替這支。</b>空參數的 <c>/li</c> 是跨世界傳送。
-    /// </para>
-    /// <para>
-    /// ⚠️ <c>accepted</c> 為 <see langword="false"/> 是<b>正常結果不是錯誤</b>：區域 id 為 0、
-    /// Lifestream 正在忙、角色不可互動、vnavmesh 沒載入、或該區沒有任何已解鎖的乙太之光。
-    /// 呼叫端該做的是告訴使用者「沒開始」，不是重試。
-    /// </para>
     /// </remarks>
     public static bool TryGoToMapPoint(uint territory, float worldX, float worldZ, bool fly, out bool accepted)
     {
@@ -569,16 +462,9 @@ internal static class ExternalNav
     /// 第一個回報「在動」的外掛名稱（給 tooltip 與記錄用）；回 <see langword="false"/> 時是空字串。
     /// </param>
     /// <remarks>
-    /// <para>
     /// 🔴 <b>失敗方向是「沒人在動」。</b>四支端點隨便哪一支都可能因為對方沒裝而打不通，
     /// 而打不通的意思就是「那個外掛不可能正在移動角色」——語意上就是 false。
     /// 所以這裡不把「問不到」當成「不知道所以當成在動」；否則沒裝 Lifestream 的人會永遠看到按鈕是灰的。
-    /// </para>
-    /// <para>
-    /// ⚠️ vnavmesh 這邊<b>兩個狀態都要問</b>：<c>Path.IsRunning</c> 只涵蓋「已經在走」，
-    /// 剛按下去、路徑還在背景算的那幾百毫秒它是 false（見 <see cref="IsVnavmeshPathRunning"/>）。
-    /// 只問它的話，使用者連按兩下就會在那個空窗裡把第二個請求送出去。
-    /// </para>
     /// </remarks>
     public static bool TryGetActiveMover(out string mover)
     {
@@ -598,16 +484,6 @@ internal static class ExternalNav
     /// <remarks>
     /// 🔴 <b>與 <see cref="TryGetActiveMover"/> 共用同一批訂閱物件，不另外開一份。</b>
     /// 端點名與型別各寫一次的話遲早會分岔，而分岔的失敗形式是「面板說沒人在動、閘門說有人在動」。
-    /// <para>
-    /// 🔑 <b>差別只在「問不到」怎麼算。</b><see cref="TryGetActiveMover"/> 是<b>閘門</b>，
-    /// 它把「問不到」當成 false（沒裝的外掛不可能正在移動角色，把按鈕鎖起來才是錯的）；
-    /// 這一支是<b>顯示</b>，「問不到」必須原樣帶到列上，否則使用者會把「沒安裝」讀成「沒人在動」。
-    /// 同一個事實在兩種用途下要摺疊成不同的答案，所以是兩支方法而不是一支。
-    /// </para>
-    /// <para>
-    /// ⚠️ vnavmesh 佔<b>一列</b>但問<b>兩個</b>端點（已經在走／還在算路徑），
-    /// 理由與 <see cref="TryGetActiveMover"/> 那邊相同。兩支都問不到才算問不到。
-    /// </para>
     /// </remarks>
     public static List<(string Name, ControlState State)> SnapshotMovers() =>
     [

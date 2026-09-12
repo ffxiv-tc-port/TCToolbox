@@ -45,33 +45,11 @@ internal readonly record struct QuestConflictStatus(QuestConflictVerdict Verdict
 /// 「兩個自動化同時開著」的判定：Questionable 正在跑任務，而 AutoRetainer 的多角色模式也開著。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 🔴 <b>純顯示。</b>這裡不會、也不該去關掉任何一邊——兩邊都是使用者自己開的，
 /// 而「哪一邊該讓」只有他知道（先跑完這段任務，還是先讓僱員輪一圈）。
 /// 整個檔案只呼叫查詢型端點，一個 <c>Set</c>／<c>Stop</c> 都沒有。
-/// </para>
-/// <para>
-/// 📌 <b>為什麼放在 Core 而不是留在模組裡</b>：原本這段判定寫在
-/// <c>Modules/QuestionableStepOnMappy.cs</c> 裡，而那個模組<b>預設是關的</b>
-/// ——沒開它的人（也就是絕大多數人）永遠看不到這個提醒。判定本身與任何模組無關，
-/// 所以搬到這裡，讓「現在是誰在控制」面板（<c>Windows/ControlStatusPanel.cs</c>）也問得到同一個答案。
-/// </para>
-/// <para>
 /// ⚠️ <b>呼叫執行緒</b>：IPC 的實作跑在<b>呼叫端</b>的執行緒上，所以只在遊戲主執行緒呼叫
 /// （框架更新或 ImGui 的 Draw，兩者是同一條執行緒）。
-/// 🔑 <c>Questionable.IsRunning</c> 在提供端<b>是</b>包在它自己的 <c>IpcFrameworkGate</c> 裡的
-/// （<c>Questionable/External/QuestionableIpc.cs:120</c>，2026-09-11 逐字對照），
-/// 但那層閘門的第一件事就是 <c>if (_framework.IsInFrameworkUpdateThread) return body();</c>
-/// ——而 <c>IsInFrameworkUpdateThread</c> 是<b>執行緒身分比對</b>
-/// （<c>Dalamud/Game/Framework.cs:101</c> → <c>ThreadBoundTaskScheduler.IsOnBoundThread</c>
-/// ＝<c>Thread.CurrentThread == BoundThread</c>）⇒ 從 Draw 呼叫時就地執行，不會去等一個
-/// 要靠主執行緒才跑得到的 tick。AutoRetainer 那兩支多角色模式端點則是直接讀 static 欄位，
-/// 完全沒有閘門。
-/// </para>
-/// <para>
-/// 📌 <b>這個類別沒有狀態</b>：每個呼叫端自己決定多久問一次、自己快取上一次的答案。
-/// （模組在框架更新裡輪詢；面板有自己的 500 毫秒快取。）
-/// </para>
 /// </remarks>
 internal static class QuestAutomationConflict
 {
@@ -96,23 +74,10 @@ internal static class QuestAutomationConflict
     /// 現在有沒有撞在一起。
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// 📌 <b>只有 Questionable 在跑的時候才去問 AutoRetainer。</b>沒有人在跑任務時，
-    /// 多角色模式開著完全是正常狀態，去問它只是多打一趟 IPC、多一個沒人要看的答案。
-    /// </para>
-    /// <para>
     /// 🔴 <b>沒裝 AutoRetainer 的人不該看到「？問不到」。</b>那不是「不知道」，
     /// 那是「這個問題不存在」——所以
     /// <see cref="QuestConflictVerdict.NoAutoRetainer"/> 與
     /// <see cref="QuestConflictVerdict.Unknown"/> 是兩個不同的結論。
-    /// </para>
-    /// <para>
-    /// 🔴 Questionable 那一側用的是 <c>IsRunning</c>。它的語意比字面寬
-    /// （<c>AutomationType != Manual || questController.IsRunning</c>），也就是
-    /// <b>自動模式開著但還沒動手</b>也算 true。而 <c>GetCurrentStepData</c> 只會<b>更寬</b>
-    /// （光是追蹤著下一個任務就非 null），所以沒有更精確的端點可換。
-    /// 用在提醒上，寬的方向是安全的：寧可早一步提醒，也不要等它走到一半被登出才發現。
-    /// </para>
     /// </remarks>
     public static QuestConflictStatus Evaluate()
     {

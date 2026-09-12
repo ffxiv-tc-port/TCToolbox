@@ -9,36 +9,9 @@ namespace TCToolbox.Core;
 /// Lifestream 的「換 World／換副本區／回家」IPC 包裝。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 🔴🔴 <b>紅線：絕不透過聊天指令呼叫 <c>/li</c>。</b>空參數的 <c>/li</c> 是跨界傳送
 /// （會把角色送到別的 World 去）。這一整個檔的存在理由就是「有具名的端點可以用，
 /// 就不要去碰那個會依參數改變語意的指令」。
-/// </para>
-/// <para>
-/// 📌 <b>端點名與簽章逐字取自 <c>Lifestream/Lifestream/IPC/IPCProvider.cs</c></b>
-/// （2026-09-08 逐行對過）。前綴是 Lifestream 的 InternalName（<c>EzIPC.Init</c> 沒有指定
-/// prefix 時取 <c>Svc.PluginInterface.InternalName</c>），也就是 <c>Lifestream.</c>。
-/// </para>
-/// <para>
-/// 🔴 <b>每一支都是「打不通就回失敗」，不快取「可用」狀態。</b>使用者隨時可能把 Lifestream
-/// 停用；快取住的話按鈕會一直是亮的，而按下去什麼都不會發生。
-/// </para>
-/// <para>
-/// 🔴 <b>只在遊戲主執行緒呼叫。</b>Lifestream 那一側雖然有自己的
-/// <c>IpcFrameworkGate</c>（已經在主執行緒時就地執行、否則丟回去等最多 5 秒），
-/// 但「等最多 5 秒」發生在<b>我們這條執行緒</b>上——從繪製路徑上呼叫會直接卡住畫面。
-/// 呼叫端（<see cref="Modules.WorldTravelPanel"/>）因此把使用者按下的動作排到下一次
-/// <c>Framework.Update</c> 才送出，而不是在 ImGui 的 Draw 裡就地呼叫。
-/// </para>
-/// <para>
-/// ⚠️ <b>刻意不使用 <c>Lifestream.EnqueuePropertyShortcut</c>。</b>它的第一個參數型別是
-/// Lifestream 內部的列舉 <c>TaskPropertyShortcut.PropertyType</c>；跨外掛傳過去只能傳整數，
-/// 由 <c>CallGateChannel.ConvertObject</c> 用 JSON 轉回列舉——也就是說<b>我們會硬編對方
-/// 列舉成員的順序</b>。那個順序哪天多插一個成員，失敗形式是<b>靜默傳去別的地方</b>
-/// （例如本來要回旅店卻回了自宅），而且沒有任何錯誤訊息。
-/// 對應的具名端點（<see cref="TryTeleportToPrivateHouse"/> 等）語意明確又沒有這個相依，
-/// 一律走那些。
-/// </para>
 /// </remarks>
 internal static class LifestreamTravel
 {
@@ -59,9 +32,6 @@ internal static class LifestreamTravel
     /// </summary>
     /// <remarks>
     /// 🔑 <b>這是「台服有哪些 World 可以去」唯一該信的來源。</b>
-    /// 台服八個正式 World（4028~4035）的 <c>World.IsPublic</c> 實測<b>全部是 False</b>，
-    /// 自己照 <c>IsPublic</c> 篩會得到一張空清單；而 Lifestream 自己有針對台服的例外
-    /// （<c>Lifestream/PublicWorlds.cs</c>），問它就不必把那個例外再抄一份。
     /// </remarks>
     private static readonly Lazy<ICallGateSubscriber<string, bool>> CanVisitSameDcGate =
         new(() => Svc.PluginInterface.GetIpcSubscriber<string, bool>("Lifestream.CanVisitSameDC"));
@@ -86,8 +56,6 @@ internal static class LifestreamTravel
     /// </summary>
     /// <remarks>
     /// 🔴 <b>回 0 的意思是「Lifestream 還不知道」，不是「這一區沒有副本區」。</b>
-    /// 實作是 <c>S.InstanceHandler.InstancesInitizliaed(out var ret) ? ret : 0</c>，
-    /// 而那張表是<b>看過乙太之光的副本區選單</b>才會被填進去的。
     /// ⇒ 呼叫端<b>不可以</b>把 0 畫成「共 0 線」，那會讓使用者以為功能壞了。
     /// </remarks>
     private static readonly Lazy<ICallGateSubscriber<int>> GetNumberOfInstancesGate =
@@ -120,11 +88,6 @@ internal static class LifestreamTravel
     /// <b>就待在目前這個 World</b>；非 Local 版是 false，而 <c>Enqueue</c> 在 <c>useSameWorld</c>
     /// 為 false 且角色不在原始 World 時<b>會先自己跨界傳送回原始 World</b>。
     /// 一顆寫著「回旅店」的按鈕不該把人送去別的 World。
-    /// <para>
-    /// 📌 <paramref name="innIndex"/> 傳 <see langword="null"/>＝由 Lifestream 依所在區域自己挑
-    /// （<c>GetInnTerritoryId()</c>）。傳數字是「<c>InnData</c> 字典的第幾個鍵」——
-    /// 那是對方的內部順序，硬編等於再製造一次上面那個列舉相依，所以這裡只傳 null。
-    /// </para>
     /// </remarks>
     private static readonly Lazy<ICallGateSubscriber<int?, object>> EnqueueLocalInnShortcutGate =
         new(() => Svc.PluginInterface.GetIpcSubscriber<int?, object>("Lifestream.EnqueueLocalInnShortcut"));
@@ -257,22 +220,10 @@ internal static class LifestreamTravel
     /// 把 Lifestream 端擲出來的例外記一行，當成「這次沒成功」。
     /// </summary>
     /// <remarks>
-    /// <para>
     /// 🔴 <b>只攔 <see cref="TargetInvocationException"/>，不是裸 <c>catch (Exception)</c>。</b>
     /// <c>CallGateChannel</c> 是用 <c>Delegate.DynamicInvoke</c> 呼叫提供端的，
     /// 所以<b>提供端擲出來的東西一律被包成這一個型別</b>；我們自己這一側的程式錯誤
     /// 不會長成這個形狀，裸攔會把它們一起吞掉。
-    /// </para>
-    /// <para>
-    /// 📌 <c>IpcNotReadyError</c>／<c>IpcTypeMismatchError</c>／<c>IpcValueNullError</c>／
-    /// <c>IpcLengthMismatchError</c> 都是 <see cref="IpcError"/> 的子型別，由另一個 catch 接住。
-    /// 🔴 <b><c>IpcTypeMismatchError</c> 不是 <c>IpcNotReadyError</c> 的子型別</b>——
-    /// 只攔後者的話，對方改端點型別時我們會每次呼叫擲一次例外。
-    /// </para>
-    /// <para>
-    /// 📌 Information 級、只進記錄不進聊天：要不要跟使用者說話是呼叫端的事
-    /// （面板上本來就有一行結果），這裡只負責留下可回報的證據。
-    /// </para>
     /// </remarks>
     private static void LogFault(Exception ex, string endpoint)
     {

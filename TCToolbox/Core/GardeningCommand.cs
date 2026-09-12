@@ -9,21 +9,9 @@ namespace TCToolbox.Core;
 /// 自動園圃作業的聊天指令（<c>/tcgarden</c>，別名 <c>/tcgardens</c>）。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 🔴 <b>刻意註冊在外掛層而不是模組的 <c>OnEnable</c> 裡。</b>
 /// 註冊在模組裡的話，模組一關指令就跟著消失，快捷列上那顆巨集按下去得到的是遊戲自己的
 /// 「無此指令」——那句話不會告訴任何人「是模組被關掉了」。
-/// 這個外掛已經有同樣理由的先例：<see cref="GardeningIpc"/> 也是恆常註冊、
-/// 模組沒啟用時回一句看得懂的理由，而不是靜默無作用。
-/// </para>
-/// <para>
-/// 🔴 對同一個指令名重複 <c>AddHandler</c> 是<b>靜默失敗</b>的（見 <see cref="NavStop"/> 的說明），
-/// 所以這裡的生命週期綁在 <c>Plugin</c> 上：建構子註冊一次、<c>Dispose</c> 拆一次。
-/// </para>
-/// <para>
-/// 📌 這支指令存在的理由：模組本來<b>只有 UI 與 IPC</b>，快捷列沒辦法直接叫它，
-/// 使用者只能繞一支 Lua 腳本再透過 IPC 打回來。
-/// </para>
 /// </remarks>
 public sealed class GardeningCommand : IDisposable
 {
@@ -59,13 +47,8 @@ public sealed class GardeningCommand : IDisposable
     /// 指令處理常式。
     /// </summary>
     /// <remarks>
-    /// 🔴 <b>每一條路徑都要說話。</b>這支指令是為了修掉「開著卻什麼都沒發生」而加的，
-    /// 它自己再靜默一次就毫無意義。認不得的參數印用法、模組沒開印怎麼開、
-    /// 閘門擋下來印是被什麼擋的。
-    /// <para>
     /// ⚠️ 指令處理常式跑在遊戲的主執行緒上（Dalamud 的聊天指令派送），
     /// 所以下面同步讀取原生記憶體（背包、物件表）是安全的。
-    /// </para>
     /// </remarks>
     private static void OnCommand(string command, string arguments)
     {

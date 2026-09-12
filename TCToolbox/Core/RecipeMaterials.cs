@@ -30,27 +30,12 @@ public enum RecipeExpandResult
 /// 用 Lumina <c>Recipe</c> 表把「要做幾個成品」展開成「要幾個材料」。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 🔴 <b>不呼叫任何外掛、不碰遊戲記憶體、零封包。</b>整支只讀 <c>Recipe</c> 與 <c>Item</c>
 /// 兩張資料表（台服自帶繁中）。
-/// </para>
-/// <para>
-/// 📌 <b>為什麼要自己展開</b>：AllaganTools 的 <c>AllaganTools.GetCraftItems</c> 回的是
-/// <b>成品</b>（它的實作只收 <c>craftItem.IsOutputItem</c> 的那幾筆），不是材料；
-/// 而 Artisan 沒有「清單裡有什麼」的端點。所以「缺什麼」這件事沒有現成的 IPC 可問，
-/// 只能自己從配方表算。
-/// </para>
-/// <para>
 /// ⚠️ <b>一個成品可能有好幾個配方</b>（不同製作職業各一筆）。這裡取<b>列號最小</b>的那一筆，
 /// 並且把「有幾筆」一起回報出去（<see cref="RecipeCount"/>），畫面上才說得出
 /// 「這一列是照哪個配方算的」。⚠️ 同一件成品的不同職業配方<b>材料通常相同但不保證</b>，
 /// 所以這是一個近似值，不是保證。
-/// </para>
-/// <para>
-/// ⚠️ <b>水晶／碎晶／晶簇也是材料，會一起展開出來。</b>它們在配方表裡與其他材料同格
-/// （2026-09-12 以台服 dump 實證：配方列 1「青銅錠」的 <c>Ingredient[2]</c> 就是
-/// <c>Item</c> #2 火之碎晶），沒有獨立的欄位可以跳過。要不要顯示由呼叫端決定。
-/// </para>
 /// </remarks>
 internal static class RecipeMaterials
 {

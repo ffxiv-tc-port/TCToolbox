@@ -29,29 +29,9 @@ public enum ConflictState
 /// 偵測 SimpleTweaks 是否裝著、以及它的某個 tweak 是不是開著。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 為什麼需要這個：TCToolbox 有幾個模組與 SimpleTweaks 的 tweak 做同一件事，
-/// 而「兩邊都開著」的失敗形式是<b>靜默的</b>——功能看起來正常，只是改了設定沒反應
-/// （被另一邊擋住了）。使用者沒有辦法從遊戲裡看出是誰在擋。
-/// </para>
-/// <para>
-/// 判定方式分兩段，兩段都可能失敗，而<b>兩種失敗要分得出來</b>：
-/// <list type="number">
-/// <item>對方有沒有載入 → 走 Dalamud 的 <c>InstalledPlugins</c>，不會失敗。</item>
-/// <item>那個 tweak 有沒有開 → 讀對方的設定檔 <c>SimpleTweaksPlugin.json</c> 的
-/// <c>EnabledTweaks</c> 陣列。檔案不存在／格式變了／讀取失敗 ⇒ <see cref="ConflictState.Unknown"/>，
-/// <b>不是</b> <see cref="ConflictState.Inactive"/>。</item>
-/// </list>
-/// </para>
-/// <para>
-/// ⚠️ 設定檔是<b>對方在記憶體裡持有、變更時才寫回</b>的，所以這裡讀到的是「上次存檔的狀態」。
-/// SimpleTweaks 在使用者切換 tweak 時就會存檔，所以延遲頂多是幾秒。
-/// </para>
-/// <para>
 /// 🔴 這條路徑會被 ImGui 的 Draw 呼叫到 —— <b>絕對不能擲例外</b>
 /// （Draw 擲一次例外，Dalamud 就把整個 <c>UiBuilder.Draw</c> 拆掉到重開遊戲為止）。
 /// 所有 I/O 與解析都包在 try 裡，失敗一律降級成 <see cref="ConflictState.Unknown"/>。
-/// </para>
 /// </remarks>
 public static class SimpleTweaksProbe
 {
@@ -69,13 +49,6 @@ public static class SimpleTweaksProbe
     /// <c>now - lastProbeAt &lt; RefreshIntervalMs</c>，而 <c>now - long.MinValue</c> 會溢位成
     /// 巨大的<b>負數</b>，恆小於間隔 ⇒ <see cref="Refresh"/> 永遠在第一行就 return，
     /// 而 <c>lastProbeAt</c> 又只在那個 early-return 之後才被賦值 ⇒ 永遠不會被更新。
-    /// 結果是整個 SimpleTweaks 衝突偵測從未執行過：<c>installed</c> 恆 false、
-    /// <see cref="Query"/> 恆回 <see cref="ConflictState.NotInstalled"/>、
-    /// 連這個類別特地要顯示的 <see cref="ConflictState.Unknown"/> 也永不出現
-    /// ——正是它存在要防的那個靜默方向。
-    /// 🔑 正解是讓哨兵<b>不要參與減法</b>：初值取 <c>-RefreshIntervalMs</c>，
-    /// 因為 <c>TickCount64</c> 非負，<c>now - (-間隔) = now + 間隔 &gt;= 間隔</c> 恆成立
-    /// ⇒ 首次必放行，而且永遠不會溢位。
     /// </remarks>
     private static long lastProbeAt = -RefreshIntervalMs;
 
@@ -236,7 +209,6 @@ public static class SimpleTweaksProbe
     /// 把設定檔裡的條目正規化成純 tweak 鍵。
     /// </summary>
     /// <remarks>
-    /// 實測使用者的設定檔同時存在三種寫法（2026-08-07 直讀 <c>SimpleTweaksPlugin.json</c>）：
     /// <c>ImprovedCraftingLog</c>（裸鍵）、<c>UiAdjustments@HideUnwantedBanner</c>（帶提供者前綴）、
     /// <c>UiAdjustments@StopCraftingButton::2</c>（帶後綴，出現在黑名單欄位）。
     /// 只比對其中一種寫法會靜默漏掉其他兩種。
@@ -264,19 +236,8 @@ public static class SimpleTweaksProbe
     /// <param name="tweakLabel">給人看的 tweak 名稱，含完整識別（例如 <c>UiAdjustments@ImprovedDutyFinderSettings</c>）。</param>
     /// <param name="detail">這兩邊到底怎麼撞在一起——每個模組自己講，因為撞法都不一樣。</param>
     /// <remarks>
-    /// <para>
     /// 🔴 <b>只提示、不代決</b>：不自動關掉任何一邊，也不擋使用者啟用。
     /// 替使用者裁決「留哪一邊」不是這裡該做的事。
-    /// </para>
-    /// <para>
-    /// 🔴 三種回傳只有兩種會顯示，而「不知道」<b>一定看得見</b>——
-    /// 把未知畫成「沒事」等於靜默宣稱沒有衝突，那正是使用者最不希望被騙的方向。
-    /// SimpleTweaks 沒裝、或那個 tweak 確認是關的，就回 <c>null</c>（列面保持乾淨）。
-    /// </para>
-    /// <para>
-    /// ⚠️ 這條路徑在 ImGui 的 Draw 上被呼叫，<see cref="Query"/> 內部所有 I/O 都已包 try，
-    /// 這裡只做字串組裝，不會擲例外。
-    /// </para>
     /// </remarks>
     public static ModuleNotice? BuildNotice(string tweakKey, string tweakLabel, string detail) =>
         Query(tweakKey) switch

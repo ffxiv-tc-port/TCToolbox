@@ -28,10 +28,6 @@ public static class Throttle
     /// <b>根本不會去寫 <see cref="NextAllowed"/></b>——而「剛做完一次動作、正在冷卻」
     /// 恰好就是想要設退避的那一刻。也就是說 <c>Pass(key, 十分鐘)</c> 在真正需要它的時候
     /// 一律是無操作，而且不報錯：表現成「退避沒生效，繼續每 30 秒重試」。
-    /// <para>
-    /// 📌 只會往後推、不會往前縮：已經被擋到更久之後的鍵不受影響，
-    /// 免得比較短的退避把比較長的那個蓋掉。
-    /// </para>
     /// </remarks>
     public static void Block(string key, int milliseconds)
     {

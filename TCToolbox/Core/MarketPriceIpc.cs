@@ -14,9 +14,6 @@ namespace TCToolbox.Core;
 /// 所以宣告一個成員名<b>逐字相同</b>的鏡像型別讓 <c>CallGateChannel.ConvertObject</c>
 /// 走 JSON 來回轉換。名字打錯＝那一欄靜默變 0，而 0 在價格欄剛好有意義（「沒有掛單」），
 /// 所以錯了完全看不出來。
-/// <para>
-/// ⚠️ 屬性要 <c>public</c> get/set（對方那邊是 <c>init</c>，但那不影響我們的反序列化）。
-/// </para>
 /// </remarks>
 public sealed class MarketSnapshotEntry
 {
@@ -51,25 +48,9 @@ public sealed class MarketSnapshotEntry
 /// 對 Marketbuddy 市場快取的<b>唯讀</b>查價包裝。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 🔴🔴 <b>紅線：只顯示，不採購、不掛單、不送任何市場查詢。</b>對方那兩支端點的實作
 /// 逐字是「純讀取，零副作用……對外開放的是<b>已經看到的東西</b>，不是幫你去查一次」。
 /// 我們這一側也不做任何「去查一下」的動作。
-/// </para>
-/// <para>
-/// 🔴 <b>所以查不到是常態，不是故障。</b>那份快取是被動累積的——使用者自己在市場佈告板上
-/// 看過的道具才會有資料。畫面上一律畫灰色的「?」，<b>絕不畫 0</b>：0 在價格欄的意思是
-/// 「沒有人在賣」，與「我不知道」是完全不同的一句話。
-/// </para>
-/// <para>
-/// 📌 <b>為什麼不接 PriceInsight。</b>2026-09-12 逐字查過它的原始碼：
-/// 它<b>完全沒有註冊任何 IPC 端點</b>（零個 <c>GetIpcProvider</c>），所以沒有可接的東西。
-/// 艦隊裡目前唯一對外開放查價的是 Marketbuddy。
-/// </para>
-/// <para>
-/// 🔑 版本號用 <c>&gt;=</c> 比對，不要用 <c>==</c>——對方合法地遞增版本時，
-/// 嚴格相等會讓我們這邊<b>靜默失效</b>。
-/// </para>
 /// </remarks>
 internal static class MarketPriceIpc
 {

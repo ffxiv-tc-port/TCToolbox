@@ -44,19 +44,10 @@ public enum ContextMenuFireResult
 /// 背包右鍵選單（<c>AgentInventoryContext</c>）的共用操作。
 /// </summary>
 /// <remarks>
-/// 📌 內容是從 <see cref="Modules.AutoInventoryTransfer"/> 的私有方法
-/// <c>TryFireContextMenuEntry</c> <b>原封不動搬過來的</b>（判斷順序、索引算法、
-/// 診斷輸出一個字都沒改，只是把「印哪一句聊天訊息」交還給呼叫端），
-/// 讓 <see cref="Modules.QuickSplitStacks"/> 共用同一條已經實機驗證過的路徑。
-/// 做法與 <see cref="ItemContextResolver"/> 當初的抽取完全相同。
-/// <para>
 /// 🔴 <b>只對 <c>AgentInventoryContext</c> 的選單有效。</b>一般視窗的右鍵選單是
 /// <c>AgentContext</c>，值表的索引基準不一樣；拿這裡的算法去點那種選單會差幾格，
 /// 而那種選單裡有「丟棄」。
-/// </para>
-/// <para>
 /// 🔑 <b>比對用的是遊戲自己的 <c>Addon</c> 表字串，不是寫死的翻譯</b>，所以跟語言無關。
-/// </para>
 /// </remarks>
 public static unsafe class InventoryContextMenu
 {

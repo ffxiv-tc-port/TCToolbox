@@ -7,25 +7,9 @@ namespace TCToolbox.Core;
 /// 「現在可以讓一個<b>無人值守</b>的例行工作動手嗎」的共用閘門。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 🔴 <b>這道閘門是給「自己會動」的路徑用的，不是給使用者按下按鈕的路徑用的。</b>
-/// 使用者親手按按鈕時，他看得到自己在做什麼；擋下來只會變成「按了沒反應」。
-/// 反過來，一個每隔幾十秒自己醒過來一次的迴圈必須先確定沒有插隊到別人頭上，
-/// 因為出事的時候使用者根本不知道是誰動的手。
-/// </para>
-/// <para>
 /// 🔑 <b>失敗方向是「不做」。</b>任何一項查不出來（IPC 打不通、還沒登入）一律當成
 /// 「現在不是好時機」。漏做一輪的代價是等下一個週期；做錯一輪的代價可能是不可回復的。
-/// </para>
-/// <para>
-/// 📌 <b>「別的外掛正在移動」也算忙。</b>我們自己不走位，但別的外掛正在把角色帶去某處時，
-/// 站在原地開一連串的互動選單會把它的流程打斷（互動會鎖住角色、選單會吃掉按鍵）。
-/// 判準與呼叫端顯示用的那一份是<b>同一個</b>（<see cref="ExternalNav.TryGetActiveMover"/>），
-/// 兩份各寫一次的話遲早會分岔。
-/// </para>
-/// <para>
 /// ⚠️ 只在框架執行緒上呼叫（<c>Svc.Condition</c> 與 IPC 都是）。
-/// </para>
 /// </remarks>
 internal static class AutomationGate
 {
@@ -39,21 +23,8 @@ internal static class AutomationGate
 
     /// <summary>全艦隊急停之後，所有共用這道閘門的無人值守迴圈要靜多久（秒）。</summary>
     /// <remarks>
-    /// 🔴 <b>光靠 <see cref="NavStop.IsEnforcing"/> 那三秒是不夠的。</b>那三秒只涵蓋
-    /// 「確保 vnavmesh 真的停下來」，窗口一關，一個到期的無人值守迴圈下一幀就會自己再開一輪
-    /// ——使用者剛按下急停，角色又動了起來，而且看起來像急停沒有生效。
-    /// <para>
-    /// 📌 <b>預設仍然是 60 秒</b>（原本寫死的政策值），改成可調不改變既有行為。
-    /// 挑 60 的理由：不短於園圃重跑的預設間隔（60 秒），而急停的語意是「先停下來，我要接手」，
-    /// 至少要留給使用者一個週期的時間去做他要做的事。
-    /// </para>
-    /// <para>
     /// 🔴 <b>0＝不冷卻</b>，是合法設定：急停照樣把正在跑的批次停掉，只是下一個到期的迴圈
     /// 可以立刻重開。負數與超過 <see cref="MaxCooldownSeconds"/> 的值在這裡被夾回範圍內。
-    /// </para>
-    /// <para>
-    /// ⚠️ 每次讀都重新查設定，不快取：使用者在急停冷卻進行中把秒數改小，下一次判斷就該生效。
-    /// </para>
     /// </remarks>
     public static int EmergencyStopCooldownSeconds
     {
@@ -94,23 +65,6 @@ internal static class AutomationGate
     /// 一句話的理由（給記錄用）。回 <see langword="false"/> 時是空字串。
     /// </param>
     /// <returns><see langword="true"/>＝急停冷卻中，現在<b>不</b>該動手。</returns>
-    /// <remarks>
-    /// 🔴🔴 <b>這支存在的理由是「有些自走模組不能整個換成 <see cref="TryGetBusyReason"/>」。</b>
-    /// 完整閘門是為「園圃那種可以等下一輪的例行工作」設計的，它會擋
-    /// <see cref="ConditionFlag.BoundByDuty"/>、騎乘、戰鬥——而
-    /// <c>AutoCheckFoodUsage</c> 最需要生效的時機<b>正是進副本前後</b>，
-    /// <c>AutoGysahlGreens</c> 也刻意允許一票 <c>Occupied</c> 系旗標。
-    /// 把它們改成呼叫完整閘門會讓功能<b>靜默失能</b>：使用者只會發現 buff 沒續上，
-    /// 而記錄上什麼異常都沒有。
-    /// <para>
-    /// 🔑 <b>所以正解是「加一項」不是「換一份」</b>：那些模組保留自己原本的判斷，
-    /// 額外只問這一支。急停是使用者剛剛親手下的指令，沒有任何模組該無視它。
-    /// </para>
-    /// <para>
-    /// ⚠️ 與 <see cref="TryGetBusyReason"/> 共用同一份到期狀態（過期時就地清掉），
-    /// 兩支都只在框架／主執行緒上呼叫，所以不需要同步。
-    /// </para>
-    /// </remarks>
     public static bool TryGetEmergencyStopReason(out string reason)
     {
         reason = string.Empty;

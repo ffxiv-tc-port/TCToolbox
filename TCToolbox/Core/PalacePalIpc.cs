@@ -10,33 +10,11 @@ namespace TCToolbox.Core;
 /// Palace Pal 的<b>唯讀</b> IPC 呼叫端包裝（讀它已經標示出來的陷阱／埋藏寶藏座標）。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 對方的契約（2026-09-08 逐字對照 <c>PalacePal/Pal.Client/DependencyInjection/IpcProvider.cs</c>）：
-/// <list type="bullet">
-/// <item><c>PalacePal.ApiVersion() -&gt; int</c>（目前 1）</item>
-/// <item><c>PalacePal.GetTrapLocations(ushort territoryType) -&gt; List&lt;Vector3&gt;</c></item>
-/// <item><c>PalacePal.GetHoardLocations(ushort territoryType) -&gt; List&lt;Vector3&gt;</c></item>
-/// </list>
-/// 三支都是純讀取它記憶體裡既有的清單：沒有查資料庫、沒有連線、沒有寫入。
-/// </para>
-/// <para>
 /// 📌 <b>座標是<see langword="世界"/>座標</b>（<c>Vector3</c>），不是地圖座標——
 /// 要畫到 Mappy 上必須先過 <see cref="MapCoords.TryWorldToMap"/>。
 /// 傳錯的失敗形式是標記靜靜地落在地圖上不相干的位置，沒有任何錯誤訊息。
-/// </para>
-/// <para>
-/// 📌 <b>回空清單是正常狀態不是錯誤</b>：對方的 <c>GetTerritoryIfReady</c> 對「不是深層迷宮的
-/// territory」與「還沒載入完」都回 null ⇒ 空清單。呼叫端不該把它當失敗，也不該因此寫記錄。
-/// </para>
-/// <para>
 /// 🔴 <b>型別刻意用 <c>List&lt;Vector3&gt;</c> 逐字照抄。</b>對方的註解寫著「跨
 /// AssemblyLoadContext 只能傳共用執行期型別……絕對不要改成自訂 class/record/tuple」。
-/// </para>
-/// <para>
-/// ⚠️ <b><c>territoryType</c> 是 <c>ushort</c> 不是 <c>uint</c>。</b>宣告成 <c>uint</c> 會走進
-/// <c>CallGateChannel</c> 的型別轉換路徑；那條路在數值型別上多半會成功，
-/// 但沒有理由去賭它——照抄對方的簽章。
-/// </para>
 /// </remarks>
 internal static class PalacePalIpc
 {

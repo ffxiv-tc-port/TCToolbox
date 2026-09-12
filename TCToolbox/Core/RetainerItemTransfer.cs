@@ -8,23 +8,8 @@ namespace TCToolbox.Core;
 /// 走遊戲自己的「雇員道具命令」在玩家背包與雇員之間搬道具（寄放／取回）。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 🔴 <b>為什麼不用 <c>InventoryManager.MoveItemSlot</c>：</b>對雇員頁呼叫 <c>MoveItemSlot</c>
-/// 會「假成功」（回傳 0、本機容器同步更新），但伺服器隨後把它退回——即使帶 <c>a6: true</c>
-/// 也<b>沒有台服實機證據</b>（見 <see cref="Modules.AutoInventoryTransfer"/> 類別註解裡
-/// 2026-07-31／08-01 的實測）。<b>實機來回驗證過會動的是這條路徑</b>：遊戲自己的雇員道具命令，
-/// 它一定送到伺服器，落點也由遊戲決定（取回進背包空位／寄放進雇員空位、自動疊堆）。
-/// </para>
-/// <para>
-/// 📌 內容從 <see cref="Modules.AutoInventoryTransfer"/> 的私有實作抽出成共用：特徵碼、
-/// <c>+ 40</c> 未文件化偏移、命令列舉值都<b>逐字沿用</b>那份已經實機驗證過的路徑，
-/// 不新解一次。<see cref="Modules.AutoInventoryTransfer"/> 自己那份刻意<b>不動</b>
-/// （它還有拖放 hook 等周邊邏輯綁在一起，重構它不在本次範圍內）。
-/// </para>
-/// <para>
 /// 🔴 <b>解析不到就明確不可用</b>（<see cref="IsAvailable"/> 回 <c>false</c>），呼叫端據此
 /// 停手並告知使用者，絕不靜默走一條可能無效的路徑。特徵碼是「下次改版可能失效且靜默」的東西。
-/// </para>
 /// </remarks>
 public static unsafe class RetainerItemTransfer
 {

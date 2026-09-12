@@ -28,29 +28,10 @@ public readonly record struct FleetStopResult(string Target, FleetStopOutcome Ou
 /// 全艦隊急停：把所有「會自己動」的外掛一次叫停。
 /// </summary>
 /// <remarks>
-/// 🔴 <b>這是「停止」不是「開關」。</b>本檔<b>沒有</b>、也不要加任何「一鍵重新啟動」——
-/// 急停的價值在於它永遠只往安全的方向走，加了反向操作之後使用者就得先確認自己按對了哪一顆。
-/// <para>
 /// 🔴 <b>絕不透過聊天指令呼叫 <c>/li</c></b>（空參數的 <c>/li</c> 是跨世界傳送）。
-/// Lifestream 走的是 <c>Lifestream.Abort</c> 這個 IPC 端點。
-/// </para>
-/// <para>
-/// 🔴 <b>一個對象失敗不能擋住後面的。</b>每一個對象各自包 try：<c>IpcNotReadyError</c>＝沒安裝，
-/// 其餘例外＝失敗並記下訊息，兩種都繼續往下跑。<b>急停最需要它動的時候，正好是某個外掛已經出事的時候。</b>
-/// </para>
-/// <para>
 /// 🔴 <b>執行順序：先停會讓角色移動的，再停自動化本體。</b>
 /// 反過來的話，控制端（AutoDuty／Questionable）在被停掉之前還有機會再送一次導航請求，
 /// 而角色會在你以為已經停下來之後繼續走。
-/// 移動層另外靠 <see cref="NavStop"/> 的補送窗口蓋住「路徑還在背景計算」那幾秒。
-/// </para>
-/// <para>
-/// ⚠️ 端點名與型別是<b>逐一讀各 repo 的提供端</b>抄下來的（EzIPC 的名字是「前綴＋方法名」，
-/// 前綴預設是對方的 InternalName）。CallGate 是純字串比對，名字打錯的失敗形式是
-/// <c>IpcNotReadyError</c>——在這裡會被畫成「未安裝」，<b>與「真的沒安裝」長得一模一樣</b>。
-/// 所以每一條都在註解裡寫明出處檔案。
-/// </para>
-/// <para>⚠️ 只在主執行緒呼叫（指令處理常式／<c>Framework.Update</c>）。</para>
 /// </remarks>
 internal static class FleetStop
 {
@@ -193,12 +174,6 @@ internal static class FleetStop
     /// 🔴 只送 <c>Path.Stop</c> 是攔不住的：<c>SimpleMove</c> 把路徑計算丟到背景工作，
     /// 算完之後才交給 FollowPath 開走，而 <c>Path.Stop</c> 清的是 FollowPath 的路徑點。
     /// 表現成「按了停止、幾秒後角色自己走起來」。
-    /// <c>Nav.PathfindCancelAll</c>（vnavmesh <c>02dcefe</c> 起是真正的
-    /// <c>CancelAllPathfinds()</c>，不再是重建導航網格）才是解這件事的工具。
-    /// <para>
-    /// 📌 舊版 vnavmesh 沒有那個端點，所以它單獨包一層 try：抓不到就記一句，
-    /// <b>照樣往下送 <c>Path.Stop</c></b>——那才是判定「vnavmesh 在不在」的那一支。
-    /// </para>
     /// </remarks>
     private static FleetStopResult StopVnavmesh()
     {
@@ -235,8 +210,6 @@ internal static class FleetStop
     /// 🔴 <c>Questionable.Stop</c> <b>是 Func 不是 Action</b>，而且它的回傳值有意義：
     /// 對方那一端是 <c>_gate.Get(IpcStop, () =&gt; Stop(label), false)</c>——正常路徑<b>恆為 true</b>，
     /// <c>false</c> 只可能是它自己的主執行緒閘門逾時（＝<b>沒有</b>確認停下來）。
-    /// 所以 false 要畫成「失敗」而不是成功：把它藏進 tooltip 的話，
-    /// 使用者會以為任務流程已經停了，而角色其實還在跑。
     /// </remarks>
     private static FleetStopResult StopQuestionable()
     {
@@ -301,11 +274,6 @@ internal static class FleetStop
     /// <b>租約</b>（<c>RegisterForLease</c>）——為了按一次急停去承租別人的自動循環控制權，
     /// 之後還得負責歸還、處理回呼與逾時，代價遠大於收益，而且租約沒還乾淨的失敗形式是
     /// 「使用者自己再也開不回來」。<c>/wrath auto off</c> 走的是使用者自己打指令的同一條路。
-    /// <para>
-    /// 📌 <c>/wrath auto off</c> 是<b>明確關閉</b>不是切換
-    /// （<c>Commands.cs</c> 的 <c>HandleAutoCommands</c>：<c>argument[1] == "on"</c> 才是開）。
-    /// 這很重要——切換語意的指令拿來當急停，在「本來就是關的」時候會把它打開。
-    /// </para>
     /// </remarks>
     private static FleetStopResult StopWrathCombo()
         => RunCommand("WrathCombo", "/wrath", "/wrath auto off", string.Empty);
@@ -329,7 +297,6 @@ internal static class FleetStop
     /// <remarks>
     /// 🔴 <c>IpcNotReadyError</c> 一定要排在 <c>IpcError</c>／<c>Exception</c> 前面接：
     /// 它是 <c>IpcError</c> 的子類別，順序反了就會把「沒安裝」全部歸成「失敗」，
-    /// 使用者每次急停都會看到一整排紅字。
     /// </remarks>
     private static FleetStopResult Invoke(string target, Func<string> action)
     {

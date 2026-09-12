@@ -29,11 +29,6 @@ public static unsafe class UiHelper
     /// <b>沒有長度上限</b>——緩衝區裡剛好沒有結尾 0（欄位塞滿，或實例正在被回收、內容已被覆寫）
     /// 就會一路往後掃過整個結構，掃進未映射的頁面就是存取違規；AVE 在 .NET Core 是
     /// corrupted-state exception，<c>try</c>／<c>catch</c> 完全接不到。
-    /// <para>
-    /// <c>addon-&gt;Name</c> 走的是 <c>[InlineArray(32)]</c> 產生的 <c>Span&lt;byte&gt;</c>
-    /// （<c>Length</c> 恆為 32），對它取 <c>IndexOf(0)</c> 就把讀取夾在那 32 個 byte 之內；
-    /// 找不到 0 就整段當名字用。樣板同 <c>RetainerBatchRename.ReadRetainerName</c>。
-    /// </para>
     /// </remarks>
     public static string ReadAddonName(AtkUnitBase* addon)
     {
@@ -57,16 +52,8 @@ public static unsafe class UiHelper
     /// </summary>
     /// <remarks>
     /// 🔴🔴 <b><see cref="GetAddon"/>／<see cref="IsAddonReady"/> 只看得到第 1 格。</b>
-    /// <c>GetAddonByName</c> 的 <c>index</c> 參數預設是 1，而同一個名字是<b>可以同時掛著好幾個實例</b>的
-    /// ——<c>SelectYesno</c> 連著跳兩扇（「確定要交易優質道具嗎？」接「確定要為合建設備提供○○×N嗎？」）
-    /// 就是現成的例子，剛關掉、還沒被回收的那一扇也可能繼續佔著格子。
-    /// 這種時候第 1 格拿到的是<b>已經不可見</b>的那一扇，<see cref="IsReady"/> 對它回
-    /// <see langword="false"/>，於是「確認框在不在」被答成「不在」，而真正開著、等著被按的那一扇
-    /// 在第 2 格——<b>完全看不到，而且不會報錯</b>。
-    /// <para>
     /// ⚠️ 這支<b>不是</b> <see cref="GetAddon"/> 的替代品：只有「我要找出那扇開著的窗」的地方才該用它
     /// （多幾次原生查詢換一個正確答案）。既有呼叫點維持原樣，不要無差別換掉。
-    /// </para>
     /// </remarks>
     public static AtkUnitBase* FindReadyAddon(string name)
     {
@@ -111,11 +98,6 @@ public static unsafe class UiHelper
 
     /// <summary>依 addon id 取 addon，取不到（含遊戲尚未就緒）一律回 <c>null</c>。</summary>
     /// <remarks>
-    /// 🔴 這支存在的理由是 <c>AtkStage.Instance()->RaptureAtkUnitManager->GetAddonById(...)</c>
-    /// 這條兩層裸鏈：<c>AtkStage.Instance()</c> 是 <c>[StaticAddress(..., isPointer: true)]</c>
-    /// ——產生器讀「指標的位址」再解參考一層，遊戲尚未建立單例時回 <c>null</c>（非 isPointer 的那種
-    /// 才保證不回 null，是擲 <c>InvalidOperationException</c>）；<c>RaptureAtkUnitManager</c> 又是
-    /// <c>AtkStage</c> +0x20 的裸欄位，同樣可能是 null。
     /// 裸解參考 null 原生指標是 AccessViolationException，在 .NET Core 屬 corrupted-state
     /// exception，<c>try/catch</c> 攔不到 —— 只能事前擋。
     /// <para>呼叫端本來就有「addon 為 null 就放棄」的路徑，所以這裡回 null 不改變任何既有語意。</para>
@@ -179,26 +161,6 @@ public static unsafe class UiHelper
     /// 🔴 <b>這是本 repo 所有 callback 的唯一出口</b>（<see cref="FireCallbackInt"/>／
     /// <see cref="FireCallbackIntIntBool"/>／<see cref="SelectStringEntry"/>／<see cref="ClickSelectYesnoYes"/>…
     /// 全部繞經這裡），守衛才罩得住每一條路。
-    /// <para>
-    /// 回 <see langword="false"/> ＝這一幀沒送（addon 為 null，或守衛判定「剛按過、還沒觀察到它收掉」）。
-    /// 對呼叫端的意義一律是「這一輪沒按到，下一輪再來」，與「addon 還沒出現」走同一條既有路徑。
-    /// </para>
-    /// <para>
-    /// 🔴🔴 <b>「送出前的就地就緒檢查」不在這裡，在 <see cref="AddonPressGuard"/> 裡</b>，而且
-    /// <b>只對常駐視窗</b>（<c>AddonPressGuard.PersistentAddons</c>）生效。兩個理由：
-    /// <list type="number">
-    /// <item>那道檢查的意義<b>完全來自「與解除條件互為邏輯反面」</b>——只有常駐視窗才有
-    /// 「連續隱藏 N 幀就解除」這條看可見性的解除路徑，也才需要一個看可見性的放行條件配它。
-    /// <see cref="IsReady"/> 三關在「關閉中」是全過的，<b>單獨放在這裡擋不住任何東西</b>。</item>
-    /// <item>擺在守衛裡才罩得住<b>每一條</b>按下路徑（<see cref="TrySendAgentEvent"/>、
-    /// <see cref="TryClickButton"/>、直接呼叫 <c>TryBeginPress</c> 的模組），不是只有這一支。</item>
-    /// </list>
-    /// ⚠️ <b>不要在這裡無差別加上 <see cref="IsReady"/> 閘門。</b>本 repo 至少有兩處是
-    /// <b>刻意不判可見</b>的送出：<c>AutoPlayerCommend</c> 對常駐 HUD <c>_Notification</c>
-    /// （那支的註解寫明：判了會把「推薦沒送出」變成靜默失敗）、<c>AutoMaterialize</c> 在
-    /// <c>PostSetup</c> 當下就按而且沒有 <c>PostDraw</c> 重試（<c>PostSetup</c> 那一刻
-    /// <c>IsVisible</c>／<c>LoadedState</c> 不保證到位）。無差別加閘門會把它們靜默改成不送。
-    /// </para>
     /// </remarks>
     public static bool TryFireCallback(AtkUnitBase* addon, bool updateState, params object[] values)
     {
@@ -225,8 +187,6 @@ public static unsafe class UiHelper
     /// 同一扇 <paramref name="anchor"/>、同一個 agent 事件與參數，在那扇窗走完生命週期前只送一次。
     /// </summary>
     /// <remarks>
-    /// 用在「送給 agent 的事件會去碰某扇窗」的場合（例如對 <c>NpcTrade</c> 送「選這一份」時
-    /// 正在碰 <c>ContextIconMenu</c>）：agent 是常駐的，但它接下來要動的那扇窗可能正在關閉。
     /// 回 <see langword="false"/> ＝這一幀沒送（錨窗為 null／守衛擋下／agent 取不到），意義同 <see cref="TryFireCallback"/>。
     /// </remarks>
     public static bool TrySendAgentEvent(
@@ -317,15 +277,8 @@ public static unsafe class UiHelper
     /// SelectYesno 點「是」。
     /// </summary>
     /// <remarks>
-    /// 🔴 <b><see cref="IsReady"/> 過了不代表可以按。</b>按下之後有「正在關閉中」的幾幀，
-    /// 那幾幀三關（非 null／<c>IsVisible</c>／<c>Loaded</c>）全過而 <c>FireCallback</c> 下去
-    /// 就是攔不到的存取違規（2026-08-31 實機崩潰 <c>crash-20260831205734</c>）。
-    /// 所以這裡多一道 <see cref="AddonPressGuard.TryBeginPress"/>：按過的那個實例
-    /// 在觀察到它走完生命週期之前不再按。
-    /// <para>
     /// ⚠️ 回 <see langword="false"/> 的語意<b>沒有改變</b>——本來就是「這次沒按到」，
     /// 呼叫端全都是「下一輪再試」。只是多了一種回 false 的理由。
-    /// </para>
     /// </remarks>
     public static bool ClickSelectYesnoYes() => ClickSelectYesno(0);
 
@@ -368,18 +321,10 @@ public static unsafe class UiHelper
     /// 不可以用 <c>Utf8String.ToString()</c>。</b>後者是把整段位元組直接當 UTF-8 解碼，
     /// SeString 的 payload 控制位元組會原樣被丟進解碼器——只要提示文字裡有道具連結之類的 payload，
     /// 解出來就<b>必定</b>含 U+FFFD 替換字元。
-    /// <para>
-    /// ⇒ 下面 <see cref="ClickSelectYesno"/> 裡那道「含 U+FFFD 就當作視窗記憶體變動中，這一幀不按」的閘門
-    /// 會對那種確認框<b>每一幀都成立</b>，於是「看得到、但一次都按不下去」，而且全程零 log。
-    /// 2026-09-08 合建交納就是這樣靜默停擺六天（見 <c>AutoFCWSDeliver.ReadPrompt</c> 的實機語料）。
-    /// 剝掉 payload 之後 U+FFFD 才恢復它原本的語意：<b>真的</b>讀到半個字元＝窗的記憶體正在變動。
-    /// </para>
-    /// <para>
     /// ⚠️ 兩道空指標閘門留在這裡不能省：<see cref="AddonPrompt.ReadSelectYesnoText"/> 只判 addon 與
     /// <c>PromptText</c>，沒有判 <c>NodeText.StringPtr</c>。StringPtr 為 null 而 Length 還留著殘值時，
     /// <c>Utf8String.AsSpan()</c> 會建出一個長度非零、指向位址 0 的 Span，讀下去就是
     /// AccessViolationException（corrupted-state exception，try/catch 攔不到）。
-    /// </para>
     /// </remarks>
     private static string ReadSelectYesnoText(AtkUnitBase* addon)
     {
@@ -479,9 +424,6 @@ public static unsafe class UiHelper
         // 🔴 AtkValues **不是**「addon 存活期間必然有效」——addon 拆解時它會先被釋放成 null，
         //    而 AtkValuesCount 可能還留著殘值，於是長度檢查通過、索引下去卻對位址 0 解參考
         //    ＝ AccessViolationException（corrupted-state exception，try/catch 攔不到）。
-        //    本模組正好被 RetainerBatchRename 在 CharaMake 視窗開／關的過渡期反覆輪詢，
-        //    那正是殘值組合出現的時刻 ⇒ 必須先自判 AtkValues 欄位。
-        //    （同一道檢查的既有樣板：AutoFCWSDeliver.ParseDeliverables、FastGrandCompanyExchange.ReadUInt）
         //    回 false ＝「判定不到」，落入呼叫端既有的下一 tick 重試路徑，語意零變更。
         if (addon == null) return false;
         if (addon->AtkValues == null) return false;
@@ -534,8 +476,6 @@ public static unsafe class UiHelper
     /// <remarks>
     /// 🔴 <c>ReceiveEvent</c> 比 <c>FireCallback</c> 更早踩到關閉中的窗：按下即關的鈕（交出、確認、接受）
     /// 按過之後那幾幀 <see cref="IsReady"/> 三關照過，再送一次事件就是攔不到的存取違規。
-    /// 守衛的鍵＝（視窗位址，<c>btn:節點 id</c>）：同一扇窗上按不同的鈕互不干涉；
-    /// 「回答一次即終結」的窗（<see cref="AddonPressGuard"/> 的併鍵名單）不分鈕、一個實例只准一次。
     /// <para>守衛放在所有「取不到就放棄」的檢查之後：一登記就算按過，登記完卻不按會白白封鎖到解除為止。</para>
     /// </remarks>
     public static ButtonPressResult TryClickButton(AtkUnitBase* addon, AtkComponentButton* button)

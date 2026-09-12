@@ -10,45 +10,10 @@ namespace TCToolbox.Core;
 /// Mini-Mappingway 標記 IPC 的呼叫端包裝（只加／只刪自己那一組標記）。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 對方的契約（2026-09-09 逐字對照 <c>MiniMappingway/Api/ApiController.cs</c>）：
-/// <list type="bullet">
-/// <item><c>MiniMappingway.CheckVersion() -&gt; Tuple&lt;int, int&gt;</c>（主版號, 次版號）</item>
-/// <item><c>MiniMappingway.RegisterOrUpdateSourceVec(string sourceName, Vector4 colour) -&gt; bool</c></item>
-/// <item><c>MiniMappingway.AddPerson(string sourceName, string name, uint id) -&gt; bool</c></item>
-/// <item><c>MiniMappingway.RemovePersonByUint(uint id, string sourceName) -&gt; bool</c></item>
-/// <item><c>MiniMappingway.RemoveSourceAndPeople(string sourceName) -&gt; bool</c></item>
-/// </list>
-/// </para>
-/// <para>
 /// 🔴 <b>參數順序在「加」與「刪」之間是相反的</b>：<c>AddPerson</c> 是（來源, 名字, id），
 /// <c>RemovePersonByUint</c> 是（<b>id, 來源</b>）。兩個都是「string 與另一個東西」的組合，
 /// 傳反了不會有任何錯誤訊息——<c>RemovePersonByUint</c> 拿 id 去 <c>PersonDict</c> 查來源，
 /// 查不到就回 <see langword="false"/>，表現成「刪不掉但也不報錯」。
-/// </para>
-/// <para>
-/// 🔴 <b><see cref="RegisterSource"/> 會把該來源的標記清單整個換成一個新的空字典</b>
-/// （對方的 <c>NaviMapManager.AddOrUpdateSource</c> 對 <c>PersonDict</c> 做的是
-/// <c>AddOrUpdate(…, (_, _) =&gt; new ConcurrentDictionary…)</c>，也就是<b>無條件覆蓋</b>）。
-/// ⇒ <b>絕對不可以每次同步都呼叫它</b>：那樣每一輪都會把上一輪加進去的人洗掉，
-/// 而失敗形式是「標記閃爍或乾脆不出現」，沒有任何錯誤訊息。
-/// 只在「模組啟用」與「偵測到對方重新載入」這兩個時機呼叫，呼叫完要把自己的追蹤表也忘掉。
-/// </para>
-/// <para>
-/// 🔴 <b>顏色只在「這個來源第一次出現」時生效。</b>對方會把來源設定存進自己的設定檔
-/// （<c>Configuration.SourceConfigs</c>），之後每次註冊都是讀存檔的那一份回來用——
-/// 也就是<b>使用者在 Mini-Mappingway 設定裡改的顏色不會被我們蓋掉</b>，這是對的行為，
-/// 但也代表這裡傳的顏色是「初始值」不是「目前值」。
-/// </para>
-/// <para>
-/// 📌 <b>需要對方 API 1.2 以上。</b>1.1 的 <c>AddPerson</c> 對非玩家物件（寶箱、風脈泉）
-/// 是<b>完全靜默地不生效</b>：它找物件時只掃物件表的偶數索引 2..200（＝玩家欄位），
-/// 而寶箱／風脈泉在 449-488 那一段，於是永遠回 <see langword="false"/>。
-/// </para>
-/// <para>
-/// 📌 這裡的每一支都<b>吞掉例外並回傳「失敗值」</b>：整條路徑掛在 <c>Framework.Update</c> 上，
-/// 而對方沒裝／還沒載入完成是常態不是錯誤。非預期的例外會寫記錄，但經過節流。
-/// </para>
 /// </remarks>
 internal static class MiniMappingwayIpc
 {
@@ -162,13 +127,6 @@ internal static class MiniMappingwayIpc
     /// <c>Delegate.DynamicInvoke</c>，提供端實作裡擲出來的東西一律被包成
     /// <see cref="TargetInvocationException"/>——那不是 <c>IpcError</c> 的子類，
     /// 全艦隊慣用的 <c>catch (IpcError)</c>／<c>SafeWrapper.IPCException</c> 一個都攔不到。
-    /// Mini-Mappingway 的 <c>RemoveFromBag</c> 在 1.1 版對「不在清單裡的人」擲的正是這種
-    /// （它用 <c>Enumerable.First(述詞)</c>），所以這一層一定要有。
-    /// <para>
-    /// ⚠️ 這裡刻意<b>分開列出</b> <see cref="TargetInvocationException"/> 與最後那個
-    /// <c>catch (Exception)</c>：兩者的處置一樣，但寫出來的目的是讓讀碼的人看見
-    /// 「我們知道有這種形狀」，而不是靠一個裸 catch 兜住一切。
-    /// </para>
     /// </remarks>
     private static bool Invoke(string endpoint, Func<bool> call)
     {

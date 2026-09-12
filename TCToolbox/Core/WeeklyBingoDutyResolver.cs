@@ -35,30 +35,10 @@ public readonly record struct BingoTarget(BingoTargetKind Kind, uint Id, string 
 /// 把天書（<c>WeeklyBingo</c>）某一格對應到「該開哪個副本／輪盤」。
 /// </summary>
 /// <remarks>
-/// 🔴 <b>刻意不抄 DailyRoutines 的寫死對照表。</b>DR 的 <c>WeeklyBingoClickToOpen</c> 對 Type 4
-/// 用了一張 38 筆的 <c>bingoData → ContentFinderCondition RowId</c> 硬表。2026-08-06 拿台服
-/// 7.20 的 EXD 逐筆核對，那張表在台服至少有 5 筆是錯的，而且錯法完全靜默：
-/// <list type="bullet">
-///   <item>Data 18「萬魔殿 邊境之獄3-4」→ DR 開 807，台服 807 是<b>零式</b>萬魔殿 邊境之獄3（正解 806）。</item>
-///   <item>Data 22「萬魔殿 荒天之獄3-4」→ DR 開 941，台服 941 是<b>零式</b>萬魔殿 荒天之獄3（正解 940）。</item>
-///   <item>Data 34 與 36 在 DR 表裡都指向 985（重複），且 Data 36/37/38 在台服
-///         <c>WeeklyBingoText</c> 的描述是空字串（內容尚未開放）。</item>
-/// </list>
-/// 另外 DR 的 Type 2（區間迷宮）等級範圍是 <c>Data-9 .. Data-1</c>，對台服描述「51-59級迷宮」
-/// 算出來是 50..58 —— 兩端都差一，會開出<b>等級 50</b> 的迷宮而那不算完成該格。
-/// <para>
-/// ⚠️ 這裡不用「<c>ContentType==5</c> ＋ <c>HighEndDuty==false</c> 篩掉零式」——實測台服 7.20 全表
-/// 只有 13 列 <c>HighEndDuty==true</c>（絕／滅／幻／當期零式與極），舊零式（含零式萬魔殿全系列）
-/// 一律是 <c>false</c>。拿它當零式篩子會靜默失效。
-/// </para>
-/// <para>
 /// 改採的做法是<b>資料驅動</b>：用 <c>WeeklyBingoText</c> 的描述字串去比對
 /// <c>ContentUICategory.Name</c> / <c>ContentFinderCondition.Name</c>，比對一律要求<b>完全相等</b>。
 /// 完全相等是關鍵：零式的名稱是「零式萬魔殿 邊境之獄3」，前綴就不同，不可能誤中。
-/// </para>
-/// <para>
 /// 🔴 對不到就回 <see cref="BingoTargetKind.None"/>，呼叫端<b>不准</b>拿「可能是」的副本去開。
-/// </para>
 /// </remarks>
 public static class WeeklyBingoDutyResolver
 {
@@ -66,8 +46,6 @@ public static class WeeklyBingoDutyResolver
     /// Type 3（特殊內容）裡走輪盤的兩格，鍵是 <c>WeeklyBingoOrderData</c> 的 RowId。
     /// </summary>
     /// <remarks>
-    /// 這是全檔唯一一張寫死的表，因為輪盤沒有可靠的資料側關聯。兩筆都在台服 7.20 核對過：
-    /// ContentRoulette 7 =「每日挑戰：紛爭前線」、40 =「水晶衝突（練習賽）」。
     /// 呼叫時另外過一道<b>名稱閘門</b>（天書描述必須是輪盤名稱的子字串），
     /// 所以將來若列號位移，結果是「不開」而不是「開錯」。
     /// </remarks>
@@ -96,8 +74,6 @@ public static class WeeklyBingoDutyResolver
     /// <remarks>
     /// ⚠️ 台服的字面用詞和 <c>ContentUICategory</c> 對得上但和 <c>ContentType</c> 對不上
     /// （<c>ContentType</c> 5 的名字是「大型任務」卻同時含 8 人與 24 人），所以這裡不看名稱只看人數。
-    /// 對應方向與 DailyRoutines 的旗標選擇一致（DR Type 8 用 <c>AllianceRoulette</c>），
-    /// 而且和台服 <c>ContentUICategory</c>「團隊任務（新生艾奧傑亞）」＝水晶塔（24 人）互相印證。
     /// </remarks>
     private static readonly Dictionary<int, uint> MemberTypeByBingoType = new()
     {

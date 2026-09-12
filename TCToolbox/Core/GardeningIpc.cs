@@ -7,29 +7,8 @@ namespace TCToolbox.Core;
 
 /// <summary>
 /// 自動園圃作業的 IPC 對外介面（前綴 <c>TCToolbox.Gardening.</c>）。
-///
-/// 定位：**給本機腳本（SND 等）用的細項操作層**，一次一格、由呼叫端決策與推進；
 /// 刻意不提供「一鍵跑完整座庭院」的外部入口——批次入口只有模組自己的 UI 與
 /// <see cref="GardeningCommand"/>（<c>/tcgarden</c>），兩者都維持「使用者親自觸發、隨時可取消」。
-/// ⚠️ 差別在於 IPC 是<b>別的程式</b>叫的、指令是<b>人</b>打的；前者不該有一鍵批次，後者該有。
-///
-/// 前置條件：使用者必須先在 TC Toolbox 設定視窗啟用「自動園圃作業」模組
-/// （模組停用時 Framework.Update 沒有掛勾，佇列不會推進），動作類端點會直接
-/// 回傳失敗原因而不是靜默無作用。
-///
-/// 端點一覽（動作類一律回傳字串：空字串＝已排入佇列，非空＝zh-TW 失敗原因；
-/// 地壟參數傳 0 代表使用目前的目標）：
-/// <list type="bullet">
-/// <item>動作：Harvest(id) / Tend(id) / Fertilize(id, 肥料ItemId) /
-///       Plant(id, 種子ItemId, 土壤ItemId) / Scan(id)</item>
-/// <item>狀態：IsAvailable() / GetUnavailableReason() / IsBusy() / GetCurrentStep() /
-///       GetDoneCount() / GetSkippedCount() / GetLastSummary() / GetNearbyPatches() /
-///       GetNearbyPatchesOfKind("plot"|"pot") / GetPatchKind(id) /
-///       GetPatchDistance(id) / GetPatchActions(id) / GetPatchState(id)</item>
-/// <item>控制：Stop()</item>
-/// </list>
-/// 排入後呼叫端應輪詢 <c>IsBusy</c> 等待完成，再讀 <c>GetLastSummary</c>。
-///
 /// 🔴 執行緒：<b>每一支端點都經過 <see cref="IpcFrameworkGate"/></b>。CallGate 是直接方法呼叫，
 /// 提供端跑在呼叫端的執行緒上，而這裡的實作同步可達遊戲原生記憶體（物件表、目標、
 /// <c>HousingManager</c>、<c>InventoryManager</c>）以及模組自己的裸 <c>List</c> 佇列。

@@ -7,26 +7,9 @@ namespace TCToolbox.Core;
 /// 只加新的、只刪不要的，已經在上面的原地不動。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 🔑 <b>單位是 <c>GameObjectId</c>。</b>Mini-Mappingway 每一幀自己從物件表重查位置，
-/// 所以我們只需要維護「名單」，完全不必推座標——也就不會有「標記落在不相干位置」那種問題。
-/// </para>
-/// <para>
-/// 🔴 <b>對方會自己把離開物件表的東西移掉。</b>所以我們的追蹤表可能比對方多，
-/// 而多出來的那些再打 <c>RemovePerson</c> 只會拿到 <see langword="false"/>——那是常態不是錯誤。
-/// </para>
-/// <para>
-/// 🔴 <b><c>AddPerson</c> 回 <see langword="false"/> 有兩種常態成因</b>（物件剛消失、或它本來就在
-/// 對方的清單裡），兩種都不進追蹤表、下一輪自己會再試一次。
-/// </para>
-/// <para>
 /// ⚠️ <b>對方可能在我們沒看見的時候被重新載入</b>，那時它的清單是空的而我們的追蹤表還是滿的
 /// ⇒「標記再也不出現，而且完全沒有徵兆」。呼叫端偵測到「從不在變成在」時要呼叫
 /// <see cref="Forget"/>，另外定期用 <c>refreshAll</c> 全量重推一次當保險。
-/// </para>
-/// <para>
-/// 📌 全部在框架執行緒上呼叫，沒有鎖。
-/// </para>
 /// </remarks>
 internal sealed class MiniMappingwayPublisher
 {
@@ -112,10 +95,8 @@ internal sealed class MiniMappingwayPublisher
     /// <remarks>
     /// 用在兩個狀態轉換上：「對方不見了」與「對方從不在變成在」。那時我們記著的東西全部失效，
     /// 留著會讓下一輪同步以為「已經加上去了」——表現成標記再也不出現，且毫無徵兆。
-    /// <para>
     /// 🔴 <b>重新註冊來源之後也一定要呼叫這一支</b>：對方的
     /// <c>AddOrUpdateSource</c> 會把該來源的清單換成一個新的空字典。
-    /// </para>
     /// </remarks>
     public void Forget()
     {

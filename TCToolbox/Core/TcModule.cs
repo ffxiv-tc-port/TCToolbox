@@ -51,17 +51,6 @@ public abstract class TcModule
     /// <remarks>
     /// 判準只有一條：<b>開著但不去按它，遊戲行為完全不變</b>＝<c>true</c>；
     /// 開著就會自己介入（掛 hook 接手、盯著視窗自動點、每隔一段時間自己做事）＝<c>false</c>。
-    /// <para>
-    /// ⚠️ <b>不要看模組名字。</b>名字有「自動」兩個字的模組裡兩種都有
-    /// （<c>AutoMaterialize</c> 要按鈕才動、<c>AutoMateriaRetrieveAll</c> 是掛 hook 自己接手），
-    /// 而名字沒有「自動」的也不見得就是手動。
-    /// </para>
-    /// <para>
-    /// 📌 這是一個<b>與 <see cref="Category"/> 正交的標記，不是第五個分類</b>：
-    /// 標了 <c>true</c> 的模組仍然留在原本的分類分頁上，只是<b>額外</b>出現在「手動觸發」分頁。
-    /// 刻意不做成 <see cref="ModuleCategory"/> 的新成員——那會把模組從它原本的分頁上搬走，
-    /// 習慣去「背包 · 裝備」找投影台功能的人會找不到。
-    /// </para>
     /// </remarks>
     public virtual bool IsManualTrigger => false;
 
@@ -75,7 +64,6 @@ public abstract class TcModule
     /// <remarks>
     /// 🔴 這個屬性是在 ImGui 的 Draw 路徑上被讀的，<b>實作不得擲例外</b>
     /// （Draw 擲一次例外，Dalamud 會把 <c>UiBuilder.Draw</c> 設成 null，整個介面到重開遊戲前都不回來）。
-    /// 呼叫端仍然會再包一層 try，但那是最後一道，不是免責。
     /// </remarks>
     public virtual ModuleNotice? RowNotice => null;
 
@@ -117,11 +105,6 @@ public abstract class TcModule
     /// <summary>模組設定 UI（在主視窗中展開繪製）。</summary>
     /// <remarks>
     /// 🔴 與 <see cref="RowNotice"/> 同一份契約：這是 ImGui 的 Draw 路徑，<b>實作不得擲例外</b>。
-    /// 設定樹狀節點展開著的時候這裡<b>每幀都會被呼叫</b>，所以一個會擲例外的實作就是每幀重擲
-    /// ⇒ Dalamud 的視窗錯誤閂鎖（10 秒內兩次）把主視窗永久關閉到外掛重載為止，
-    /// 而模組的啟用／停用勾選框就在同一扇視窗裡 —— 使用者連關掉肇事模組的入口都一起失去。
-    /// 呼叫端（<c>MainWindow.DrawModuleConfig</c>）會再包一層 try 把故障隔離在單一模組列，
-    /// 但那是最後一道，<b>不是免責</b>。
     /// </remarks>
     public virtual void DrawConfig()
     {

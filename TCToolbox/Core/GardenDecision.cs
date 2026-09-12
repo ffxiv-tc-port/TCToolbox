@@ -6,18 +6,8 @@ namespace TCToolbox.Core;
 
 /// <summary>一格園圃的狀態。</summary>
 /// <remarks>
-/// 🔴 <b>這個狀態讀不到記憶體裡。</b>本 pin 的 <c>FFXIVClientStructs</c> 完全沒有園圃作物的欄位
-/// （<c>HousingFurniture</c> 只有 Id／Stain／Position／Rotation／Index，共 0x30 bytes），
-/// 而 <c>HousingObject</c> 只多了家具索引。全艦隊唯一專門追蹤作物的外掛 Accountant
-/// 也是靠監看 Talk 視窗與聊天訊息、自己存一份計時資料庫，不是讀記憶體。
-/// <para>
-/// ⇒ 唯一的狀態來源是<b>互動時遊戲自己顯示的那句話</b>（Talk 視窗），
-/// 次要來源是選單上出現了哪些選項。兩者都必須真的去互動一次才拿得到。
-/// </para>
-/// <para>
 /// 📌 零值是 <see cref="Unknown"/>：讀不出來的時候必須看得出「不知道」，
 /// 而不是被當成某個具體狀態去動它。
-/// </para>
 /// </remarks>
 public enum PatchState
 {
@@ -84,9 +74,7 @@ public enum WitheredPolicy
 /// 🔴 <b>存在的理由是「不要靠比對理由字串來判斷缺料」。</b>
 /// <see cref="GardenDecision.Reason"/> 是給人看的句子，改一個字就會讓任何字串比對靜默失效，
 /// 而失效的形式正好就是這個旗標要修掉的那一種：畫面上什麼都不說。
-/// <para>
 /// 📌 零值是 <see cref="None"/>：「沒有被材料擋到」是預設。
-/// </para>
 /// </remarks>
 public enum GardenMaterial
 {
@@ -132,10 +120,6 @@ public enum AutoGardenAction
 /// <remarks>
 /// 🔑 <b>純函式，不碰遊戲、不碰 UI、不碰設定檔。</b>唯一的輸入是參數，唯一的輸出是回傳值。
 /// 這樣「決策」與「互動」才分得開——互動那一層已經很難改了，不該再把判斷混進去。
-/// <para>
-/// 📌 這一層取代的是使用者原本寫在 SomethingNeedDoing 巨集裡的那段 Lua：
-/// 那份腳本的分工註解寫著「TCToolbox 只做互動與選單操作，本腳本負責決策」。
-/// </para>
 /// </remarks>
 public static class GardenDecisionMaker
 {
@@ -264,16 +248,6 @@ public static class GardenDecisionMaker
 /// 🔑 <b>種子與收穫物的對應是可以從遊戲資料推出來的，不必寫死一張表。</b>
 /// 路徑是 <c>Item.AdditionalData</c>（種子）→ <c>GardeningSeed</c> 列 → 該列的 <c>Item</c> 欄
 /// ＝<b>收穫得到的作物</b>（不是種子自己）。
-/// <para>
-/// 📌 2026-09-08 離線校準（台服 7.20 EXD dump）：
-/// <c>ItemUICategory=82 且 FilterGroup=20</c> 的 105 個園藝種子<b>全部</b>推得出作物，
-/// 沒有兩個種子指向同一個作物。拿 Accountant 手建的 81 筆 (作物, 種子) 對照表當校準組，
-/// <b>80 筆吻合</b>；唯一不合的那筆是對照表自己錯了
-/// （它把「大蒜球根」#7735 同時當成種子與作物，而 <c>GardeningSeed#21.Item</c> 是「大蒜」#4829）。
-/// </para>
-/// <para>
-/// ⚠️ 兩張對照表都是<b>啟用時建一次</b>就快取住的（各一百多列，一次性成本可忽略）。
-/// </para>
 /// </remarks>
 public static class GardenCropData
 {
@@ -304,10 +278,6 @@ public static class GardenCropData
     /// <remarks>
     /// 🔴 這是<b>退路</b>，不是主要手段。主要手段是從 Talk 那句話裡的 item 連結直接拿 id
     /// （完全不碰文字）。只有當那句話沒有帶連結時才會走到這裡。
-    /// <para>
-    /// ⚠️ 名字本身<b>來自遊戲資料表</b>（<c>Item.Name</c>），程式碼裡沒有寫死任何中文；
-    /// 而且查出來之後仍然是拿 <b>item id</b> 去比對，不是拿名字去比對。
-    /// </para>
     /// </remarks>
     public static uint CropIdByName(string name)
     {

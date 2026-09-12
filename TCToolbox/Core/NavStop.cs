@@ -8,21 +8,10 @@ namespace TCToolbox.Core;
 /// 共用的「停下由本外掛發起的移動」設施：一個 <c>/tcstop</c> 指令 ＋ 補送停止的看門狗。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 🔴 <b>為什麼需要補送而不是送一次就好</b>：<c>vnavmesh.Path.Stop</c> 清的是「已經算好的路徑點」，
-/// 但 <c>SimpleMove.PathfindAndMoveTo</c> 是把路徑計算丟到背景工作，算完之後才交給
-/// FollowPath 開走。所以在「還在算」的那段期間按停止是攔不住的——使用者會看到
-/// 「按了停止、幾秒後角色自己走起來」。
-/// 解法是開一個補送窗口，持續送停止直到 vnavmesh 兩個狀態都回 false。
-/// （完整依據見 <see cref="ExternalNav.IsVnavmeshPathfindInProgress"/> 的說明。）
-/// </para>
-/// <para>
 /// 📌 <b>為什麼做成引用計數的共用設施</b>：會發起移動的模組不只一個
 /// （點擊移動、旗標指令…），但 <c>/tcstop</c> 這個指令名只能註冊一次——
 /// 兩個模組各自 <c>AddHandler</c> 同一個名字，第二個會失敗，而且失敗是靜默的
 /// （使用者只會發現指令有時候有效、有時候沒有）。
-/// 這裡由第一個 <see cref="Acquire"/> 註冊、最後一個 <see cref="Release"/> 移除。
-/// </para>
 /// <para>⚠️ 只在主執行緒使用（模組的啟用／停用與 framework 更新都在主執行緒）。</para>
 /// </remarks>
 internal static class NavStop
@@ -46,8 +35,6 @@ internal static class NavStop
     /// 🔴 為什麼需要：窗口到期時只要 vnavmesh 還在算路徑就會延展（見
     /// <see cref="OnFrameworkUpdate"/>），若 IPC 端點因故永遠卡在 true，看門狗就會
     /// 永久補送。這條上限保證它一定會收工。
-    /// 📌 正常情況遠遠用不到——<c>IsVnavmeshPathfindInProgress</c> 在 IPC 出錯時回 false，
-    /// vnavmesh 中途被拆掉也會自然走到「兩個都 false」的提早收工分支。
     /// </remarks>
     private static readonly TimeSpan AbsoluteCap = TimeSpan.FromSeconds(30);
 
@@ -100,8 +87,6 @@ internal static class NavStop
     /// 3 秒補送窗口就只剩下 RequestStop 裡的<b>單獨一發</b> —— 而這個類別存在的唯一
     /// 理由就是「單獨一發攔不住還在背景計算的路徑」。於是使用者關掉模組後，角色
     /// 幾秒後自己走起來，而 <c>/tcstop</c> 這時也已經登出了。
-    /// ⇒ 指令照舊立刻登出（模組停用了就不該還留著指令），但看門狗改成延後拆：
-    /// 交給 <see cref="OnFrameworkUpdate"/> 在窗口收掉的那一刻自行退訂。
     /// ⚠️ 外掛整個卸載走的是 <see cref="ForceTeardown"/>（不能留訂閱給已卸載的組件）。
     /// </remarks>
     public static void Release()

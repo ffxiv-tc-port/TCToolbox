@@ -15,15 +15,10 @@ namespace TCToolbox.Core;
 /// 內容是從前者原封不動搬過來的（行為一個字都沒改，只是換了位置好讓兩個模組共用）。
 /// </summary>
 /// <remarks>
-/// 道具來源一律讀 ClientStructs 上<b>具名的</b> agent 欄位
-/// （<c>AgentChatLog.ContextItemId</c>、<c>AgentRecipeNote.ContextMenuResultItemId</c> 之類），
-/// 名稱查 Lumina <c>Item</c>／<c>EventItem</c> 表。零 hook、零特徵碼、不寫記憶體。
-/// <para>
 /// ⚠️ 與 DailyRoutines 原版的差異：DR 為了涵蓋更多視窗掛了三條特徵碼 hook
 /// （MiragePrismBox／Achievement／MateriaAttach 的 <c>ReceiveEvent</c>）去攔截「使用者選了哪一格」。
 /// 那三條在台服都沒驗過，而特徵碼解錯位址是靜默的。這裡改成只用具名欄位 ＋
 /// <c>IGameGui.HoveredItem</c>（限白名單視窗）；涵蓋率略低，但沒有任何一條路徑會靜默解錯。
-/// </para>
 /// </remarks>
 internal static unsafe class ItemContextResolver
 {
@@ -70,10 +65,6 @@ internal static unsafe class ItemContextResolver
     /// 依右鍵選單的型別分派，找出使用者按的是哪個道具。
     /// </summary>
     /// <remarks>
-    /// 🔴 <b>兩種選單的資料來源完全不同，不能共用一條路</b>：
-    /// <see cref="ContextMenuType.Inventory"/> 的 agent 是 <c>AgentInventoryContext</c>，
-    /// Dalamud 已經把「按到哪一格」包成 <see cref="MenuTargetInventory.TargetItem"/>；
-    /// <see cref="ContextMenuType.Default"/> 的 agent 是 <c>AgentContext</c>，得逐視窗讀具名欄位。
     /// 背包那條<b>不能</b>改走 <see cref="TryResolveItem(string, out uint, out string)"/>——
     /// 那支對背包沒有具名欄位，又不在 <see cref="HoveredItemAddons"/> 裡，只會回 false。
     /// </remarks>
@@ -313,14 +304,9 @@ internal static unsafe class ItemContextResolver
 
             // 🔴 不可以用 value.String.ToString()：AtkValue.String 是 CStringPointer，
             //    它的 ToString() 是把整段位元組直接丟進 UTF-8 解碼器
-            //    （CStringPointer.cs:14：Encoding.UTF8.GetString(AsSpan())），
-            //    SeString 的 payload 控制位元組會原樣被解出來：
-            //    道具連結那種帶 0xFF 長度前綴的 payload 解出 U+FFFD，
-            //    內嵌圖示 payload（02 12 02 <icon+1> 03）則留下一個可列印的雜字元。
             //    而 label 那一側是 Addon.Text.ExtractText()（已經剝掉 payload 的純文字），
             //    兩側基準不同 ⇒ 比對恆假 ⇒ 去重永遠不生效，
             //    表現成「選單裡出現兩個一模一樣的項目」而不報錯。
-            //    樣板同 UiHelper.GetSelectStringEntries／AutoGardensWork／AutoPlayerCommend。
             var text = MemoryHelper.ReadSeStringNullTerminated((nint)value.String.Value).TextValue;
             if (string.Equals(text, label, StringComparison.Ordinal)) return true;
         }

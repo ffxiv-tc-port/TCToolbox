@@ -46,34 +46,9 @@ internal readonly record struct ControlStatusRow(
 /// 「現在是誰在控制」：把艦隊裡<b>既有的</b>租約／狀態端點集中問一次，唯讀顯示。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 🔴 <b>這個檔完全不寫任何東西。</b>它只呼叫查詢型端點（<c>Is…</c>／<c>Get…</c>），
-/// 一個 <c>Set</c>／<c>Acquire</c>／<c>Stop</c> 都沒有。存在的理由是：使用者現在看不到
-/// 「是哪個外掛正壓著自動點擊」或「誰正在導航」，而那些資訊在提供端<b>早就有了</b>，
-/// 只是零消費（<c>YesAlready.GetSuppressionOwners</c> 是最明顯的一支）。
-/// </para>
-/// <para>
 /// 🔴 <b>「問不到」與「沒有人在控制」要分開。</b>兩者都畫成「沒有人壓著」的話，
 /// 面板在對方沒安裝時看起來一切正常——那正是它最沒有價值的時候。
-/// 所以三態一路帶到列上（見 <see cref="ControlState"/>）。
-/// </para>
-/// <para>
-/// 🔴 <b>例外處理攔三種，而且不裸接 <see cref="Exception"/>。</b>
-/// ①<c>IpcNotReadyError</c>＝沒安裝／端點不在；②<c>IpcTypeMismatchError</c>＝對方改了型別
-/// （它<b>不是</b> <c>IpcNotReadyError</c> 的子型別，兩種都要接）；
-/// ③<see cref="TargetInvocationException"/>＝<b>提供端自己實作裡擲的例外</b>——
-/// CallGate 走 <c>Func.DynamicInvoke</c>，提供端擲的一律被包成這一種，
-/// 而全艦隊慣用的 <c>catch (IpcError)</c> 對它<b>一個都攔不到</b>。
-/// 這三種都當成「問不到」，因為這裡是每幀會走到的顯示路徑，漏一種就是每幀擲一次例外。
-/// </para>
-/// <para>
-/// ⚠️ <b>結果有快取。</b>面板在 ImGui 的 Draw 路徑上，每幀去打十個 IPC 端點是浪費——
-/// 而且對方的實作是跑在<b>我們這條執行緒</b>上的（YesAlready 那支要進它自己的鎖）。
-/// 這裡每 <see cref="RefreshIntervalMs"/> 毫秒才重問一次，中間畫上一次的快照。
-/// </para>
-/// <para>
 /// ⚠️ 只在主執行緒呼叫（唯一的呼叫端是 ImGui 的 Draw）。快取沒有上鎖，也不需要。
-/// </para>
 /// </remarks>
 internal static class FleetControlStatus
 {
@@ -369,21 +344,8 @@ internal static class FleetControlStatus
     /// 兩個自動化撞在一起：Questionable 在跑任務，而 AutoRetainer 的多角色模式會把角色登出。
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// 📌 <b>這一列問的不是「誰在控制」而是「誰等一下會打斷誰」</b>，但使用者會來這扇面板的時刻
-    /// 正好一樣：「怎麼跑到一半停了」。判定本身在 <see cref="QuestAutomationConflict"/>，
-    /// 與任務進度模組共用同一支——那個模組<b>預設是關的</b>，只做在它上面的話，
-    /// 沒開它的人（絕大多數）永遠看不到這個提醒。
-    /// </para>
-    /// <para>
     /// 🔴 <b>「撞在一起」才算 <see cref="ControlState.Active"/>。</b>
     /// 兩邊各自開著是常態（那是使用者自己開的），畫成黃色的話這一列永遠是黃的。
-    /// </para>
-    /// <para>
-    /// 🔴 <b>三種「沒有衝突」不可以併成同一句</b>：沒在跑任務／沒裝 AutoRetainer／多角色模式關著，
-    /// 三者都是綠的，但列上的句子不同——使用者要看得出這個結論是哪一種情況給的。
-    /// 問不到的那兩種（問不到 Questionable、問不到多角色模式）照舊是灰字的「？」。
-    /// </para>
     /// </remarks>
     private static ControlStatusRow DescribeQuestVsRelog()
     {
