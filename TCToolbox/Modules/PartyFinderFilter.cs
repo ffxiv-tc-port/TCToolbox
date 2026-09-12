@@ -17,37 +17,12 @@ namespace TCToolbox.Modules;
 /// 招募清單過濾器：招募板上不想看的招募直接隱藏（重複洗版、關鍵字、以及打高難度時「我這職／我這職能已滿」的隊伍）。
 /// </summary>
 /// <remarks>
-/// <para>
-/// <b>機制＝消費 Dalamud 官方已解析好的招募資料</b>：訂閱 <see cref="IPartyFinderGui.ReceiveListing"/>，
-/// 對每一則招募設定 <c>args.Visible</c>。Dalamud 這個事件<b>只能隱藏、不能竄改</b>招募內容，
-/// 也不送任何封包——資料是遊戲自己收下並解析完的，我們只是選擇要不要顯示。
-/// 這正是紅線「不做封包偽造／攔截」括號裡的例外（讀取遊戲已解析好的資料不算）。
-/// 參考 DailyRoutines <c>PartyFinderFilter</c>（作者 status102）設計重寫，去掉 OmenTools 相依、
-/// 補上職能欄位的載入時自我校準。
-/// </para>
-/// <para><b>四道過濾（各自可關）</b>：</para>
-/// <list type="number">
-/// <item><b>重複招募</b>：同一批次裡「同一副本＋同一段說明文字」的第二則之後全部隱藏
-/// （RMT／代刷常一次貼十幾則一模一樣的）。</item>
-/// <item><b>關鍵字</b>：對招募人名稱與說明做正規表示式比對，黑名單（命中就藏）或白名單（只留命中的）。</item>
-/// <item><b>高難度：我這職已在隊</b>：打高難度副本時，隊裡已經有一個跟我同職業的就藏
-/// （同職通常搶同一件裝，留著也進不去）。</item>
-/// <item><b>高難度：我這職能已滿</b>（預設關）：我的職能（坦／純治／盾治／近戰／遠物／遠魔）
-/// 在該隊已達設定上限、或該隊沒有一個空位收我這職，就藏。</item>
-/// </list>
-/// <para>
 /// 🔴 <b>職能欄位（<c>ClassJob.Unknown11</c>）在台服 Lumina pin 的對齊未經離線證明。</b>
 /// 台服的六分類值是 1坦／2純治／6盾治／3近戰／4遠物／5遠魔，但這個欄位是自動命名的，
 /// pin 一動就可能對到別的欄位。所以<b>啟用時自我校準</b>：讀騎士／戰士／暗黑／絕槍（應同為坦）、
 /// 白魔／占星（同為純治）、學者／賢者（同為盾治）以及各職能代表職，驗「同組相等、跨組相異、坦≠0」。
 /// 校準不過就<b>停用兩道高難度過濾並印一行 <c>Information</c></b>——寧可少過濾，不要靠一個對錯的欄位
 /// 把使用者的招募清單默默砍掉。
-/// </para>
-/// <para>
-/// ⚠️ 職業→<see cref="JobFlags"/> 的比對用 <c>NameEnglish</c> 去空白後 <c>Enum.TryParse</c>
-/// （White Mage→WhiteMage、Blue Mage→BlueMage…），已逐一核對過台服 <c>ClassJob</c> 表的英文名
-/// 與 <see cref="JobFlags"/> 列舉名對得上；對不上的職業會在「空位是否收我」那一步被當成不收（多藏，不會少藏成誤入）。
-/// </para>
 /// </remarks>
 public sealed class PartyFinderFilter : TcModule
 {

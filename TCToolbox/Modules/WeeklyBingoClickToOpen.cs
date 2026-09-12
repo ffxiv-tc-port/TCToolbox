@@ -19,24 +19,12 @@ namespace TCToolbox.Modules;
 /// 在天書（<c>WeeklyBingo</c>）的格子上點一下，直接開任務搜尋器到對應的副本／輪盤。
 /// </summary>
 /// <remarks>
-/// 機制：<c>WeeklyBingo</c> 開啟時對 16 個格子按鈕各掛一個 <see cref="AddonEventType.ButtonClick"/>，
-/// 點下去時查 <c>PlayerState</c> 的天書狀態，交給
-/// <see cref="WeeklyBingoDutyResolver"/> 解析成副本／輪盤，再呼叫
-/// <c>AgentContentsFinder::OpenRegularDuty</c> / <c>OpenRouletteDuty</c>。
-/// 只是「幫你把搜尋器開到那一項」，不排隊、不送封包。
-/// <para>
 /// 🔴 <b>對照表沒有寫死。</b>DailyRoutines 同名模組那張 38 筆的硬表在台服至少 5 筆是錯的
 /// （兩筆會開成<b>零式</b>），詳見 <see cref="WeeklyBingoDutyResolver"/> 的說明。
 /// 這裡改用資料驅動的完全比對，<b>對不到就不開</b>，只在 log 與聊天欄說明原因。
-/// </para>
-/// <para>
 /// 🔴 <b>不用 <c>NodeId - 12</c> 反推格子編號。</b>DR 是這樣做的，基準只要不同就會靜默開錯格子。
 /// 這裡每個格子註冊自己的處理器（Dalamud 會給每次註冊獨立的 param key），
 /// 點下去之後再<b>重新取得 addon</b> 核對節點指標和格子編號對得上才動作。
-/// </para>
-/// <para>
-/// ⚠️ 只在格子狀態是「未完成」時動作。已完成待貼貼紙／重置模式下的點擊是遊戲自己的功能，不介入。
-/// </para>
 /// </remarks>
 public sealed unsafe class WeeklyBingoClickToOpen : TcModule
 {

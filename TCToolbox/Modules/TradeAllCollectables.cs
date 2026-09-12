@@ -15,35 +15,10 @@ namespace TCToolbox.Modules;
 /// 把目前分頁裡所有可交易的收藏品一次交完。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 🔴 <b>純手動觸發</b>：開著模組但不去按按鈕，遊戲行為完全不變。刻意<b>不</b>做成
 /// 「開啟視窗就自動交易」——收藏品交易是不可逆的道具消耗，必須由使用者當下按下才開始。
-/// </para>
-/// <para>
-/// 📌 <b>怎麼按下「交易」</b>：取 <c>CollectablesShop</c> 上 <b>node id 51</b> 的按鈕元件，
-/// 然後<b>重播那顆按鈕自己的事件</b>（<see cref="UiHelper.ClickButton"/>）。
-/// 這條路徑刻意<b>不用</b>寫死的 callback 序號，也<b>不用</b>特徵碼：
-/// <list type="bullet">
-/// <item>上游 PandorasBox <c>TradeAllCollectibles</c> 用的是
-/// <c>Callback.Fire(addon, false, 15, 0u)</c>——15 是寫死的事件序號，台服沒有任何可離線驗證的依據，
-/// 而且它還把原生的交易鈕藏起來換成自己的 ImGui 按鈕（<c>NodeList[2]</c>，那是<b>索引</b>不是 node id）。</item>
-/// <item>DailyRoutines <c>AutoCollectableExchange</c> 用的是特徵碼掃出來的
-/// <c>HandInCollectables(agent)</c>——一樣是台服未驗證的寫死位元組樣式。</item>
-/// </list>
-/// node id 51 則有<b>兩個互相獨立的來源</b>指向同一個東西：ECommons 的
-/// <c>AddonMaster.CollectablesShop.TradeButton =&gt; GetComponentButtonById(51)</c>，
-/// 以及 DailyRoutines 對同一個 addon 取 <c>GetNodeById(51u)</c> 當「交易」鈕來隱藏。
-/// 台服 <c>Addon</c> 表第 531 列的字串正是「交易」（離線核對 <c>exd-tc/7.20/Addon.csv</c>），
-/// 與 DR 拿來當按鈕標籤的那一列一致。
-/// <para>
-/// ⚠️ 即使如此，node id 仍然是「下次改版可能失效」的東西，所以解析不到時<b>整個功能停用並明講</b>
-/// （<see cref="GetBlockedReason"/>），不會安靜地什麼都不做。
-/// </para>
-/// </para>
-/// <para>
 /// 🔴 <b>不自動確認任何對話框。</b>流程中只要出現 <c>SelectYesno</c> 就立刻停下並提示使用者，
 /// 絕不代按「是」——收藏品交易一旦有確認框，那個框問的內容我們無法離線證明。
-/// </para>
 /// </remarks>
 public sealed unsafe class TradeAllCollectables : TcModule
 {

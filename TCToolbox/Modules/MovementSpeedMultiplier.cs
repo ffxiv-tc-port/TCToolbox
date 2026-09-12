@@ -20,45 +20,6 @@ namespace TCToolbox.Modules;
 /// 移動速度倍率：只在使用者列進白名單的副本裡，把角色移動速度乘上一個倍率。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 🔑 <b>hook 的是哪一支、為什麼是那一支（2026-08-30 對台服 7.20 主程式離線鑑識，全部可重驗）</b>
-/// </para>
-/// <list type="bullet">
-/// <item>
-/// 特徵碼 <c>E8 ?? ?? ?? ?? 44 0F 28 D8 45 0F 57 D2</c> 在 <c>.text</c> <b>唯一命中</b>
-/// （命中位址 <c>0x14085A956</c>，是一條 <c>call</c>）。Dalamud 的 <c>ScanText</c> 會自動跟隨
-/// 開頭的 E8 rel32，所以解出來的是<b>被呼叫的那支函式</b>＝<c>0x1408903B0</c>。
-/// </item>
-/// <item>
-/// <c>0x1408903B0</c> 有 <b>8 個 call xref</b>（0x14085A956、0x14085B476、0x14085F3E1、
-/// 0x14085F8B2、0x141712AF0、0x141715139、0x14171B43E、0x14171B476），
-/// <b>不是內聯後的死碼</b>——這條是必驗的，艦隊有「特徵碼唯一命中但函式零引用、hook 靜默永不觸發」的前例。
-/// </item>
-/// <item>
-/// <b>回傳值語意＝倍率，不是絕對速度</b>（已讀反組譯逐條確認）：函式尾端是
-/// <c>cvtdq2ps</c> 之後 <c>divss xmm0, [0x141FDB208]</c>，而該常數實測 <b>= 100.0f</b>；
-/// 另一條「取不到目標就早退」的路徑回傳 <c>[0x141FDB168]</c> 實測 <b>= 1.0f</b>。
-/// 也就是 <c>回傳 = max(速度百分比, 0) / 100</c>，<b>1.0 ＝ 原速</b>。
-/// </item>
-/// <item>
-/// <b>遊戲自己就是這樣用它的</b>：<c>0x141712A75</c> 那支函式先依移動方式選出基礎速度到 xmm6
-/// （站在地上走是 <c>[走路控制器 + 0x58]</c>，坐騎／飛行／游泳走 <c>[[走路控制器 + 0x50] + 0xC/0x14/0x18]</c>），
-/// 然後 <c>call 0x1408903B0</c> 取得倍率，最後 <c>mulss xmm0, xmm6</c>。
-/// 也就是<b>最終速度 ＝ 基礎速度 × 本函式回傳值</b>——我們乘在回傳值上，等價於乘在最終速度上，
-/// 而且<b>坐騎／飛行／游泳／走路全部共用同一支</b>，不必分別處理。
-/// </item>
-/// <item>
-/// 參數 <c>a1</c> 是一個容器結構：函式一進去就 <c>mov rcx,[rcx+8]</c> 取出角色指標再打它的虛表
-/// （<c>[vtbl+0x270]</c>／<c>[vtbl+0x278]</c>）。這一點被用來做<b>本地玩家身分閘門</b>，見 <see cref="IsLocalPlayer"/>。
-/// </item>
-/// <item>
-/// 這支函式<b>有 8 個呼叫點，而且無法離線證明它只為本地玩家執行</b>
-/// （其中幾個落在 4557／6148 位元組的巨大鏈結函式裡）。所以 detour <b>不假設</b>它只跑本地玩家，
-/// 而是每一次呼叫都拿 <c>a1+8</c> 的角色指標與 <c>Control.Instance()-&gt;LocalPlayer</c> 比對，
-/// 不是本人就原值放行。<b>這把「假設」換成了「每次都檢查」。</b>
-/// </item>
-/// </list>
-/// <para>
 /// 🔴🔴 <b>detour 契約：不做任何「沒有被原函式證明過」的解參考。</b>
 /// <c>a1</c> 原封不動轉給原函式；唯一一處解參考是 <c>a1+8</c>，而且<b>只在原函式成功返回之後</b>才做
 /// ——原函式自己進門就無條件解參考同一個位址，所以它順利返回就是那個位址可讀的證明
@@ -67,22 +28,8 @@ namespace TCToolbox.Modules;
 /// 所以防護不能靠例外隔離，只能靠<b>不做沒有被證明過的解參考</b>。
 /// 要不要生效的判斷（在不在副本、在不在白名單、有沒有在戰鬥）<b>全部在 framework 執行緒上每幀算完</b>，
 /// 結果寫進 <see cref="activeMultiplier"/> 這個 <c>volatile float</c>，detour 只讀它。
-/// </para>
-/// <para>
-/// 🔴 <b>所有失效形式都是 no-op（回傳原值），不是崩潰</b>：特徵碼解不到＝不掛 hook 也不記錯誤級記錄；
-/// 倍率是 1＝直接回原值；不在白名單副本＝倍率被算成 1；原值不是有限數＝回原值；
-/// 停用時先把倍率歸 1 再拆 hook。
-/// </para>
-/// <para>
-/// ⚠️ <b>與 BossModReborn 的關係</b>：BMR 用<b>同一條特徵碼</b>每幀呼叫這支函式來估玩家速度
-/// （<c>WorldStateGameSync</c>）。它自己組的 <c>CharacterContainer</c> 是
-/// <c>[FieldOffset(0x8)] Character*</c> 且填本地玩家，<b>通得過</b>我們的身分閘門，
-/// 所以它讀到的是<b>放大後</b>的倍率——對它的尋路是正確的方向（它會知道角色跑比較快）。
-/// </para>
-/// <para>
 /// 🔴 <b>使用者裁決：預設關、白名單預設空。</b>開了模組但一個副本都沒加＝完全不動作。
 /// 倍率上限 3.0（2026-08-31 使用者要求自 1.5 提高）：伺服器對位移速度的容忍度<b>無法離線證明</b>，見設定畫面上的紅字。
-/// </para>
 /// </remarks>
 public sealed unsafe class MovementSpeedMultiplier : TcModule
 {
@@ -155,11 +102,9 @@ public sealed unsafe class MovementSpeedMultiplier : TcModule
     /// <remarks>
     /// 🔑 這兩個旗標存在的唯一目的是把「這支函式到底會不會為別的角色跑」這個
     /// <b>離線證明不了</b>的問題，變成使用者記錄裡看得到的事實。
-    /// <para>
     /// 🔴 型別是 <c>volatile bool</c> 而不是計數器：detour 裡只准做「存一個常數」這種
     /// 不配置記憶體、不會擲例外的動作。記錄要寫在 framework 執行緒上，<b>不准寫在 detour 裡</b>
     /// ——那是每幀都會走的路徑，而且 <c>Svc.Log</c> 會配置字串。
-    /// </para>
     /// </remarks>
     private volatile bool sawOtherCharacter;
 
@@ -269,12 +214,6 @@ public sealed unsafe class MovementSpeedMultiplier : TcModule
     /// <remarks>
     /// 🔴🔴 <b>這個方法裡不准出現任何指標解參，也不准出現任何會擲例外的呼叫。</b>
     /// <c>a1</c> 只是原封不動轉給原函式；我們碰的只有它的回傳值與一個 <c>volatile float</c>。
-    /// <para>
-    /// 📌 <c>hook</c> 為 <c>null</c> 時回傳 <b>1.0</b> 而不是 0：1.0 正好是遊戲自己那條
-    /// 「取不到目標就早退」路徑的回傳值（已離線讀出常數 <c>0x141FDB168</c> ＝ 1.0f），
-    /// 也就是「原速」。回 0 會讓角色完全不能動。
-    /// 這條路只有在停用與 detour 撞在一起的極短窗口才走得到。
-    /// </para>
     /// </remarks>
     private float Detour(nint a1)
     {
@@ -304,29 +243,10 @@ public sealed unsafe class MovementSpeedMultiplier : TcModule
     /// 這一次呼叫的對象是不是<b>本地玩家</b>。
     /// </summary>
     /// <remarks>
-    /// 🔴 <b>為什麼這裡的解參考是安全的（而且只有這個順序安全）</b>：
-    /// 這個方法只在 <c>OriginalDisposeSafe</c> <b>成功返回之後</b>才被呼叫。
-    /// 原函式（<c>0x1408903B0</c>）進去的前三條指令就是
-    /// <c>mov rdi,rcx</c> ／ <c>mov rcx,[rcx+8]</c> ／ <c>mov rax,[rcx]</c>——
-    /// 它<b>無條件地</b>解參考 <c>a1+8</c>，而且還接著解參考那個角色指標去打它的虛表。
-    /// 所以「原函式已經順利返回」本身就是「<c>a1+8</c> 這一刻讀得到」的<b>證明</b>，
-    /// 同一條呼叫、同一個執行緒、中間沒有讓出。我們沒有引進任何新的解參考風險。
-    /// <para>
     /// 🔴 <b>不可以把這個呼叫搬到 <c>original</c> 之前。</b>搬了就變成我們自己先賭一把，
     /// 而 AccessViolationException 在 .NET Core 是 corrupted-state exception，<c>try/catch</c> 根本攔不到。
-    /// </para>
-    /// <para>
-    /// 📌 比對的是<b>位址</b>：CS 的 <c>BattleChara</c> 帶 <c>[Inherits&lt;Character&gt;]</c>，
-    /// 基底型別就在偏移 0，所以同一個物件的 <c>BattleChara*</c> 與 <c>Character*</c> 是同一個位址。
-    /// </para>
-    /// <para>
-    /// 📌 BossModReborn 自己組的 <c>CharacterContainer</c> 也是 <c>[FieldOffset(0x8)] Character*</c>
-    /// 且填的是本地玩家，所以它每幀那一發<b>仍然</b>拿得到放大後的倍率，不受這道閘門影響。
-    /// </para>
-    /// <para>
     /// 🔑 讀不到就回 <c>false</c>（＝不放大）。這個方向的錯誤是「該加速時沒加速」，
     /// 反方向是「對不該碰的角色改了速度」。
-    /// </para>
     /// </remarks>
     private static bool IsLocalPlayer(nint a1)
     {
@@ -371,8 +291,6 @@ public sealed unsafe class MovementSpeedMultiplier : TcModule
     /// 把「這支函式到底只為本地玩家跑、還是也為別的角色跑」寫進記錄，<b>各只寫一次</b>。
     /// </summary>
     /// <remarks>
-    /// 🔑 這件事<b>離線證明不了</b>（那支函式有 8 個呼叫點，其中幾個落在數千位元組的巨大鏈結函式裡）。
-    /// 與其寫一句「假設只有本地玩家會走到」，不如讓使用者的記錄直接回答它。
     /// <para>📌 一律 <c>Information</c>：使用者的記錄等級只會濾掉 Verbose、Debug 收得到但單檔數十萬行會淹沒。</para>
     /// </remarks>
     private void LogIdentityGateOnce()

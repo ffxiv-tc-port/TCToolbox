@@ -13,29 +13,13 @@ namespace TCToolbox.Modules;
 /// 在可整疊開啟的箱類道具右鍵選單補上「全部開啟」，一件一件開到完。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 🔴🔴 <b>不能照抄上游的 <c>ItemAction.RowId is 388 or 367 or 2462</c>。</b>
-/// 台服 7.20 離線比對 <c>exd-tc/7.20/Item.csv</c> 的實數：
-/// <list type="bullet">
-/// <item><c>ItemAction</c>＝388 共 488 件，其中 <b>470 件是箱子</b>（<c>ItemUICategory</c>＝61 雜貨），
-/// 但另外 <b>18 件是藥品</b>（<c>ItemUICategory</c>＝44）——禦火藥／禦冰藥／禦風藥／禦土藥那一系列。</item>
-/// <item>更糟的是<b>疊放數的分佈剛好相反</b>：那 470 個箱子絕大多數 <c>StackSize</c>＝1，
-/// 過不了「可疊放才顯示」這一關；而 18 個藥品全部是 999。
-/// 也就是說上游的判斷式在台服實際命中的 52 件裡，<b>有 18 件（35%）是藥水</b>，
-/// 按下「全部開啟」的結果是<b>整疊灌下去</b>。</item>
-/// </list>
 /// 所以這裡多一道 <c>ItemUICategory != 44</c>（藥品）。
-/// </para>
-/// <para>
 /// ⚠️⚠️ <b>這是上游本來就有的缺陷，不是台服的資料差異。</b>特別寫清楚是為了防止未來同步上游時
 /// 有人「發現我們多了一個條件」而把它拿掉。<c>ItemAction</c> 388 在國際服同樣混著這批藥品，
 /// 只是沒有人回報過而已。<b>要改這個判斷式之前，先重跑一次上面那個統計。</b>
-/// </para>
-/// <para>
 /// 📌 開啟的方式走 <c>ActionManager.UseAction(ActionType.Item, ...)</c>（艦隊先例：Artisan 的
 /// <c>ActionManagerEx.UseItem</c>），<b>不</b>照抄上游那套「開右鍵選單再 FireCallback 第 0 項」——
 /// 那假設選單第一項一定是「使用」，而選單內容會隨道具與情境變動，點錯一項的代價太高。
-/// </para>
 /// <para>🔴 逐件之間有間隔，而且每一件都重新確認狀態；隨時可以按停止。</para>
 /// </remarks>
 public sealed unsafe class OpenAllCoffers : TcModule

@@ -13,33 +13,14 @@ namespace TCToolbox.Modules;
 /// 這個模組改成關掉後立刻用<b>新資料</b>重新打開同一則，等於「不關、只刷新」。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 機制＝hook <c>AgentLookingForGroup</c> 的隱藏函式。判定這次隱藏是「隊伍人數變動造成的刷新」時，
-/// 關掉詳細視窗並排程重新開啟同一則；判定是「使用者自己要關」時，原封不動交回遊戲。
-/// 參考 DailyRoutines <c>NoAutoClosePartyFinder</c>（作者 Nyy／YLCHEN）重寫，並修掉原版兩個問題（見下）。
-/// </para>
-/// <para>
-/// <b>離線反組譯驗證（台服 7.20，imageBase 0x140000000）</b>：隱藏函式特徵碼<b>唯一命中</b>
-/// <c>0x140527C10</c>，<c>.pdata</c> 確認為真函式起點；唯一引用來自 <c>.rdata</c> 的 vtable 槽
-/// ——是虛函式、經 vtable 分派、<b>確實會被呼叫</b>（不是內聯死碼），hook 會觸發。rcx＝<c>AgentLookingForGroup*</c>。
-/// </para>
-/// <para>
 /// 🔴 <b>修掉 DR 原版的跨幀原生指標。</b>DR 用 <c>RunOnTick(() =&gt; agent-&gt;OpenListing(...), 100ms)</c>
 /// 把 <c>agent</c> 指標<b>帶過幀</b>——原生指標跨幀是紅線（延遲那 100ms 內 agent 可能已失效，
 /// 裸解參考就是攔不到的 AccessViolationException）。這裡只把 <c>listingId</c>（值）帶過幀，
 /// 重開的那一刻<b>重新解析</b> <see cref="AgentLookingForGroup.Instance"/>。
-/// </para>
-/// <para>
 /// 🔴 <b>不攔截／不抑制任何遊戲訊息。</b>DR 原版靠攔一個 <c>LogMessage</c>（947，隊員變動）並把它
 /// <c>isPrevented = true</c> 抑制掉來當時序訊號。這裡改成<b>唯讀輪詢</b>：每幀讀
 /// <c>LastViewedListing.SlotsFilled</c>，人數變了才記一個時間戳——不 hook 訊息、不抑制任何東西，
 /// 只讀遊戲已解析好的欄位。
-/// </para>
-/// <para>
-/// ⚠️ <b>時序競態已設計成無害。</b>「人數變動」由每幀輪詢與 hook 當下<b>兩處</b>共同比對同一個基準值＋
-/// 一個 1 秒的黏著時間戳，所以輪詢與 hook 在同一幀誰先跑都能抓到這次變動。若真的沒抓到（例如遊戲
-/// 更新順序與假設不同），失敗形式是<b>視窗照舊關閉</b>（＝沒裝這個模組的行為），不會崩、不會卡。
-/// </para>
 /// </remarks>
 public sealed unsafe class NoAutoClosePartyFinder : TcModule
 {

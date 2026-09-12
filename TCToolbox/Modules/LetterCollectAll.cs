@@ -22,22 +22,11 @@ namespace TCToolbox.Modules;
 /// <remarks>
 /// 🔴 <b>只收取，永遠不刪信。</b>遊戲的信件代理人（<c>AgentLetterList</c>）用事件編號 4 做刪除，
 /// 本模組<b>從頭到尾不會送出那個編號</b>——收完的信件由遊戲自己按它原本的規則處理。
-/// <para>
-/// 📌 <b>手動觸發</b>：模組開著也完全不會自己動，一定要在信箱開著時按下按鈕才會跑一輪。
-/// </para>
-/// <para>
 /// 🔑 <b>「領取全部」按鈕靠文字比對認出來，不是靠節點編號認出來。</b>
 /// 離線傾印台服自己的 <c>ui/uld/LetterViewer.uld</c> 確認底排三顆按鈕是節點 30／31／32
 /// （由左到右，各 130x28），而<b>最右邊那顆是刪除</b>——認錯一格的代價是把信連同附件刪掉。
 /// 所以按下去之前一定要先讀那顆按鈕上的字，跟遊戲自己的 <c>Addon</c> 第 430 列
 /// （台服＝「領取全部」）比對，對不上就整輪拒絕執行並把三顆按鈕的實際文字寫進記錄。
-/// </para>
-/// <para>
-/// 🔴 <b>不保存任何原生指標。</b>每一步都重新取 addon 與 <c>InfoProxyLetter</c>，
-/// 信件也<b>每一輪重讀一次、只處理當下的第一封</b>——不是先抓一份索引清單再照著跑。
-/// 收完一封之後遊戲會把清單壓縮，事先抓的索引<b>從第二封開始就全部指到別封信</b>，
-/// 而那個錯誤不會有任何徵兆。
-/// </para>
 /// </remarks>
 public sealed unsafe class LetterCollectAll : TcModule
 {
@@ -62,8 +51,6 @@ public sealed unsafe class LetterCollectAll : TcModule
     /// 「領取全部」按鈕在 <c>LetterViewer</c> 裡的節點編號。
     /// </summary>
     /// <remarks>
-    /// 離線傾印台服 <c>ui/uld/LetterViewer.uld</c>：節點 30／31／32 是底排三顆同型按鈕
-    /// （Component#1009，各 130x28，x＝90／223／356）。
     /// ⚠️ 節點編號本身<b>不是</b>判準——真正的判準是 <see cref="TakeAllLabelRow"/> 的文字比對，
     /// 這個常數只是「先找哪一顆來比對」。
     /// </remarks>
@@ -129,11 +116,6 @@ public sealed unsafe class LetterCollectAll : TcModule
     /// 🔴 三個條件全部成立才按「是」：本模組的佇列正在跑、信箱開著、信件內容視窗也開著。
     /// 少任何一條就完全不動作——這樣「按下是」的時間窗只有使用者自己按下按鈕之後的那幾秒，
     /// 而且必須是在信件視窗開著的狀態下。
-    /// <para>
-    /// 📌 <b>不論按不按，提示文字一律寫進記錄</b>（Information 級、已節流）。
-    /// 這個功能沒有辦法離線得知台服到底會不會跳確認框、跳的是哪一句，
-    /// 記錄下來的話下次就知道，不必請使用者去試。
-    /// </para>
     /// </remarks>
     private void OnSelectYesno(AddonEvent type, AddonArgs args)
     {

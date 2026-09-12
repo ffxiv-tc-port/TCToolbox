@@ -19,28 +19,8 @@ namespace TCToolbox.Modules;
 /// 📌 做法沿用 DailyRoutines 的 <c>OptimizedFreeCompanyChest</c>：分頁圓鈕的節點 id
 /// 是 <c>10 + 頁序</c>（第 1～5 頁 ＝ 10～14），水晶頁是 15。
 /// 📌 使用者只點名「預設頁面」，DR 那個模組的「快捷存取」與「Gil 圖示」<b>刻意不做</b>。
-/// <para>
-/// 🔴 <b>節點 id 是寫死值，而且失效是靜默的</b>（什麼都不發生，或更糟——切到別頁）。
-/// 所以這裡不是「取到就按」，而是三道閘門全過才按：
-/// <list type="number">
-/// <item>取得到 <c>GetComponentByNodeId</c> 的元件；</item>
-/// <item>元件的 uld <see cref="ComponentType"/> 必須真的是 <see cref="ComponentType.RadioButton"/>
-/// ——這是關鍵一道：節點 id 若改指到別種元件，直接把它當按鈕讀
-/// （<c>IsEnabled</c> 走 <c>OwnerNode</c>）就是在對不是那個型別的記憶體解參考；</item>
-/// <item><see cref="UiHelper.ClickButton"/> 自己還會驗按鈕啟用、節點可見、事件非 null。</item>
-/// </list>
-/// 任何一道沒過都<b>什麼都不做</b>，並寫一行 <c>Information</c>（使用者跑 LogLevel 1）。
-/// </para>
-/// <para>
-/// 🔴 <b>不跨幀保存原生指標。</b>PostSetup 只把「這次開窗還沒切過」記成一個 bool，
-/// 真正動手是在 PostDraw 當場重新取 addon。切換是否生效靠圓鈕自己的
-/// <c>IsSelected</c> 判定，而不是假設按了就成功；<see cref="AttemptWindowMs"/> 到了還沒選上
-/// 就放棄並留下記錄。
-/// </para>
-/// <para>
 /// ⚠️ 預設是 <see cref="InventoryType.Invalid"/>＝不切換，也就是<b>維持遊戲原本的行為</b>。
 /// 舊設定檔沒有這個欄位，反序列化不會覆寫欄位初始值，所以升級上來的使用者不會突然被換頁。
-/// </para>
 /// </remarks>
 public sealed unsafe class OptimizedFreeCompanyChest : TcModule
 {

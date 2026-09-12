@@ -11,42 +11,12 @@ namespace TCToolbox.Modules;
 /// 放大遊戲內建的中文輸入法候選字清單（也連帶放大同一個位置的文字補完／翻譯輔助選單）。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 📌 <b>零 hook、零特徵碼、零遊戲函式呼叫。</b>整條路徑只有「讀欄位」與「寫兩個 float
-/// ＋一個旗標」，所以任何一個假設不成立時的最差結果是<b>功能沒作用</b>，不是崩潰。
-/// 參考 DailyRoutines <c>LargerIME</c> 的想法（縮放文字輸入元件的 4 號節點），
-/// 但<b>刻意不沿用它的實作</b>——DR 是 hook <c>AtkComponentTextInput::ReceiveEvent</c>，
-/// 那需要一條特徵碼、而且每次輸入事件都要進出 detour。
-/// </para>
-/// <para>
-/// 🔑 <b>4 號節點是什麼，離線查證過（2026-09-03，<c>ui/uld/ChatLog.uld</c>）。</b>
-/// ChatLog 的 <c>Component 1012 (TextInput)</c> 內部共 17 個節點：
-/// <list type="bullet">
-/// <item><c>Node 1</c>（Res 186x28）＝輸入框本體，<c>Node 16</c>＝輸入中的文字、<c>Node 17</c>＝底圖。</item>
-/// <item><c>Node 4</c>（Res 186x221，位置 -1,16）＝<b>浮在輸入框下方的候選清單容器</b>；
-/// 它底下掛著 <c>Node 5~13</c> 九個按鈕元件、<c>Node 14</c> 頁碼文字、<c>Node 15</c> 底圖。</item>
-/// </list>
-/// 這與 <c>FFXIVClientStructs</c> 的 <c>AtkComponentTextInput</c> 欄位一一對得起來：
-/// <c>_autoTranslateMenuButtons</c> 正好是 <c>FixedSizeArray9</c>、另有
-/// <c>AutoTranslateMenuPageInfoTextNode</c> 與 <c>AutoTranslateMenuBackground</c>。
-/// ⚠️ 也就是說，這個容器在 CS 裡叫「翻譯輔助選單」——<b>遊戲把候選字清單與翻譯輔助選單
-/// 畫在同一組節點上</b>（整個元件裡再也沒有第二組候選清單節點），所以放大它會兩者一起放大。
-/// </para>
-/// <para>
 /// 🔴 <b>不用 <c>Type == 1000 + ComponentType</c> 判元件種類。</b>那條看似成立的規則是錯的：
 /// 實機 <c>AtkResNode.Type</c> 對元件節點放的是<b>該 ULD 檔自己的元件編號</b>
 /// （ChatLog 的文字輸入元件是 <c>1012</c>，不是 <c>1007</c>），Artisan 已在台服離線推翻過
 /// （反例 <c>1028</c>／<c>1029</c> 超出 <c>ComponentType</c> 的上限 25）。
-/// 這裡改讀元件自己的 <c>UldManager.Objects</c>（<c>BaseType == Component</c> 時就是
-/// <c>AtkUldComponentInfo*</c>）裡的 <c>ComponentType</c> 欄位——那是遊戲自己記著的真值。
-/// </para>
-/// <para>
 /// 🔴 <b>不跨幀保存任何原生指標。</b>每次輪詢當場從 <c>AllLoadedUnitsList</c> 走下來、
 /// 當場用完丟掉；模組不持有任何 <c>AtkUnitBase*</c>／<c>AtkResNode*</c> 欄位。
-/// </para>
-/// <para>
-/// 📌 <b>預設 1.0 ＝行為完全不變</b>，而且模組本身預設關閉。
-/// </para>
 /// </remarks>
 public sealed unsafe class LargerIMECandidates : TcModule
 {

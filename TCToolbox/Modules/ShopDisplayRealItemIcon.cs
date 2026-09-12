@@ -16,29 +16,9 @@ namespace TCToolbox.Modules;
 /// 參考 DailyRoutines <c>ShopDisplayRealItemIcon</c> 重寫（API13、無 OmenTools／KamiToolKit 相依）。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 🔴 <b>機制：改 addon 自己的 AtkValues 再叫它重新整理。</b>每一種商店 addon 在自己的
-/// AtkValues 陣列裡都存了「這一列是哪個道具」與「這一列畫哪個圖示」兩組值；這裡把後者換成
-/// <c>Item.Icon</c>，再呼叫 addon 的 <c>OnRefresh</c> 讓它照新值重畫。
-/// </para>
-/// <para>
-/// ⚠️⚠️ <b>這些 AtkValue 索引全部來自 DailyRoutines（國際／國服版面），在台服 7.20
-/// 無法離線證明。</b>索引不對時本模組<b>不會</b>把圖示換對，但也<b>刻意不會崩潰</b>：
-/// <list type="bullet">
-/// <item><b>讀</b>永遠只讀 <c>.UInt</c>（純讀聯合體，不解參考），而且先驗
-/// <see cref="AtkUnitBase.AtkValuesCount"/> 邊界與 <c>AtkValues</c> 欄位非 null。</item>
-/// <item><b>寫</b>只覆寫「本來就是數值型別（Int／UInt）」的槽（<see cref="TrySetIcon"/>）。
-/// 這道是防崩潰的關鍵：假如台服的某個「圖示槽」其實存的是字串指標，直接
-/// <c>SetUInt</c> 會把指標槽改成小整數，接著 <c>OnRefresh</c> 若把它當字串指標解參考就是
-/// AccessViolationException（<c>try/catch</c> 攔不到）。只寫已經是數值的槽，最壞情況是
-/// 「圖示沒換成／換錯」的純視覺問題，不會動到字串槽。</item>
-/// </list>
-/// </para>
-/// <para>
 /// 🔴 <b>再入防護</b>：<c>OnRefresh</c> 是 addon 的虛擬函式，直接呼叫理論上可能再度觸發
 /// PostRefresh 監聽而形成遞迴。<see cref="reentryGuard"/> 讓任何巢狀進入立即返回，
 /// 就算 Dalamud 的 hook 點與此重疊也不會堆疊溢位。
-/// </para>
 /// </remarks>
 public sealed unsafe class ShopDisplayRealItemIcon : TcModule
 {
@@ -333,24 +313,9 @@ public sealed unsafe class ShopDisplayRealItemIcon : TcModule
     /// <summary>讀節點上顯示的文字，剝掉 SeString payload 之後只留看得見的字。</summary>
     /// <remarks>
     /// 🔴 <b>一定要走 <c>MemoryHelper.ReadSeString(...).TextValue</c>，不可以用 <c>Utf8String.ToString()</c>。</b>
-    /// 後者是把整段位元組直接丟進 UTF-8 解碼器（<c>Encoding.UTF8.GetString(AsSpan())</c>），
-    /// SeString 的 payload 控制位元組會原樣被解出來：道具連結那種帶 0xFF 長度前綴的 payload 解出 U+FFFD，
-    /// 收藏品／HQ 那種內嵌圖示 payload（<c>02 12 02 &lt;icon+1&gt; 03</c>）則會留下一個可列印的雜字元
-    /// （icon 55 ⇒ 位元組 0x38 ⇒ 字元 '8'）。
-    /// <para>
-    /// ⚠️ <see cref="SanitizeName"/> 只濾掉 &lt; U+0020 的控制字元，<b>攔不住上面兩種</b>；
-    /// 而下游 <see cref="FindIconByName"/> 是拿這串當<b>針</b>去比對
-    /// <c>Item.Name.ExtractText()</c>（那一側是<b>已經</b>剝掉 payload 的純文字）。
-    /// 兩側基準不同 ⇒ <c>Contains</c> 必定落空 ⇒ 回 0 ⇒ 圖示靜默不換，
-    /// 而那跟「這一列本來就沒有對應圖示」長得一模一樣。
-    /// </para>
-    /// <para>
-    /// 📌 這是本 repo 第三次踩同一個反樣式（合建交納的確認框、
-    /// <c>UiHelper.ReadSelectYesnoText</c> ＋ <c>GlamourStoreDuplicateGuard</c>）。
     /// ⚠️ 呼叫端的 <c>NodeText.StringPtr</c> 判空不能省：<c>MemoryHelper.ReadSeString</c> 只判
     /// <c>Utf8String*</c> 本身非 null，StringPtr 為 null 而 Length 還留著殘值時，
     /// <c>AsSpan()</c> 會建出一個長度非零、指向位址 0 的 Span，讀下去就是存取違規（try/catch 攔不到）。
-    /// </para>
     /// </remarks>
     private static string ReadNodeText(AtkTextNode* textNode) =>
         MemoryHelper.ReadSeString(&textNode->NodeText).TextValue;

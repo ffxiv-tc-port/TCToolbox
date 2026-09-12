@@ -14,25 +14,13 @@ namespace TCToolbox.Modules;
 /// Palace Pal 的陷阱／埋藏寶藏顯示到 Mappy 地圖上。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 🔴 <b>純顯示，零自動化。</b>只呼叫 Palace Pal 的三支唯讀端點；不移動、不開箱、不碰目標，
 /// 也不寫回它的任何資料。唯一的副作用是 Mappy 地圖上多出一組來源為 <see cref="MarkerSource"/>
 /// 的標記。
-/// </para>
-/// <para>
-/// 📌 <b>為什麼還需要它</b>：Palace Pal 與 NecroLens 都是把陷阱畫在<b>世界上</b>
-/// （視野內、有距離限制）。畫到地圖上是另一件事——可以先看整層的分布再決定往哪邊走。
-/// </para>
-/// <para>
-/// 🔴 <b>預設關。</b>世界上已經有東西在畫了，地圖要不要跟著疊一份應該由使用者自己選；
-/// 深層迷宮一層的陷阱數量不少，硬塞給每個人是幫倒忙。
-/// </para>
-/// <para>
 /// 🔑 <b>「可能有」與「已確認」不分兩態是刻意的</b>：Palace Pal 的 IPC 端點回的是它
 /// <b>已經在畫的那一份</b>（伺服器下載 ＋ 本機看過，早就合併過了），
 /// 分不出來源。與其自己發明一個猜出來的兩態，不如誠實地畫成同一種——
 /// 要看「可能有 vs 已確認」的差別，Palace Pal 自己的世界疊加層本來就分得出來。
-/// </para>
 /// </remarks>
 public sealed class PalacePalOnMappy : TcModule
 {
@@ -72,8 +60,6 @@ public sealed class PalacePalOnMappy : TcModule
     /// 📌 <b>語意有遊戲資料背書</b>：27902 是 <c>DeepDungeonItem</c> 第 2 列
     /// 「魔陶器：全景」的圖示，而那件道具的說明逐字是「點亮本層所有地圖，可看到本層所有陷阱」
     /// ——遊戲自己用來代表「看見陷阱」的那顆圖。
-    /// ✅ 2026-09-08 以 <c>tools/sqpack/path_exists.py</c> 離線直讀台服 index，
-    /// 確認 <c>ui/icon/027000/027902.tex</c> 存在（校準閘門通過）。
     /// ⚠️ 圖示的「存在」與「長什麼樣子」是兩件事，所以仍然做成可設定的。
     /// </remarks>
     public const uint DefaultTrapIconId = 27902;

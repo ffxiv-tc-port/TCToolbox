@@ -30,65 +30,18 @@ namespace TCToolbox.Modules;
 /// <summary>
 /// 批次僱員改名：對目前登入角色的僱員，逐一跑完「用一瓶僱員幻想藥 → 傳喚 → 卸下全身裝備 →
 /// （由使用者手動改名）→ 穿回裝備 → 讓僱員返回」。
-///
-/// <para>
 /// 🔴🔴 <b>第一版<u>不</u>自動操作改名畫面（CharaMake）。</b>改名那一步由使用者自己完成，
 /// 本模組在那段時間進入「錄製模式」，把畫面上發生的事情寫進記錄供之後開發使用。理由是離線查證的結果：
-/// <list type="bullet">
-/// <item>僱員選單上「重新設定容貌」那一項的字串<b>在台服 7.20 的 EXD 裡找不到</b>——
-/// <c>Addon.csv</c>（僱員選單那段是 2378~2407，逐列讀過）、<c>CustomTalk.csv</c>、<c>Lobby.csv</c>
-/// 三張表搜「容貌」只有 <c>Addon</c> 14770（個人肖像說明）與 <c>Lobby</c> 625/626/627/2133
-/// （角色編輯確認框），<b>沒有一列是那個選單項</b>。</item>
-/// <item>CharaMake 的僱員模式在整個艦隊<b>零先例</b>：沒有任何一個外掛碰過 <c>CharaMake</c> /
-/// <c>AgentCharaMake</c>（含 AutoRetainer，2026-08-23 逐字 grep 確認 0 命中）。</item>
-/// </list>
 /// 兩樣都只能靠實機問出來，而<b>猜 callback 序號去點改名畫面</b>是這個模組最貴的失敗形式
 /// （點錯一下就把僱員容貌改成別的東西，不可逆）。所以第一版只自動化周邊苦工，改名本身留給使用者。
-/// </para>
-///
-/// <para>
 /// 🔴 <b>幻想藥是「單一旗標」不是「計數」。</b><c>LogMessage</c> 404
 /// 「無法使用，現在已經擁有重新設定僱員容貌的權利了。」證明同時只能掛一份權利：
 /// 一瓶只能改一隻。所以批次＝每隻各跑一次「用一瓶→改名」，<b>不能</b>先一口氣喝 N 瓶。
-/// </para>
-///
-/// <para>
-/// 🔴 <b>僱員名字是全世界唯一的</b>，所以改名不是「填一個名字」而是「從候選名單裡挑一個沒被占用的」。
-/// 本模組因此採<b>候選名單池</b>：使用者準備一份名單，勾選的僱員依序各取「下一個還沒用過的候選」；
-/// 被伺服器拒絕（名字已被使用）時自動換下一個，同一隻最多連試
-/// <see cref="RetainerBatchRenameConfig.MaxCandidateAttemptsPerRetainer"/> 個。
-/// 候選的狀態<b>存進設定</b>，重開遊戲也不會重試已知被占用的名字。
-/// </para>
-///
-/// <para>
-/// 📌 離線查證過的台服 7.20 資料（全部出自 <c>D:/ffxiv-tc-port/exd-tc/7.20/</c>，非國際服）：
-/// <list type="bullet">
-/// <item><c>Item</c> 8841 ＝「僱員幻想藥」</item>
-/// <item><c>LogMessage</c> 404「無法使用，現在已經擁有重新設定僱員容貌的權利了。」（權利已在身上）</item>
-/// <item><c>LogMessage</c> 405「可以重新設定僱員的容貌了。請脫下僱員的防具和飾品並到僱員窗口辦理業務。」
-/// （權利剛立起來；同時證明<b>改名前必須全身卸裝</b>）</item>
-/// <item><c>LogMessage</c> 3904「僱員在探險的過程中無法更換裝備。」（探險中不能卸裝 ⇒ 前置閘門）</item>
-/// <item><c>Addon</c> 2383「讓僱員返回」（AutoRetainer 也是讀這一列，不是寫死字串）</item>
-/// <item><c>EObjName</c> 2000401「傳喚鈴」</item>
-/// <item>名字被占用／不合法：<c>Addon</c> 2864「該名字已經被使用。」、2863「該名字無法使用。」；
-/// <c>LogMessage</c> 1335「該名字無法使用。」、346／7618／9248「該名稱已被使用，請更換為其他名稱。」
-/// （三筆同文，分屬通訊貝／戰隊／跨界通訊貝）、1485／5605／10142「名字中含有無法使用的詞。」、
-/// 3375「輸入的名稱中存在無法使用的字詞。」。
-/// ⚠️ <b>CharaMake 實際走哪一筆未知</b>——所以偵測是「這些字串<u>任一</u>出現」而不是綁定某個 id，
-/// 而且錄製模式會把命中的 id 一起印出來，好讓第二版把錨收斂。</item>
-/// </list>
-/// 這些<b>一律在執行期從 Excel 讀</b>，不把中文字串寫死在程式碼裡。
-/// </para>
-///
-/// <para>
 /// 🔴 <b>絕不跨幀保存原生指標。</b>僱員只存 <c>RetainerId</c>（<c>ulong</c>），每次要用時重新掃；
 /// 傳喚鈴只在<b>同一幀</b>之內用 <c>IGameObject</c>，用完就丟。
-/// </para>
-/// <para>
 /// 🔴 <b>零封包偽造。</b>所有動作走遊戲自己的 handler：道具用 <c>ActionManager.UseAction</c>、
 /// 鈴用 <c>TargetSystem.InteractWithObject</c>、選單用 addon 自己的 callback、
 /// 搬裝備用 <c>InventoryManager.MoveItemSlot</c>。
-/// </para>
 /// </summary>
 public sealed unsafe class RetainerBatchRename : TcModule
 {
@@ -152,7 +105,6 @@ public sealed unsafe class RetainerBatchRename : TcModule
     /// <c>Addon</c>「查看僱員探險情況　[結束]」——<b>探險已經結束、成果可以收回</b>的那一項。
     /// </summary>
     /// <remarks>
-    /// 📌 AutoRetainer <c>RetainerHandlers.SelectViewVentureReport()</c> 讀的也是這一列。
     /// ⚠️ 同一個選單位置在不同狀態下是<b>不同的資料列</b>：
     /// <see cref="AddonRowVentureReportInProgress"/>（探險中，帶結束時間）、
     /// <see cref="AddonRowVentureReportHeld"/>（結束保留中）。三列共用前綴，
@@ -273,8 +225,6 @@ public sealed unsafe class RetainerBatchRename : TcModule
     /// <c>RetainerList</c> 的 AtkValue 版面：第一筆僱員從 index 3 開始、每筆佔 10 個值、共 10 筆。
     /// </summary>
     /// <remarks>
-    /// 來源 ECommons <c>ReaderRetainerList</c>：<c>Loop&lt;Retainer&gt;(3, 10, 10)</c>，
-    /// 名字＝該筆第 0 個值、<c>IsActive</c>＝第 8 個值。
     /// 🔴 <b>10 筆是固定長度，沒用到的格子照樣存在</b>——一定要先看 <c>IsActive</c>，
     /// 否則會選到空欄位（AutoRetainer 的台服分支就是為了這個 bug 才補上這道檢查）。
     /// ⚠️ 即使如此我們<b>仍然不靠這個版面決定點誰</b>：讀到的名字必須與目標僱員逐字相同才會點。
@@ -297,8 +247,6 @@ public sealed unsafe class RetainerBatchRename : TcModule
     /// <c>RetainerList</c> 選擇某位僱員的 callback 事件序號。
     /// </summary>
     /// <remarks>
-    /// 逐字對應 ECommons <c>AddonMaster.RetainerList.Entry.Select()</c>：
-    /// <c>Callback.Fire(Base, true, 2, (uint)index, ZeroAtkValue, ZeroAtkValue)</c>。
     /// ⚠️ 這是<b>寫死的事件序號</b>，改版可能失效。失效的表現是「按了沒反應」，
     /// 會被 <see cref="TaskQueue"/> 的逾時接住並停下，不會誤點到別的東西。
     /// </remarks>
@@ -321,9 +269,6 @@ public sealed unsafe class RetainerBatchRename : TcModule
     /// <remarks>
     /// 📌 我們<b>不做旅館區域判斷</b>（需要一份 territory 清單而我們沒有可離線驗證的來源），
     /// 非 Housing 一律用比較寬鬆的 4.75f。
-    /// 🔑 這樣選的理由是<b>失敗方向</b>：抓太寬只會讓互動那步沒反應而逾時停下（有訊息、可重來）；
-    /// 抓太嚴則是使用者明明站在鈴前面卻被擋著，而且無從得知為什麼。
-    /// 真正的把關不是這個數字，是後面「<c>RetainerList</c> 到底有沒有開起來」。
     /// </remarks>
     private const float BellInteractDistanceHousing = 6.5f;
 
@@ -647,10 +592,6 @@ public sealed unsafe class RetainerBatchRename : TcModule
     /// 重掃僱員清單與各項閘門數字。
     /// </summary>
     /// <remarks>
-    /// 🔴 <c>RetainerManager.Instance()</c> 的宣告是 <c>[StaticAddress(sig, 3)]</c>，<b>沒有</b>
-    /// <c>isPointer: true</c>——<c>StaticAddressAttribute</c> 的 <c>isPointer</c> 預設是 <c>false</c>，
-    /// 產生器對這種情況回傳的是<b>靜態位址本身</b>，所以它<b>永遠不會回 null</b>
-    /// （特徵碼解析失敗時是擲 <c>InvalidOperationException</c>，不是回 null）。
     /// ⇒ 這裡<b>刻意不寫判空</b>（那會是死碼），改成整段包 try：要防的是「擲例外」不是「回 null」。
     /// ⚠️ 這與 <c>AtkStage.Instance()</c> 那種 <c>isPointer: true</c> 的<b>相反</b>，
     /// 那種才會回 null、才必須判空（見 <see cref="UiHelper.GetAddonById"/>）。
@@ -739,7 +680,6 @@ public sealed unsafe class RetainerBatchRename : TcModule
     /// 判法照抄 AutoRetainer <c>Utils.GetReachableRetainerBell</c>：掃 ObjectTable 找
     /// <c>ObjectKind.Housing</c> 或 <c>ObjectKind.EventObj</c> 且<b>名字等於「傳喚鈴」</b>的物件
     /// ——<b>不是</b>比對 DataId（AutoRetainer 對傳喚鈴完全沒用 DataId）。
-    /// 名字從 <c>EObjName</c> 表讀，所以改版換字串也不會壞。
     /// <para>🔴 這裡拿到的 <c>IGameObject</c> 絕不留到下一幀。距離算完就丟。</para>
     /// </remarks>
     private void RefreshBellSnapshot()
@@ -799,13 +739,9 @@ public sealed unsafe class RetainerBatchRename : TcModule
     /// 把設定裡的名單原文解析成候選清單，並套上持久化的狀態。
     /// </summary>
     /// <remarks>
-    /// 🔑 狀態的鍵是<b>候選名字本身</b>（不是行號）：使用者重新排序或增刪名單時，
-    /// 已知被占用的名字不會因為位置變了就被重試。
-    /// <para>
     /// 預檢（寬鬆，只剔除「幾乎確定不能用」的形狀）：空行→不列入；名單內重複→標
     /// <see cref="RetainerNameCandidateState.Rejected"/>；含全形符號／連續空白→標 <c>Rejected</c>；
     /// 首尾空白→自動去除並留一句說明（不擋）。<b>伺服器才是權威</b>，其餘一律放行。
-    /// </para>
     /// </remarks>
     private void SyncCandidatesFromConfig()
     {
@@ -1733,12 +1669,6 @@ public sealed unsafe class RetainerBatchRename : TcModule
     /// 📌 <c>Framework.GetServerTime()</c> 是<b>靜態</b> <c>[MemberFunction]</c>（不吃 <c>this</c>），
     /// 所以<b>不需要</b> <c>Framework.Instance()</c>——那一支才是 <c>isPointer: true</c>、會合法回 null。
     /// 特徵碼解析失敗時是擲 <c>InvalidOperationException</c>，不是回 0，所以這裡包 try。
-    /// <para>
-    /// 🔑 用伺服器時間而不是本機時鐘：<c>VentureComplete</c> 是伺服器寫進來的 UNIX 秒，
-    /// 拿本機時鐘去比，使用者的時鐘偏差多少就誤判多少。AutoRetainer 走的也是同一條
-    /// （<c>Utils.GetVentureSecondsRemaining</c> 拿 <c>CSFramework.GetServerTime()</c> 相減）。
-    /// ⚠️ 退回本機 UTC 的路徑<b>不會靜默</b>：每分鐘最多印一行 Information 說明退回了。
-    /// </para>
     /// </remarks>
     private long CurrentServerTime()
     {
@@ -1851,9 +1781,6 @@ public sealed unsafe class RetainerBatchRename : TcModule
     /// 「查看僱員探險情況」那三列的共同前綴。
     /// </summary>
     /// <remarks>
-    /// 🔑 <b>從資料表算出來，不寫死中文。</b>2384（探險中，帶範例日期）與 2385（結束）在
-    /// 「[」之前是同一段文字，取兩者的最長共同前綴就得到「這一列在講探險報告」的判別式。
-    /// 這樣改版換字串也不會壞，而且不必把中文字串釘進程式碼。
     /// <para>⚠️ 只拿它判「有沒有探險報告那一項」；<b>要點下去的那一項一律用整列文字比對</b>，
     /// 否則會分不出「結束」「結束保留中」「還在跑」。</para>
     /// </remarks>
@@ -1875,22 +1802,9 @@ public sealed unsafe class RetainerBatchRename : TcModule
     /// </summary>
     /// <remarks>
     /// 前提：呼叫時流程已經停在<b>這位僱員自己的選單</b>（<c>SelectString</c>）上。
-    /// <para>
     /// 🔴🔴 <b>「重新派遣」那顆按鈕本模組一次都不碰。</b>使用者要的是讓僱員閒置下來好換裝改名，
     /// 收完又派出去等於整件事白做。AutoRetainer 的 <c>ClickResultReassign</c> 是<b>刻意</b>不採用的，
     /// 我們只走它的 <c>ClickResultConfirm</c> 那一條。
-    /// </para>
-    /// <para>
-    /// 🔴 每一步 fail-closed：預期的選單項／視窗／按鈕不在就<b>停下並指名是哪一步</b>。
-    /// 唯一「跳過而不停下」的情況是<b>遊戲自己說沒有可收的探險</b>（選單上沒有那一項，
-    /// 或那一項是「結束保留中」）——那不是我們的假設破了，是合法的遊戲狀態，
-    /// 而且一律印一行 <c>Information</c>，不會靜默。
-    /// </para>
-    /// <para>
-    /// ⚠️ 這裡<b>不</b>負責「收不到就不准往下走」。改名流程另外加了一道
-    /// 「確認不在探險中」的硬閘門——因為在那條流程裡，收不回探險會讓後面的卸裝以
-    /// 完全不同的樣貌失敗（<c>LogMessage</c> 3904），錯誤訊息會把人帶去錯的地方。
-    /// </para>
     /// </remarks>
     private void EnqueueCollectVenture(ulong retainerId, string retainerName)
     {
@@ -2266,10 +2180,6 @@ public sealed unsafe class RetainerBatchRename : TcModule
     /// 🔴🔴 安全不變式：只在正面比對到「要使用已儲存的角色形象嗎？」時才按「是」並把 <c>gatePassed</c> 立起來；
     /// 沒通過這道閘門，絕不確認任何「設定成目前的樣子」——那一步若在閘門前出現就當場中止整批，
     /// 因為確認一個沒保留原容貌的預覽＝不可逆地把外觀改成空白。
-    /// <para>🔴 除了「儲存目前形象？＝否」，本狀態機只會按「是」，且每個「是」都要正面比對到對應提示；
-    /// 認不得的 SelectYesno 一律不按（fail-closed）。</para>
-    /// <para>🔴 失敗（找不到管理人／某步比不到／逾內部期限）不停整批：記一行 Information、回 true 往下走，
-    /// 讓後面的「重新傳喚＋穿回」把已卸的裝備救回來，再換下一位。只有安全閘門違例才 AbortWith。</para>
     /// </remarks>
     private void EnqueueAutoCharaMakeRename(WorkItem work)
     {
@@ -2628,8 +2538,6 @@ public sealed unsafe class RetainerBatchRename : TcModule
     /// <remarks>
     /// 🔴 <b>不碰殘留的 SelectYesno</b>：改名中途放棄時可能停在安全關鍵的「要使用已儲存的角色形象嗎？」，
     /// 亂按會進空白捏臉畫面（不可逆）。看到確認框就不動、等逾時 <see cref="StopRun"/>（安全，只卡這一位）。
-    /// <para>🔴 這是自動改名序列 YesAlready 的正常還原點；中止／停止／停用路徑由 <see cref="StopRun"/>／
-    /// <see cref="FinishRun"/>／<c>OnDisable</c> 各自還原（冪等）。</para>
     /// </remarks>
     private void EnqueueReturnToNeutral(WorkItem work)
     {
@@ -2916,8 +2824,6 @@ public sealed unsafe class RetainerBatchRename : TcModule
     /// <remarks>
     /// 🔴 只在 <see cref="RunMode.CollectVentures"/> 模式下由 <c>OnTimeout</c> 呼叫；
     ///    改名流程（<see cref="RunMode.Rename"/>）的逾時維持原本的「整條停下」。
-    /// ⚠️ 逾時當下 <c>OnTimeout</c> 觸發前 <c>TaskQueue</c> 已 <c>Abort()</c> 清空佇列，
-    ///    所以這裡是在空佇列上重新排「復原＋下一位」。
     /// </remarks>
     private void HandleCollectTimeout(string step)
     {
@@ -3458,12 +3364,6 @@ public sealed unsafe class RetainerBatchRename : TcModule
     /// 🔴 <b>只印字串與數值，不跨幀保存任何原生指標。</b>
     /// 🔴 hook <b>只在錄製期間 enable</b>——<c>AtkUnitBase::FireCallback</c> 是全遊戲每個視窗都會走的
     /// 熱路徑，常態掛著會對每一次 UI 互動收費。
-    /// 📌 一律寫 <c>Information</c>：使用者跑 LogLevel 1，盲區只有 Verbose,Debug 收得到但單檔數十萬行會淹沒。
-    /// <para>
-    /// 🔑 <b>庫存變化是這裡最有價值的產物</b>：使用者手動卸一次裝，記錄裡就會出現
-    /// 「<c>RetainerEquippedItems</c>#N 少了什麼、<c>Inventory</c>#M 多了什麼」，
-    /// 那就是遊戲自己走的搬移路徑的直接證據——不必再猜 <c>MoveItemSlot</c> 對這個容器成不成立。
-    /// </para>
     /// </remarks>
     private void StartRecording(WorkItem work)
     {
@@ -3712,7 +3612,6 @@ public sealed unsafe class RetainerBatchRename : TcModule
     /// ⚠️ 幻想藥那兩句只是<b>加速訊號</b>（真正的判準是背包數量），認不出來最多只是慢一點；
     /// 但「名字被占用」<b>沒有第二個訊號</b>，所以那裡刻意列了全部候選列號、任一命中就算，
     /// 而且 UI 上另外給了一顆手動按鈕當後備。
-    /// 📌 錄製期間<b>命中的列號會一起印出來</b>，好讓第二版把錨收斂到真正那一筆。
     /// </remarks>
     private void OnChatMessage(
         XivChatType type, int timestamp, ref SeString sender, ref SeString message, ref bool isHandled)

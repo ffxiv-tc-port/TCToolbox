@@ -18,34 +18,14 @@ namespace TCToolbox.Modules;
 /// 把「在場的寶箱」與「還沒共鳴的風脈泉」畫到<b>小地圖</b>上（透過 Mini-Mappingway）。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 📌 <b>為什麼是小地圖</b>：艦隊裡已經有好幾個東西會畫大地圖（Mappy 標記）與世界疊加層
-/// （NecroLens／Palace Pal），但<b>小地圖</b>只有 Mini-Mappingway 畫得到，
-/// 而小地圖是唯一「不必按任何鍵就一直在畫面上」的方向指示。
-/// 目標就是<b>不用開大地圖也知道往哪走</b>。
-/// </para>
-/// <para>
 /// 🔴 <b>純顯示，零自動化。</b>只讀物件表、只呼叫 Mini-Mappingway 的加／刪端點；
 /// 不移動、不開箱、不改目標、不與任何 NPC 互動。
-/// </para>
-/// <para>
-/// 🔴 <b>預設關</b>（所有模組都是）。啟用之後兩種來源預設都開，這樣「打開模組」就真的看得到東西；
-/// 兩種都可以單獨關掉，而且在 Mini-Mappingway 自己的設定裡還可以再關一層（含顏色與大小）。
-/// </para>
-/// <para>
 /// 🔴 <b>絕不跨幀保存原生指標。</b>每一輪都重新走訪物件表；記下來交給 Mini-Mappingway 的是
 /// <c>GameObjectId</c>（受管理的整數），而對方也是拿 id 每幀重查位置。
 /// 判「是不是風脈泉」時要碰一次原生的 <c>EventHandler</c>，那個解參考與取得物件位址在<b>同一幀、
 /// 同一個方法內</b>完成，不留到下一幀。
-/// </para>
-/// <para>
-/// ⚠️ <b>已知限制（不是缺陷，是對方的設計）</b>：Mini-Mappingway 在<b>戰鬥中</b>會整組隱藏標記
-/// （<c>NaviMapWindow.DrawConditions</c>），在 PvP 區域也一樣。戰鬥結束就會自己回來。
-/// </para>
-/// <para>
 /// 📌 需要 Mini-Mappingway 的 IPC <b>1.2 以上</b>：1.1 的 <c>AddPerson</c> 對非玩家物件是
 /// 完全靜默地不生效的（它找物件時只掃物件表的玩家欄位）。版本不夠時模組列上會直接說。
-/// </para>
 /// </remarks>
 public sealed unsafe class NearbyOnMinimap : TcModule
 {
@@ -332,14 +312,9 @@ public sealed unsafe class NearbyOnMinimap : TcModule
     /// 這個物件是不是「我們想顯示的風脈泉」。
     /// </summary>
     /// <remarks>
-    /// 📌 判準取自 Mappy 的 <c>MapRenderer.IsAetherCurrent</c>：<c>EventObj</c> ＋
-    /// <c>EventHandler-&gt;Info.EventId.ContentId == AetherCurrent</c>。
-    /// <b>不是</b>比對名字，也不是寫死一張 <c>EObj</c> 清單。
-    /// <para>
     /// 🔴 原生解參考只在這個方法內發生，用的是<b>本幀</b>從物件表拿到的位址；每一跳都先判空。
     /// 不做 <c>try</c>/<c>catch</c>——AccessViolationException 在 .NET Core 是 corrupted-state
     /// exception，catch 不到，加了只是假的安全感。
-    /// </para>
     /// </remarks>
     private static bool IsWantedAetherCurrent(IGameObject obj)
     {
@@ -363,17 +338,8 @@ public sealed unsafe class NearbyOnMinimap : TcModule
     /// 這個風脈泉共鳴了沒有。取不到資料時一律回 <see langword="false"/>（＝照樣顯示）。
     /// </summary>
     /// <remarks>
-    /// 🔴 <b>刻意不呼叫 <c>PlayerState.IsAetherCurrentUnlocked</c>，改自己走 <c>TryGet</c>。</b>
-    /// 那支是 <c>UnlockedAetherCurrentsBitArray.Get(id - 0x2B0000)</c>，而 <c>Get</c> 對越界是
-    /// <b>擲 <c>ArgumentOutOfRangeException</c></b>；而且它的上界檢查寫的是
-    /// <c>ThrowIfGreaterThan(index, bitCount)</c> 不是 <c>…OrEqual</c>，
-    /// <c>index == bitCount</c> 會通過檢查並讀到陣列後面那一個 byte。
-    /// <c>TryGet</c> 用的是 <c>(uint)index &gt;= (uint)bitCount</c>，沒有這個問題。
-    /// （這段判準與 <see cref="AetherCurrentTracker"/> 的 <c>IsResonated</c> 同源。）
-    /// <para>
     /// 🔴 <c>PlayerState.Instance()</c> 由 CS 產生：解不出位址時擲 <c>InvalidOperationException</c>，
     /// 而登入前／切場景時也可能回 null —— 兩種失效模式並存，只擋一種等於假防護。
-    /// </para>
     /// </remarks>
     private static bool IsResonated(uint aetherCurrentId)
     {

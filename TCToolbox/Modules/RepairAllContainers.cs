@@ -17,33 +17,11 @@ namespace TCToolbox.Modules;
 /// 一次把「裝備中的裝備」與下拉選單裡的每一個容器全部修理完，不必自己切七次下拉再按七次。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 📌 <b>做的事情與使用者自己操作完全相同</b>：呼叫的是遊戲自己在「全部修理」按鈕背後跑的那兩支函式
-/// （<c>RepairManager::RepairEquipped</c> 與 <c>RepairManager::RepairAllItems</c>），
-/// 參數也用遊戲自己會傳的那些值。不偽造封包、不改記憶體、不 hook。
-/// </para>
-/// <para>
-/// 🔑 <b>參數不是猜的，是離線從台服 7.20 主程式的 <c>AgentRepair::ReceiveEvent</c> 反組譯出來的</b>
-/// （2026-08-19）：
-/// <list type="bullet">
 /// <item>下拉索引 0 ⇒ <c>RepairEquipped(1000, isNpc, 0)</c>（1000＝<c>InventoryType.EquippedItems</c>）。
 /// ⚠️ FFXIVClientStructs 的散文註解寫「7 ＝ Equipped」，<b>與台服實際的分派相反</b>——
 /// 實際上 <c>InventoryContainerIndex == 0</c> 才是「裝備中的裝備」。散文註解沒有被驗證過，不要照抄。</item>
-/// <item>下拉索引 1..6 ⇒ 先查一張 <c>.rdata</c> 的對照表（VA 0x1420642B0，內容
-/// <c>{7, 0, 1, 2, 3, 4, 5}</c>）再呼叫 <c>RepairAllItems(isNpc, 表[索引], 0)</c>，
-/// 也就是實際送出去的類別值是 <b>0..5 共六個</b>。</item>
-/// <item>上界來自遊戲自己的 <c>cmp eax, 7 / jge</c>——索引 7 以上會被遊戲直接丟掉。</item>
-/// <item><c>isNpc</c> ＝ <c>AgentRepair-&gt;UseSelfRepair == false</c>（遊戲用 <c>cmp byte[rsi+0x31], 0 / sete</c> 算出來的）。</item>
-/// </list>
-/// 🔴 因此本模組<b>不寫死任何原生節點 ID</b>。上游 Automaton <c>FasterRepairAll</c> 是去掛
-/// <c>Repair</c> addon 的 <b>NodeId 12</b>，但台服 7.20 的 <c>ui/uld/Repair.uld</c> 裡
-/// <b>Node 12 是下拉選單（Component#1013 DropDown），「全部修理」按鈕是 Node 16</b>
-/// （2026-08-19 離線 ULD 傾印實證）——照抄那個常數會掛到錯的節點上。
-/// </para>
-/// <para>
 /// ⚠️ 找不到視窗／取不到 agent／取不到 manager 時一律<b>什麼都不做</b>並寫一行 Information 記錄，
 /// 最壞的情況是「按了沒反應」，不會是崩潰。
-/// </para>
 /// </remarks>
 public sealed unsafe class RepairAllContainers : TcModule
 {

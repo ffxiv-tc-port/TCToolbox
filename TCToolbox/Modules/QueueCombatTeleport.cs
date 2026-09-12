@@ -15,25 +15,12 @@ namespace TCToolbox.Modules;
 /// <b>等戰鬥結束</b>再透過 Lifestream 傳送過去。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 🔴 <b>零記憶體 patch、零封包、零 hook。</b>DR 原版是把客戶端的「戰鬥中不能傳送」判斷
 /// （<c>CanUseTeleport</c>）用記憶體 patch 打穿，再攔 <c>ExecuteCommand</c> 把傳送指令收下來排隊。
 /// 本模組<b>不碰記憶體</b>：既然那道客戶端閘門會擋掉戰鬥中的傳送，攔 <c>ExecuteCommand</c>
 /// 這條路在不 patch 的前提下根本不會觸發（指令在送到 <c>ExecuteCommand</c> 之前就被閘門擋下）。
-/// ⇒ 唯一的觸發路徑改成<b>本模組自己的目的地視窗</b>：使用者在戰鬥中從
-/// <see cref="IAetheryteList"/>（自己已解鎖的乙太之光）點一個目的地，我們存下
-/// <c>(AetheryteId, SubIndex)</c>，等 <see cref="ConditionFlag.InCombat"/> 轉為 false 時，
-/// 走 Lifestream 的 <c>Teleport</c> IPC 執行。<b>不透過聊天指令 <c>/li</c></b>
-/// （空參數的 <c>/li</c> 是跨世界傳送，紅線）。
-/// </para>
-/// <para>
 /// 🔴 <b>只記 id，不跨幀保存原生指標。</b>排隊的是 <c>(uint AetheryteId, byte SubIndex)</c>
 /// 兩個純值加一段已複製的名字字串，<see cref="IAetheryteList"/> 每次繪製重新枚舉。
-/// </para>
-/// <para>
-/// 📌 開著但不去用它，遊戲行為完全不變（清單是唯讀的、只有點下某個目的地才會排隊），
-/// 所以標記為 <see cref="IsManualTrigger"/>。
-/// </para>
 /// </remarks>
 public sealed class QueueCombatTeleport : TcModule
 {

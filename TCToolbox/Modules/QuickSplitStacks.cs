@@ -13,39 +13,11 @@ namespace TCToolbox.Modules;
 /// 道具右鍵選單補上「快速拆分」：輸入數量後直接拆，不必自己點「拆分」再拉一次滑桿。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 🔴 <b>走的是遊戲原生的拆分流程，不直接改容器。</b>三步驟全部是使用者自己也做得到的操作：
-/// <list type="number">
-/// <item><c>AgentInventoryContext::OpenForItemSlot</c> 把那一格的右鍵選單重新開起來
-/// （Dalamud 在我們的選單項被點下的當下就把選單關掉了，所以必須自己開回來）。</item>
-/// <item>在選單裡找 <c>Addon#92</c>（台服＝<b>「拆分」</b>，2026-08-25 對
-/// <c>exd-tc/7.20/Addon.csv</c> 查證）並點下去——比對用的是遊戲自己的字串，跟語言無關。</item>
-/// <item>對彈出的 <c>InputNumeric</c> 送出「確定＋數量」。</item>
-/// </list>
-/// </para>
-/// <para>
 /// 🔴 <b>刻意不用 <c>InventoryManager::SplitItem</c>。</b>那支函式確實存在（CS 有宣告），
 /// 但它<b>沒有</b>像 <c>MoveItemSlot</c> 那樣的「要不要送封包」旗標可以檢查，
 /// 而我們沒有任何離線證據能證明它會把結果送到伺服器。同一個坑
 /// （<c>MoveItemSlot</c> 省略 <c>a6</c> ＝只改本機、畫面上動了但伺服器不知道）
 /// 已經在 <see cref="AutoInventoryTransfer"/> 上踩過一次。
-/// </para>
-/// <para>
-/// 📌 選單項目的判斷順序、索引算法與診斷輸出共用
-/// <see cref="InventoryContextMenu.TryFireEntry"/>——那是
-/// <see cref="AutoInventoryTransfer"/> 已經實機驗證過的那條路徑。
-/// </para>
-/// <para>
-/// ⚠️ <b>與 DailyRoutines <c>AutoSplitStacks</c> 的差異</b>：
-/// <list type="bullet">
-/// <item>DR 拿到道具 ID 之後<b>重新掃一遍背包</b>去找哪一格有這個道具；
-/// 這裡直接用右鍵當下 Dalamud 給的容器＋格號，不會拆到另一疊。</item>
-/// <item>DR 的「快速拆分」拆完會<b>自己再排一輪</b>（不斷重複拆到失敗為止）。
-/// 這裡一次只拆一次——名字叫「快速拆分」而行為是「一直拆」是會嚇到人的。</item>
-/// <item>DR 另外做了一整套「預設拆分清單」與 <c>/pdrsplit</c> 指令。這裡沒做：
-/// 那是另一個功能，混在同一個模組裡會讓開關的語意變得不清楚。</item>
-/// </list>
-/// </para>
 /// </remarks>
 public sealed unsafe class QuickSplitStacks : TcModule
 {

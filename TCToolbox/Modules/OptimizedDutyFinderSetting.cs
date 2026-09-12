@@ -37,20 +37,8 @@ public sealed unsafe class OptimizedDutyFinderSetting : TcModule
     /// SimpleTweaks 裡做同一件事的 tweak 鍵（完整識別是 <c>UiAdjustments@ImprovedDutyFinderSettings</c>）。
     /// </summary>
     /// <remarks>
-    /// 🔴 <b>不是「功能相似」，是同一支遊戲函式</b>：2026-08-08 直接對使用者機器上安裝的
-    /// <c>SimpleTweaksPlugin.dll</c>（1.10.12.0）數字串命中數，上面的
-    /// <see cref="SetContentsFinderSettingsSignature"/> <b>逐字元出現在對方的組件裡</b>
-    /// （UTF-8 恰好 1 次、UTF-16LE 0 次）。
-    /// <para>
-    /// 對方那個 tweak 的型別是 <c>SimpleTweaksPlugin.Tweaks.UiAdjustment.ImprovedDutyFinderSettings</c>，
-    /// 方法有 <c>SetupAddon</c>／<c>UpdateIcons</c>／<c>ToggleSetting</c>／<c>GetCurrentSettingArray</c>
-    /// （離線讀對方組件的 TypeDef／MethodDef 表解出，不是猜的）——
-    /// 跟本模組一樣是「把二級設定攤成搜索器視窗上的一排開關」。
-    /// </para>
-    /// <para>
     /// ⚠️ 差別只在畫法：對方注入原生節點、我們畫 ImGui 疊圖。所以兩邊會**同時出現兩排按鈕**，
     /// 而且送出的是同一個 27 位元組陣列。
-    /// </para>
     /// </remarks>
     private const string SimpleTweaksDutyFinderTweak = "ImprovedDutyFinderSettings";
 

@@ -20,38 +20,11 @@ namespace TCToolbox.Modules;
 /// 在遊戲的「幻卡回收」視窗開著時可以幫你送出一次回收，但遊戲自己的確認框一律由你親自按。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 🔴🔴 <b>永遠不會替你按下回收確認框。</b>送出回收之後跳出來的是<b>遊戲自己的</b>
 /// 「回收數量／回收可獲得金碟幣」對話框（<c>ShopCardDialog</c>），本模組<b>完全不碰它</b>
 /// —— 數量與「回收」鈕一律由你自己按。上游 DailyRoutines 的 <c>AutoSellCards</c> 會
 /// 自動把數量拉到上限、自動按掉那個對話框，並且<b>掛著迴圈把整袋卡一路回收完</b>，
 /// <b>那三件事都刻意不做</b>：這裡是「按一次、送出一張、你確認一張」。
-/// </para>
-/// <para>
-/// ⚠️ <b>YesAlready 有一個會替你按掉這個對話框的開關。</b>它的 Bothers 分頁裡有一項
-/// <c>ShopCardDialog</c>（說明是「Automatically confirm selling Triple Triad cards in the saucer.」，
-/// <b>預設關閉</b>），勾起來之後它會把數量拉到上限並直接按下「回收」。
-/// 本模組<b>不去對抗它</b>（不暫停、不改它的設定）—— 但那等於本模組刻意保留的那層人工確認消失了，
-/// 所以下面的設定 UI 會在偵測到 YesAlready 正在運作時提醒一句。
-/// </para>
-/// <para>
-/// 🔑 <b>「這張是不是多的」用的是遊戲自己的兩份資料互相校驗，校驗不過就顯示「?」而不是猜。</b>
-/// 幻卡列表的收錄狀態存在 <c>UIState</c> 的位元遮罩裡；同一個結構裡另外有一個遊戲自己維護的
-/// 收錄總數。本模組把位元遮罩的 popcount 拿去跟那個總數比對，<b>對不上就整個判定為「不知道」</b>
-/// ——列上顯示灰字提示、清單裡每一列畫「?」、回收按鈕鎖住。
-/// 這是為了讓「台服的結構偏移跟 FFXIVClientStructs 對不上」這個無法離線證明的假設<b>不會靜默給錯答案</b>：
-/// 偏移錯了的話兩份資料幾乎不可能剛好一致。
-/// </para>
-/// <para>
-/// 🔴 <b>不保存任何原生指標。</b>背包每次掃描重新向 <c>InventoryManager</c> 取容器；
-/// 位元遮罩的 <c>BitArray</c> 只在單一函式內存在（它內部包著裸指標，<b>絕不放進欄位</b>）；
-/// 回收流程的每一步都重新用名字解析 addon，不跨幀留 <c>AtkUnitBase*</c>。
-/// </para>
-/// <para>
-/// ⚠️ <b>送出回收用的呼叫參數移植自上游，台服沒有離線驗證過。</b>失敗形式是「遊戲沒有跳出確認框」
-/// ——這時流程會逾時中止並把當下的 <c>AtkValues</c> 傾印到記錄（<c>Information</c> 級）供回報，
-/// <b>不會有任何東西被回收</b>（真正的回收發生在你按下確認框那一刻）。
-/// </para>
 /// </remarks>
 public sealed unsafe class TriadCardRecycle : TcModule
 {
@@ -77,9 +50,6 @@ public sealed unsafe class TriadCardRecycle : TcModule
     /// 九宮幻卡道具的 <c>ItemAction</c> 類型。
     /// </summary>
     /// <remarks>
-    /// 📌 台服 7.20 EXD 離線核對：<c>ItemAction</c> 表裡類型 3357 共 439 列、<c>Data[0]</c> 是
-    /// 1~439 連號，正好對上 439 個「九宮幻卡：ｘｘ」道具（例：道具 9772「九宮幻卡：渡渡鳥」
-    /// → <c>Data[0]</c>＝1 →<c>TripleTriadCard</c> 第 1 列「渡渡鳥」）。
     /// <b>程式不寫死這 439 筆，只寫死類型號</b>——對照表每次啟用時從資料表現算，
     /// 算出 0 筆就把整個模組鎖住（見 <see cref="EnsureLookups"/>）。
     /// </remarks>
@@ -372,12 +342,6 @@ public sealed unsafe class TriadCardRecycle : TcModule
     /// 🔴 <c>UIState.Instance()</c> 是 <c>[StaticAddress(…)]</c> 且<b>沒有</b> <c>isPointer</c>，
     /// 產生器產出的是「解不出來就擲 <c>InvalidOperationException</c>、否則回非 null」——
     /// 所以這裡<b>刻意不寫 null 檢查</b>，寫了是死碼，反而讓人以為已經防過了。
-    /// <para>
-    /// 🔑 校驗的意義：位元遮罩與總數是同一份資料的兩種表示，<b>結構偏移正確時必然一致</b>。
-    /// 台服的偏移萬一與 FFXIVClientStructs 對不上，讀到的是別的欄位，兩者幾乎不可能剛好吻合
-    /// ⇒ 校驗失敗 ⇒ 整個模組退化成「不知道」。額外要求總數 &gt; 0，是因為結構還沒建好時
-    /// 兩邊都是 0，<b>0 == 0 會讓校驗變成空砲</b>。
-    /// </para>
     /// </remarks>
     private void RefreshAlbumState()
     {
@@ -585,15 +549,11 @@ public sealed unsafe class TriadCardRecycle : TcModule
 
             // ⚠️ 這組值移植自上游，台服未經離線驗證。送錯的失敗形式是「什麼都沒發生」——
             //    真正的回收只可能發生在 ShopCardDialog 上，而那個對話框本模組完全不碰。
-            //
             // 🔴 一定要用 TryFireCallback 而不是 FireCallback：這扇視窗是常駐父窗
             //    （回收確認框 ShopCardDialog 開關並不會讓它 PreFinalize／PostSetup），
             //    所以 AddonPressGuard 的紀錄只能靠逃生口解除。void 版被擋下時是靜默不送，
             //    這一步卻照樣 return true，接著下一步「等待遊戲跳出回收確認框」就會空等到
             //    5 秒逾時把整條佇列清掉——使用者手動連按第二張時就是這個下場。
-            //    🔑 回 false ＝這一 tick 沒送出、下一 tick 再試（TaskQueue 的三態），
-            //    等滿逃生口（RoutineAddons：15 幀 ≒ 0.25 秒）就會送出去，遠在本步驟的
-            //    10 秒逾時之內。
             if (!UiHelper.TryFireCallback(addon, true, 0, 0, 0)) return false;
 
             return true;

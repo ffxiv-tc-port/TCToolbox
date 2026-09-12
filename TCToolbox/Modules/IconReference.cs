@@ -18,32 +18,10 @@ namespace TCToolbox.Modules;
 /// 圖示對照表（開發輔助）：把 DTR／SeString 可用的圖示畫出來，並讓人一鍵複製對應的識別字。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 📌 <b>純顯示模組</b>：開著但不去開視窗，遊戲行為完全不變（<see cref="IsManualTrigger"/>＝<c>true</c>）。
-/// 不讀原生記憶體、不掛 hook、不送任何指令；唯一的副作用是使用者按了「DTR」按鈕之後，
-/// 資訊列上會多出一格預覽用的欄位。
-/// </para>
-/// <para>
-/// 🔑 <b>三個分頁對應三種完全不同的東西</b>，混在一起講會害人挑錯：
-/// <list type="bullet">
-/// <item><b>點陣圖示</b>（<see cref="BitmapFontIcon"/>）——遊戲自己的圖示表，
-/// 只能透過 <see cref="IconPayload"/> 放進 SeString（DTR 欄位、聊天訊息）。
-/// <b>它不是字元</b>，複製出來的識別字沒辦法直接貼進純文字欄位。</item>
-/// <item><b>符號字元</b>（<see cref="SeIconChar"/>）——遊戲字型私有區（U+E020～U+E0E9）的<b>真字元</b>，
-/// 可以直接塞進任何字串。</item>
-/// <item><b>Unicode 常用符號</b>——與遊戲無關的標準字元，能不能顯示<b>完全看目前的字型</b>。</item>
-/// </list>
-/// </para>
-/// <para>
-/// ⚠️ <b>畫不出來（空白／豆腐方塊）本身就是有效結論</b>：那代表該圖示在目前這套字型／這個 Dalamud
-/// 版本下不能用，不是這個模組壞了。這也正是要把它畫出來看的理由——光看列舉名字是猜不到的。
-/// </para>
-/// <para>
 /// 🔴 這整個模組住在 ImGui 的 Draw 路徑上，<b>一律不得擲例外</b>
 /// （Draw 擲一次例外，Dalamud 的視窗錯誤閂鎖就會把它永久關掉到外掛重載為止）。
 /// 所以：清單只建一次並整段包 try、每一顆按鈕的動作各自包 try、
 /// 表格與分頁一律用 <see cref="ImRaii"/> 收尾（就算中途擲例外，<c>EndTable</c>／<c>EndTabItem</c> 也一定會被呼叫）。
-/// </para>
 /// </remarks>
 public sealed class IconReference : TcModule
 {
@@ -187,14 +165,10 @@ public sealed class IconReference : TcModule
     /// 🔑 <b>用 <see cref="Type.GetFields(BindingFlags)"/> 而不是 <c>Enum.GetValues</c></b>：
     /// 列舉若有同值別名，<c>Enum.GetValues</c> 會給重複的值、而 <c>Enum.GetName</c> 只回其中一個名字，
     /// 對照表就會出現兩列一模一樣的識別字（而且沒有任何錯誤）。逐欄位讀則是一個名字一列。
-    /// （📌 本 pin 的 <see cref="BitmapFontIcon"/> 157 個成員實測無同值別名，
-    /// 但這是上游隨時會變的前提，不值得賭。）
-    /// <para>
     /// ⚠️ 迴圈變數叫 <c>member</c> 不叫 <c>field</c>：本專案是 C# 14，
     /// <c>field</c> 在<b>屬性存取子裡</b>是關鍵字（繫結到屬性的合成備份欄位），
     /// 在這裡宣告成區域變數會編譯失敗（CS9273）。同一段程式碼搬到方法裡就沒事——
     /// 所以這不是「照抄別處就會對」的東西。
-    /// </para>
     /// </remarks>
     private static IReadOnlyList<IconEntry> BitmapEntries
     {

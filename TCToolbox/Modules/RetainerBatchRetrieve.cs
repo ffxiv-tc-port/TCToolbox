@@ -13,41 +13,13 @@ namespace TCToolbox.Modules;
 /// 僱員：批次取回 —— 把目前開著的僱員道具欄整批取回背包，可選一份 AllaganTools 清單當白名單。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 🔴 <b>純手動觸發</b>：開著模組但不去按按鈕，遊戲行為完全不變。沒有任何事件驅動的接手鏈，
 /// 也不會叫 AutoRetainer 走去傳喚鈴——本模組<b>只在使用者自己已經開著僱員道具欄時</b>才做事。
-/// </para>
-/// <para>
-/// 📌 <b>為什麼「使用者自己開著視窗」這件事成立</b>（2026-09-10 逐行讀提供端確認）：
-/// AutoRetainer 那三支取回端點的唯一前置條件是
-/// <c>InventorySpaceManager.IsRetainerInventoryLoaded()</c>，而它的實作就是
-/// 「<c>InventoryRetainer</c> 或 <c>InventoryRetainerLarge</c> 這兩個 addon 有沒有開好」。
-/// <b>沒有</b>任何「AutoRetainer 必須正在跑自己的任務鏈」的檢查，也沒有 <c>IsBusy</c> 閘門。
-/// ⇒ 誰開的視窗都算數。
-/// </para>
-/// <para>
 /// 🔴🔴 <b>送出不等於成功，本模組不拿回傳值當成果。</b>
 /// 提供端只送指令、刻意不等結果；而台服對這類指令的拒絕是<b>完全靜默</b>的
 /// （不受理時那一格不會有任何變化，也不會有訊息）。所以每送一次就<b>盯著僱員容器裡
 /// 那一款的存量有沒有真的下降</b>，只有下降了才計入「已確認」。逾時沒下降的一律
 /// 記成「未確認」並跳過那一款，<b>絕不</b>混進成功數字裡。
-/// </para>
-/// <para>
-/// 🔴 <b>背包滿了要停在看得見的地方。</b>提供端回 <c>-3</c>（ResultInventoryFull）時整輪立刻停止，
-/// 並報出「停在第幾款／共幾款」。⚠️ 那個 <c>-3</c> 用的是 <b>AutoRetainer 自己的</b>
-/// 背包保留格數設定（<c>MultiMinInventorySlots</c>），不是「背包真的一格都不剩」——
-/// 訊息裡要講清楚，不然使用者會去看背包然後覺得外掛在說謊。
-/// </para>
-/// <para>
-/// ⚠️ <b>0 與 -1 是不同的答案</b>：0＝「走遍僱員容器，確定沒有這件」，
-/// -1＝「根本讀不到僱員容器」。併成一個 falsey 就會把「視窗還在載入」當成「僱員是空的」。
-/// </para>
-/// <para>
-/// 📌 <b>本外掛零第三方相依</b>（沒有 ECommons），所以這裡的節流用的是自家的
-/// <see cref="Throttle"/>，佇列狀態是模組自己的欄位——不涉及 <c>EzThrottler</c>／
-/// <c>TaskManager</c> 那些跨執行緒不安全的共用靜態物件。而且下面每一行都在
-/// framework 執行緒上跑（<see cref="OnFrameworkUpdate"/> 與 ImGui 繪製）。
-/// </para>
 /// </remarks>
 public sealed unsafe class RetainerBatchRetrieve : TcModule
 {
@@ -169,16 +141,9 @@ public sealed unsafe class RetainerBatchRetrieve : TcModule
     private int cachedFreeSlots;
 
     // ── 繪製執行緒 → framework 執行緒的請求 ──────────────────────────────────
-    //
     // 🔴 ImGui 的 Draw 是在 Dalamud 的 swapchain Present 掛鉤裡跑的
     //    （InterfaceManager.Display），不保證就是 framework 執行緒。
     //    所以按鈕一律只「登記一個請求」，真正的動作留到下一個 framework tick 做。
-    //    這一條擋掉三種具體的壞事：
-    //    ① AutoRetainer 那些端點會走它的 IpcFrameworkGate，而那個閘門在「不是 framework
-    //       執行緒」的呼叫端上是 Task.WaitAny(..., 5000) —— 在繪製路徑上等，就是把畫面
-    //       凍住最多五秒。
-    //    ② AllaganTools.GetFilterItems 在對方那側會把整份清單重算一遍，同樣是同步的。
-    //    ③ ChatGui.Print 的佇列在本 pin 是裸 Queue，非 framework 執行緒推進去是 racy 的。
     //    ⚠️ 讀原生記憶體（背包／僱員容器）也一起搬過去了，理由相同。
 
     private bool startRequested;
@@ -249,9 +214,6 @@ public sealed unsafe class RetainerBatchRetrieve : TcModule
     /// 🔴 整段包 <c>try</c> 是因為 <c>RetainerManager.Instance()</c> 這類
     /// <c>[StaticAddress]</c> 產生器方法<b>不會回 null</b>——特徵碼解析失敗時擲的是
     /// <c>InvalidOperationException</c>。要防的是「擲例外」而不是「回 null」。
-    /// ⚠️ 這攔得到的只有受管理的例外；解參考壞指標產生的 AccessViolationException 在
-    /// .NET Core 屬 corrupted-state exception，<c>try/catch</c> 完全無效——那種只能靠
-    /// 事前判空（見 <see cref="TryGetReadableContainer"/>）。
     /// </remarks>
     private void OnFrameworkUpdate(IFramework framework)
     {
@@ -366,10 +328,8 @@ public sealed unsafe class RetainerBatchRetrieve : TcModule
     /// <remarks>
     /// 🔴 <b>這就是「送出不等於成功」的那道防線。</b>台服的拒絕是完全靜默的：不受理時
     /// 格子不會變、也不會有訊息。所以唯一可信的成功訊號就是「存量真的少了」。
-    /// <para>
     /// 📌 存量下降之後<b>停在同一款</b>不前進——同一款可能有好幾疊，下一次呼叫會打到下一疊，
     /// 直到提供端回 0（確定沒有了）才換下一款。
-    /// </para>
     /// </remarks>
     private void WaitForPending(long now)
     {
@@ -521,12 +481,10 @@ public sealed unsafe class RetainerBatchRetrieve : TcModule
     /// 🔴 判的是 <c>Items</c> 不是 <c>GetInventorySlot()</c> 的回傳值：<c>Items</c> 為 null 而
     /// <c>Size &gt; 0</c> 時，<c>GetInventorySlot(i)</c> 回的是「null＋偏移」這種<b>非 null 的假指標</b>，
     /// 判空一定通過，解參考就是攔不到的 AVE（corrupted-state exception，try/catch 無效）。
-    /// <para>
     /// ⚠️ <b>刻意不檢查 <c>IsLoaded</c></b>，雖然本外掛別的地方有檢查：提供端
     /// （AutoRetainer <c>RetainerRetrieve.TryGetReadableContainer</c>）只判 <c>Items == null</c>，
     /// 這裡多加一層就會出現「它讀得到、我讀不到」的容器，那會讓下面的存量基準與它不一致，
     /// 表現成「明明取回了卻判成未確認」。<b>要跟提供端看到同一份資料</b>。
-    /// </para>
     /// </remarks>
     private static InventoryContainer* TryGetReadableContainer(InventoryManager* manager, InventoryType type)
     {

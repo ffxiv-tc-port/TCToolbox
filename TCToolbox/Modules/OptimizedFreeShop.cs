@@ -22,15 +22,6 @@ namespace TCToolbox.Modules;
 /// 參考 DailyRoutines OptimizedFreeShop 設計重寫（API13、無 OmenTools／KamiToolKit 相依）。
 /// </summary>
 /// <remarks>
-/// 與 DR 原版的兩點差異：
-/// <list type="number">
-/// <item>DR 是 hook <b>AgentInterface::ReceiveEvent</b> 這個所有 agent 共用的函式，靠
-/// <c>eventKind==0 &amp;&amp; values[0].Int==0</c> 判斷「有人在領東西」再去按 Yes。那條 hook 每一個
-/// agent 的每一次事件都會經過，判斷條件又極寬鬆。這裡改成：只在「報酬」視窗開著時才自動確認
-/// SelectYesno，零 hook、作用範圍收斂到這個視窗。</item>
-/// <item>DR 用 KamiToolKit 把按鈕注入成原生節點，這裡沿用本外掛既有作法用 ImGui 疊圖，
-/// 不動遊戲的節點樹。</item>
-/// </list>
 /// </remarks>
 public sealed unsafe class OptimizedFreeShop : TcModule
 {
@@ -60,11 +51,6 @@ public sealed unsafe class OptimizedFreeShop : TcModule
     /// 判定「這個 SelectYesno 是不是報酬視窗的領取確認框」用的 <c>Addon</c> 列。
     /// </summary>
     /// <remarks>
-    /// 🔑 台服 7.20 實查：<c>Addon#11431~11437</c> 正是報酬視窗自己的字串區塊
-    /// （「可領取道具」「可領取」「已獲得」「無可領取道具」「領取條件：達成成就」），
-    /// 其中 <c>#11437</c>＝「確定要領取＿道具＿×＿數量＿嗎？」就是領取確認句；
-    /// <c>#11506/#11507/#11508/#11515</c> 是四句「確定要領取嗎？＋這件你穿不了／已學會」的變體
-    /// （它們的「用不了也要領」按鈕文字在相鄰的 <c>#11509/#11516</c>，同一個區塊）。
     /// 用列號查客戶端自己的字串，所以跟語言無關。
     /// ❌ <b>不能整句逐字比對</b>：句子裡的道具名與數量是 placeholder。
     /// 比對規則見 <see cref="AddonPrompt"/>（只留固定片段、全部依序出現才算命中）。
@@ -133,8 +119,6 @@ public sealed unsafe class OptimizedFreeShop : TcModule
     /// 或其他外掛（AutoRetainer 之類）此刻彈出的確認框。少了文字閘門就等於「看到 Yes/No 就按是」。
     /// 📌 <b>也不能改用 <c>queue.IsBusy</c> 當閘門</b>：本模組的賣點包含「手動點領取也跳過確認」，
     /// 手動路徑根本不經過佇列 —— 文字白名單才是必要且充分的那一道。
-    /// ⚠️ 未命中一律不動作並寫一行 Information 級 log（使用者跑 LogLevel 1 收得到），
-    /// 那行同時是「台服實際跳的是哪一句」的唯一線索。
     /// </remarks>
     private void OnSelectYesno(AddonEvent type, AddonArgs args)
     {
@@ -227,12 +211,6 @@ public sealed unsafe class OptimizedFreeShop : TcModule
     /// 原生陣列沒有邊界檢查，addon 版面一改就會變成任意記憶體讀取。
     /// </summary>
     /// <remarks>
-    /// 🔴 <b>光是走 <c>AtkValuesSpan</c> 還不夠。</b>它的實作是
-    /// <c>new Span&lt;AtkValue&gt;(AtkValues, AtkValuesCount)</c>，<b>自己不判 <c>AtkValues</c> 欄位</b>，
-    /// 而 <c>Span</c> 的建構子也不驗指標。addon 拆解時 <c>AtkValues</c> 會先被釋放成 null、
-    /// <c>AtkValuesCount</c> 卻可能還留著殘值，這個組合會<b>合法建構出一個長度非零的 Span</b>，
-    /// 連 Span 自己的邊界檢查都會放行，一直到真的索引下去才對位址 0 解參考 ＝
-    /// AccessViolationException（corrupted-state exception，<c>try/catch</c> 攔不到）。
     /// ⇒ <c>addon == null</c> 與 <c>Length</c> 都擋不住這條，必須自己判 <c>AtkValues</c> 欄位。
     /// </remarks>
     private static List<JobGroup> ReadGroups(AtkUnitBase* addon)

@@ -17,24 +17,12 @@ namespace TCToolbox.Modules;
 /// Questionable 目前步驟顯示到 Mappy ＋ 伺服器資訊列。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 🔴 <b>純顯示，零介入。</b>只呼叫 Questionable 的兩支唯讀端點
 /// （<c>IsRunning</c>／<c>GetCurrentStepData</c>）；它同一個 provider 上那些會改變行為的端點
 /// （<c>StartQuest</c>／<c>Stop</c>／<c>ImportQuestPriority</c>…）一支都不碰。
-/// </para>
-/// <para>
-/// 📌 <b>解決的問題</b>：Questionable 在跑的時候，「它現在到底想幹嘛、要去哪裡」只寫在它自己的
-/// 視窗裡。把目標位置畫到地圖上、把互動類型放進伺服器資訊列之後，不必再開第二扇視窗就看得出來。
-/// </para>
-/// <para>
-/// 🔴 <b>預設關。</b>地圖上已經有別的東西在畫（NecroLens 之類的在世界上畫），
-/// 要不要再多一個來源應該由使用者自己決定。
-/// </para>
-/// <para>
 /// 🔴🔴 <b>每秒問一次，而且只在框架執行緒上問。</b>對方的端點包在它自己的
 /// <c>IpcFrameworkGate</c> 裡，從繪製路徑呼叫會在主執行緒上等一個要靠主執行緒才跑得到的 tick。
 /// 設定畫面上顯示的每一個數字都是這裡快取下來的。
-/// </para>
 /// </remarks>
 public sealed class QuestionableStepOnMappy : TcModule
 {
@@ -83,8 +71,6 @@ public sealed class QuestionableStepOnMappy : TcModule
     /// <remarks>
     /// 📌 <b>語意有遊戲資料背書</b>：60428 是 <c>MapSymbol</c> 第 55 列的圖示，
     /// 該列的 <c>PlaceName</c> 在台服逐字是「大型任務」——也就是遊戲自己拿來標任務的那顆。
-    /// ✅ 2026-09-08 以 <c>tools/sqpack/path_exists.py</c> 離線直讀台服 <c>060000.win32.index</c>
-    /// 確認 <c>ui/icon/060000/060428.tex</c> 存在（校準閘門通過）。
     /// ⚠️ 圖示的「存在」與「長什麼樣子」是兩件事，所以仍然做成可設定的。
     /// </remarks>
     public const uint DefaultStepIconId = 60428;
@@ -131,18 +117,7 @@ public sealed class QuestionableStepOnMappy : TcModule
     /// <remarks>
     /// 📌 <b>判定本身已經搬到 <see cref="QuestAutomationConflict"/>（Core）</b>：它與這個模組無關，
     /// 而這個模組<b>預設是關的</b>——留在這裡的話，沒開它的人（絕大多數）永遠看不到提醒。
-    /// 「現在是誰在控制」面板問的是同一支 <see cref="QuestAutomationConflict.Evaluate"/>，
-    /// 措辭也共用同一份（<see cref="QuestAutomationConflict.ShortText"/>／
-    /// <see cref="QuestAutomationConflict.Tooltip"/>）。
-    /// <para>
-    /// 🔴 Questionable 那一側讀的是 <c>IsRunning</c>，<b>語意比字面寬</b>
-    /// （<c>AutomationType != Manual || questController.IsRunning</c>，
-    /// Questionable <c>External/QuestionableIpc.cs:120-122</c>，2026-09-11 逐字對照）——
-    /// 理由與「為什麼沒有更精確的端點可換」寫在 <see cref="QuestAutomationConflict.Evaluate"/> 上。
-    /// </para>
-    /// <para>
     /// ⚠️ 這個欄位只在框架執行緒上寫（<see cref="OnUpdate"/>），繪製路徑只讀。
-    /// </para>
     /// </remarks>
     private QuestConflictStatus conflict = QuestAutomationConflict.None;
 
@@ -262,13 +237,9 @@ public sealed class QuestionableStepOnMappy : TcModule
     /// 重新判斷「Questionable 在不在跑」與「AutoRetainer 的多角色模式開不開著」。
     /// </summary>
     /// <remarks>
-    /// <para>
     /// 📌 判定本身在 <see cref="QuestAutomationConflict.Evaluate"/>（Core，與模組無關），
     /// 這裡只負責「多久問一次」與「狀態變了要不要寫記錄」。
-    /// </para>
-    /// <para>
     /// ⚠️ 在框架執行緒上呼叫（<see cref="OnUpdate"/> 裡），IPC 的實作跑在呼叫端的執行緒上。
-    /// </para>
     /// </remarks>
     private void RefreshConflict()
     {
@@ -511,9 +482,6 @@ public sealed class QuestionableStepOnMappy : TcModule
     /// 🔴 <b>查不到一律原樣回傳英文，絕不回空字串。</b>對方隨時可能加新的列舉成員，
     /// 而「資訊列上那一格突然變空白」是最難歸因的失敗形式——使用者只會覺得功能壞了。
     /// 原樣顯示至少講得出「它現在在做一件我沒見過的事，叫做 XXX」。
-    /// <para>
-    /// 📌 這張表是<b>顯示層</b>的方便，不是契約。少一條只是顯示英文，不影響任何行為。
-    /// </para>
     /// </remarks>
     private static string InteractionLabel(string interactionType) => interactionType switch
     {

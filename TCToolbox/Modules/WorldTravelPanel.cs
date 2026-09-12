@@ -17,31 +17,12 @@ namespace TCToolbox.Modules;
 /// 以及一鍵換 World／換副本區／回旅店與自宅。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 🔴🔴 <b>紅線：全部走 Lifestream 的具名 IPC 端點，絕不用聊天指令 <c>/li</c>。</b>
 /// 空參數的 <c>/li</c> 是跨界傳送。端點包裝在 <see cref="LifestreamTravel"/>，
 /// 那個檔逐字記著每一支的簽章與失敗語意。
-/// </para>
-/// <para>
 /// 🔴 <b>這個面板不做任何自動化。</b>每一個會讓角色移動的動作都必須是使用者當下按下去的；
 /// 沒有排程、沒有「條件成立就自己換」、沒有失敗重試。開著但不去按它，遊戲行為完全不變
 /// （<see cref="IsManualTrigger"/> 因此為 <see langword="true"/>）。
-/// </para>
-/// <para>
-/// 🔴 <b>別人正在移動角色時，所有會移動的按鈕都是灰的。</b>判準用的是共用的那一份
-/// （<see cref="ExternalNav.TryGetActiveMover"/>，涵蓋 Lifestream／vnavmesh／AutoDuty／BossMod AI），
-/// 不是自己再寫一份。唯一的例外是「中止」——那是往安全方向走的動作，永遠可以按。
-/// </para>
-/// <para>
-/// 🔑 <b>Draw 路徑上不做 IPC。</b>Lifestream 端的 <c>IpcFrameworkGate</c> 在呼叫端不是遊戲主
-/// 執行緒時會<b>同步等最多五秒</b>，那五秒會花在呼叫者的執行緒上。所以按鈕只是把要做的事
-/// 記在欄位裡，真正的呼叫在下一次 <c>Framework.Update</c> 送出（延遲一幀，看不出來）。
-/// 顯示用的狀態同理：在 <c>Framework.Update</c> 裡輪詢並快取，Draw 只讀欄位。
-/// </para>
-/// <para>
-/// 📌 <b>沒人在看就完全不輪詢。</b>面板（設定區或獨立視窗）最後一次被畫出來超過兩秒，
-/// <c>OnUpdate</c> 什麼都不做。
-/// </para>
 /// </remarks>
 public sealed class WorldTravelPanel : TcModule
 {
@@ -69,11 +50,6 @@ public sealed class WorldTravelPanel : TcModule
     /// 🔴 <b>這個 4 是 <c>WorldDCGroupType.Region</c>，不是 <c>World.Region</c>。</b>兩張表都有一個叫
     /// <c>Region</c> 的欄位而且值域重疊——台服的 <c>World.Region</c> 剛好也是 4，
     /// 互套的話篩選條件會變成另一回事而且不會報錯。
-    /// <para>
-    /// 📌 這裡只用來<b>縮小候選範圍</b>；最終能不能去一律由 Lifestream 的
-    /// <c>CanVisitSameDC</c>／<c>CanVisitCrossDC</c> 定案，所以就算這個常數哪天不對，
-    /// 失敗形式是「清單少了幾個」而不是「列出去不了的 World」。
-    /// </para>
     /// </remarks>
     private const uint AlwaysVisitableDcRegion = 4;
 
@@ -181,15 +157,8 @@ public sealed class WorldTravelPanel : TcModule
     /// <remarks>
     /// 🔑 <b>「不知道」要在列上看得見。</b>副本區總數 Lifestream 還沒學到時畫的是「?」不是 0——
     /// 畫成 0 會讓人以為這一區沒有副本區，而那是完全不同的一件事。
-    /// <para>
-    /// 📌 <b>這個 getter 會蓋一次時間戳。</b>主視窗畫得到這一列，就代表使用者正在看這個模組，
-    /// 也就是輪詢該醒著。副作用寫在 getter 裡不好看，但替代方案（另外掛一個「主視窗開著嗎」的
-    /// 查詢）會多一份要跟著維護的狀態。
-    /// </para>
-    /// <para>
     /// 🔴 模組關著時回 <see langword="null"/>：關掉之後 <c>OnUpdate</c> 就不跑了，
     /// 欄位裡留的是停用當下的舊值——把過期的所在 World 畫在列上比什麼都不畫更糟。
-    /// </para>
     /// </remarks>
     public override ModuleNotice? RowNotice
     {
@@ -493,22 +462,8 @@ public sealed class WorldTravelPanel : TcModule
     /// 重建「可以去哪些 World」的清單。
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// 🔑 <b>能不能去一律由 Lifestream 定案，我們只負責縮小候選範圍。</b>
-    /// 台服八個正式 World 的 <c>World.IsPublic</c> 實測<b>全部是 False</b>——自己照那個欄位篩
-    /// 會得到一張空清單，而且不會有任何錯誤訊息。Lifestream 自己有針對台服的例外
-    /// （<c>Lifestream/PublicWorlds.cs</c>，硬編 4028~4035 與資料中心 151），
-    /// 問它就不必把那份例外再抄一份、也不會抄漏。
-    /// </para>
-    /// <para>
     /// 🔴 <b>不寫死任何中文 World 名。</b>顯示名一律取自 <c>World</c> 表的 <c>Name</c> 欄，
     /// 動作一律用列號。寫死名字的話，遊戲改字、或有人跑別的語系客戶端，就整張清單失效。
-    /// </para>
-    /// <para>
-    /// ⚠️ 這一輪會做「候選數×2」次 IPC 呼叫（台服約四十次）。它只在所在 World 變動、
-    /// 使用者按重新整理、或清單是空的（每五秒重試一次，因為 Lifestream 要登入後才建得出來）
-    /// 時才跑，不是每幀。
-    /// </para>
     /// </remarks>
     private void RebuildWorlds(World? currentWorld)
     {
@@ -947,12 +902,8 @@ public sealed class WorldTravelPanel : TcModule
     /// <param name="extraBlocked">除了「別人在移動」之外的額外禁用條件。</param>
     /// <returns><see langword="true"/>＝這一幀要真的把動作送出去。</returns>
     /// <remarks>
-    /// 📌 二次確認的武裝狀態有五秒有效期（<see cref="ConfirmWindowMs"/>），過了自動解除——
-    /// 不然使用者按了一下就去做別的事，回來看到的是一顆已經上膛的按鈕。
-    /// <para>
     /// 🔴 <b>回傳 true 的那一刻不呼叫任何 IPC。</b>呼叫端只會設一個待送出旗標，
     /// 真正的呼叫在下一次 <c>Framework.Update</c>（理由見類別備註）。
-    /// </para>
     /// </remarks>
     private bool TravelButton(string key, string label, string tooltip, float width, bool extraBlocked = false)
     {

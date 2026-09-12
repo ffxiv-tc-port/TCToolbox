@@ -18,33 +18,9 @@ namespace TCToolbox.Modules;
 /// 陸行鳥鞍囊：寄放重複道具 —— 把背包裡「鞍囊中已經有同一款」的道具整堆放進鞍囊。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 🔴 <b>純手動觸發</b>：開著模組但不去按按鈕，遊戲行為完全不變。
-/// 上游 PandorasBox <c>EntrustChocoboDuplicates</c> 是在鞍囊視窗上疊一顆按鈕、按下去就把
-/// 整個背包掃一遍並把所有搬移一次排進佇列；這裡改成 TC Toolbox 既有的手動模組慣例
-/// （設定面板上的按鈕 ＋ 可隨時停止 ＋ 每一步都重新從活的容器算）。
-/// </para>
-/// <para>
-/// 🔴🔴 <b>搬移路徑刻意沿用 <see cref="AutoInventoryTransfer"/> 那條「點遊戲自己的右鍵選單項目」</b>，
-/// <b>不用</b> <c>InventoryManager.MoveItemSlot</c>：
-/// <list type="bullet">
-/// <item>2026-07-31 實機驗證過鞍囊<b>不走</b>雇員道具命令，而右鍵選單那條是來回驗證過會動的。</item>
-/// <item><c>MoveItemSlot</c> 的第 6 個參數 <c>a6</c> 省略＝預設 <c>false</c>＝<b>只改本機、一個封包都不送</b>；
-/// 就算補上 <c>a6: true</c>，它對鞍囊<b>沒有實機證據</b>。要換路徑請先實測。</item>
-/// </list>
-/// </para>
-/// <para>
-/// 🔴 <b>選單項目一律用台服 <c>Addon</c> 表的字串比對，不用寫死的事件序號。</b>
-/// 上游用的是 <c>AgentInventoryContext-&gt;EventIds[e] == 56</c> ＋ <c>Callback.Fire(menu, true, 0, e - 7, …)</c>
-/// ——兩個寫死的魔術數字（56 與 -7），台服完全沒有可離線驗證的依據。
-/// 這裡改成找標籤等於 <c>Addon</c> 第 881 列的那一項，離線核對過台服 7.20：
-/// 881＝「放入陸行鳥鞍囊」、887＝「從陸行鳥鞍囊中取回」、886＝「將指定數量放入陸行鳥鞍囊」。
-/// <b>逐字相等</b>比對，所以不會誤觸 886 那個「指定數量」的版本。
-/// </para>
-/// <para>
 /// 🔴 找不到、被收進次選單、或項目是停用狀態時<b>一律不動作</b>並記錄原因（fail-closed）。
 /// 那個右鍵選單裡有「捨棄」，寧可整個功能不能用，也不要按到隔壁那一項。
-/// </para>
 /// </remarks>
 public sealed unsafe class SaddlebagEntrustDuplicates : TcModule
 {
@@ -424,10 +400,6 @@ public sealed unsafe class SaddlebagEntrustDuplicates : TcModule
     /// 在道具右鍵選單裡找標籤等於 <c>Addon</c> 某一列的項目並點下去。
     /// </summary>
     /// <remarks>
-    /// 📌 作法與索引基準沿用 <see cref="AutoInventoryTransfer"/> 裡實機驗證過的那份：
-    /// 選單實際佔用 <c>EventParams[ContexItemStartIndex .. +ContextItemCount]</c>，
-    /// callback 要的是<b>相對於起點的序號</b>，不是絕對索引，也不能掃完 98 格再數字串
-    /// （那樣會掃到上一次選單的殘留）。
     /// <para>🔴 三道 fail-closed：找不到、在次選單裡、項目停用——都回 <c>false</c> 什麼都不做。</para>
     /// </remarks>
     /// <returns><c>true</c>＝已送出；<c>false</c>＝這一格不能點（三道 fail-closed）；<c>null</c>＝守衛擋下，這一輪沒送、下一輪再來。</returns>
