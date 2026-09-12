@@ -20,7 +20,7 @@ namespace TCToolbox.Modules;
 /// <summary>
 /// 自動物品頁面轉移：按住指定鍵右鍵點物品，直接把它搬到對應的另一個頁面。
 /// 零封包偽造、不寫記憶體、不做 patch。
-/// ⚠️ 即使如此，下面三條專用路徑**照舊保留**，因為它們是實機來回驗證過會動的，
+/// ⚠️ 即使如此，下面四條專用路徑**照舊保留**，因為它們是實機來回驗證過會動的，
 /// 而「改用 <c>MoveItemSlot(a6: true)</c> 也能動」目前**只是推論、沒有實機證據**。
 /// 要換路徑請先實測，不要憑這段說明就改：
 ///  - **雇員**：走遊戲自己的雇員道具命令（見 <see cref="RetainerItemCommandDelegate"/>）。
@@ -534,7 +534,7 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
             //
             // 兩個方向的退回長得不一樣，所以兩個都驗：
             //   取出被退回 → 道具**回到來源格**
-            //   存入被退回 → 道具**從目的地格消失**（部隊置物櫃 2026-08-01 實機就是這個）
+            //   存入被退回 → 道具**從目的地格消失**
             var backAtSource = IsItemAt(manager, p.Source, p.Slot, p.BaseItemId);
             var goneFromDestination = !IsItemAt(manager, p.Destination, p.DestinationSlot, p.BaseItemId);
 
@@ -608,7 +608,7 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
     // 而且那個選單裡有「丟棄」，點錯一格的代價太高。置物櫃走 TransferViaChest。
 
     /// <remarks>
-    /// 📌 2026-08-25：判斷順序、索引算法與那行選單傾印診斷都原封不動搬進
+    /// 📌 判斷順序、索引算法與那行選單傾印診斷都原封不動搬進
     /// <see cref="InventoryContextMenu.TryFireEntry"/> 供「道具快速拆分」共用，
     /// 這裡只剩「哪種失敗印哪一句聊天訊息」——那部分是轉移專用的措辭，沒有搬。
     /// 對使用者可見的行為（聊天訊息內容、節流鍵、Information 診斷）一個字都沒有改。
@@ -687,11 +687,9 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         if (Config.ModifierKeyCode == 0) return;
         if (CSFramework.Instance()->WindowInactive) return;
 
-        // 2026-08-01：這行救了一次診斷——部隊置物櫃右鍵時它**完全沒出現**，
+        // 這行救了一次診斷——部隊置物櫃右鍵時它**完全沒出現**，
         // 而它記在修飾鍵檢查之前，所以直接證明是「hook 根本沒被呼叫」而不是「修飾鍵沒按到」，
         // 才找到 OpenForItemSlot 不是置物櫃入口這件事。位置要留著，它的價值就在「記得比什麼都早」。
-        // 🔴 2026-08-30 修正：原註解宣稱「只有右鍵才觸發，不會洗版」——實機 log 打臉。
-        // 08-23~30 這一行印了 10,200 次、峰值 244 筆/分：同一格在 10ms 內就會重複觸發，
         // 而它記在下面那道「略過重複觸發」去重**之前**，所以去重擋得住動作、擋不住這行記錄。
         // ⇒ 這裡降成 Debug（保住「hook 有沒有被呼叫」的診斷），Information 移到去重之後，
         //   只有真的要處理那一格時才印一筆。
@@ -731,7 +729,7 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
 
         var item = manager->GetInventorySlot(source, slot);
 
-        // 2026-07-31：部隊置物櫃「取出」完全沒有任何輸出（存入正常），代表在這之前就 return 了，
+        // 部隊置物櫃「取出」完全沒有任何輸出（存入正常），代表在這之前就 return 了，
         // 不是搬移失敗。這行把遊戲實際傳進來的容器與格號記下來，才能分辨是
         //「hook 沒被呼叫」還是「讀不到那一格」。右鍵才會觸發，不會洗版。
         if (item == null || item->ItemId == 0)

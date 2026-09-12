@@ -75,7 +75,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
     // 🔴 這兩句在台服的執行期會把道具名嵌進句子（實機 LogMessage 2108：
     //    「無法使用僱員幻想藥，現在已經擁有重新設定僱員容貌的權利了。」）——
     //    LogMessage 404 的模板「無法使用，現在已經…」因此不是它的子字串，用 Contains(模板) 會漏、然後逾時。
-    //    改用**道具名無關的穩定錨**比對（2026-08-23 實機定案）。
+    //    改用**道具名無關的穩定錨**比對。
     private const string RightGrantedAnchor = "可以重新設定僱員的容貌了";
     private const string AlreadyHasRightAnchor = "已經擁有重新設定僱員容貌的權利";
 
@@ -165,18 +165,18 @@ public sealed unsafe class RetainerBatchRename : TcModule
     private const uint LobbyRowSetAppearanceNow = 621;
 
     // 🔴 形象確認框改用「短錨」比對，不用整句 Lobby 模板——實機「要儲存目前的形象嗎？」後面
-    //    還接了一長串說明（「今後創建新角色時，可以讀取…」），整句模板 Contains 會漏而卡住（2026-08-23 實機）。
+    //    還接了一長串說明（「今後創建新角色時，可以讀取…」），整句模板 Contains 會漏而卡住。
     private const string UseSavedAppearanceAnchor = "要使用已儲存的角色形象";
     private const string SaveAppearanceAnchor = "要儲存目前的形象";
     private const string SetAppearanceNowAnchor = "設定成目前的樣子";
 
     // 🔴 台服僱員改名撞名時 NPCDialogue 印「無法使用此名字，」——與 Addon 2864／LogMessage 1335 的
-    //    模板都不同，模板比對不到會害輸入框無限重填同一個被占用的名字（2026-08-23 實機）。
+    //    模板都不同，模板比對不到會害輸入框無限重填同一個被占用的名字。
     private const string NameUnusableAnchor = "無法使用此名字";
 
     // 🔴 「要使用已儲存的角色形象嗎？→是」之後，遊戲開的是**儲存形象檔案選擇器**
     //    `CharaMakeDataImport`（「要載入哪一份檔案」）＋說明框 `CharaMakeDataImportDialog`。
-    //    實機錄製（2026-08-23 21:27:02）：選第一個檔＝FireCallback [Int=102, Int=0, Bool=false]。
+    //    實機錄製：選第一個檔＝FireCallback [Int=102, Int=0, Bool=false]。
     //    載入完成後 CharaMake 編輯器帶著該檔的外觀開啟（AtkValues[0].Int==2、[2]=種族字串），
     //    按「完成」＝對 _CharaMakeFeature FireCallback [Int=100] → 進入「要儲存目前的形象嗎？」鏈。
     //    ⚠️ 空白（答否）時 AtkValues[0].Int==0、[2]=「? ? ?」——**看到空白絕不按完成**。
@@ -206,7 +206,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
     private const string PersonalityConfirmMarker = "性格";
 
     /// <summary>管理人（僱員窗口）NPC 的參考列——讀第一個非空的 <c>Title</c> 當比對基準。</summary>
-    /// <remarks>這些列在台服 <c>ENpcResident</c> 的 <c>Title</c> 都是「僱員窗口」（2026-08-23 EXD dump 實查）。</remarks>
+    /// <remarks>這些列在台服 <c>ENpcResident</c> 的 <c>Title</c> 都是「僱員窗口」（EXD dump 實查）。</remarks>
     private static readonly uint[] VocateNpcTitleRows = [1000233, 1001963, 1003275, 1011198, 1018983];
 
     /// <summary>與管理人 NPC 的互動距離（NPC 比鈴寬鬆一點）。</summary>
@@ -1177,7 +1177,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
         {
             if (!TryReady(out var reason)) return AbortWith(reason);
 
-            // 🔴 傳喚鈴佔用中喝不了藥（UseAction 靜默無效；2026-08-24 實機：上一隻穿完裝清單還開著，
+            // 🔴 傳喚鈴佔用中喝不了藥（UseAction 靜默無效；上一隻穿完裝清單還開著，
             //    下一隻卡在喝藥）。還在鈴的狀態就先自己收掉再喝。
             if (Svc.Condition[ConditionFlag.OccupiedSummoningBell] || UiHelper.IsAddonReady(RetainerListAddon))
             {
@@ -1235,7 +1235,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
 
             if (inventory->GetInventoryItemCount(FantasiaItemId) < fantasiaCountBeforeUse) return true;
 
-            // 🔴 UseAction 有時靜默沒生效（2026-08-24 實機：第一次按開始整輪沒用藥就逾時）。
+            // 🔴 UseAction 有時靜默沒生效（第一次按開始整輪沒用藥就逾時）。
             //    等 4 秒沒任何訊號就自動再用一次，最多 3 次，而不是逾時把整輪停掉。
             lastUseAt ??= DateTime.UtcNow;
             if ((DateTime.UtcNow - lastUseAt.Value).TotalMilliseconds >= 4_000)
@@ -1314,7 +1314,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
         // ── c. 卸裝 ──
         queue.Enqueue("記錄目前裝備", () =>
         {
-            // 🔴 招呼 Talk 可能在這一步期間才冒出來（裝備欄比 Talk 先就緒；2026-08-23 實機）。
+            // 🔴 招呼 Talk 可能在這一步期間才冒出來（裝備欄比 Talk 先就緒）。
             //    Talk 開著就先點掉、這一 tick 不做別的——不在對話框開著時搬裝備。
             if (UiHelper.IsAddonReady(TalkAddon))
             {
@@ -1330,7 +1330,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
             {
                 // 🔴 改名只需脫「防具與飾品」（槽 2~12）。主手(0)／副手(1)／靈魂水晶(13) 不用卸——
                 //    LM 405 原文只要求脫防具和飾品，而且對主手槽呼叫 MoveItemSlot 會回傳 10 失敗
-                //    （2026-08-23 實機：卸「卡扎納爾之書」失敗導致整段中止、對話沒推進）。
+                //    （卸「卡扎納爾之書」失敗導致整段中止、對話沒推進）。
                 if (i < 2 || i > 12) continue;
 
                 var item = container->GetInventorySlot(i);
@@ -1356,7 +1356,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
 
         EnqueueUndress(work);
 
-        // 📌 自適應驗證（2026-08-24：固定等 10 秒實機嫌久）：防具欄（槽 2~12）**連續 3 秒保持空**
+        // 📌 自適應驗證（固定等 10 秒實機嫌久）：防具欄（槽 2~12）**連續 3 秒保持空**
         //    ＝伺服器沒把裝備退回，就前進；期間有東西彈回來＝退回，計時歸零並由下一步的檢查停下。
         //    Config.UndressVerifyDelayMs 仍是總上限（伺服器極慢時最多等這麼久）。
         DateTime? undressEmptySince = null;
@@ -1466,7 +1466,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
         {
             if (stashed.Count == 0) return true;
 
-            // 🔴 招呼 Talk 可能在這一步期間才冒出來（裝備欄比 Talk 先就緒；2026-08-23 實機）。
+            // 🔴 招呼 Talk 可能在這一步期間才冒出來（裝備欄比 Talk 先就緒）。
             //    Talk 開著就先點掉、這一 tick 不做別的——不在對話框開著時搬裝備。
             if (UiHelper.IsAddonReady(TalkAddon))
             {
@@ -1475,7 +1475,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
             }
 
 
-            // 🔴🔴 崩潰硬守衛 v2（2026-08-24 實機第二次 C0000005 定案）：
+            // 🔴🔴 崩潰硬守衛 v2（第二次 C0000005 定案）：
             //    GetActiveRetainer() 回的是 LastSelectedRetainerId 指到的僱員——「上次選過誰」，
             //    離開僱員後不歸零＝陳舊真值，第一版守衛因此放行了「清單剛開、僱員還沒傳喚出來」的搬移。
             //    正確證據＝**僱員指令選單（含「讓僱員返回」）開著**：那只在僱員真的被傳喚出來時存在，
@@ -1490,7 +1490,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
             if (!Throttle.Pass($"{InternalName}-Undress", 200)) return false;
 
             // 🔴 只數「真的要執行搬移」的次數。這行曾排在節流之前＝每個畫格都 ++，
-            //    一秒就撞上限強制停止（2026-08-23 實機：不到一秒報「反覆超過 40 次」，實際才搬 2~3 件）。
+            //    一秒就撞上限強制停止（不到一秒報「反覆超過 40 次」，實際才搬 2~3 件）。
             if (++moves > MaxGearMovesPerRetainer)
                 return AbortWith($"卸裝反覆超過 {MaxGearMovesPerRetainer} 次，強制停止。請回報。");
 
@@ -1498,7 +1498,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
                 return AbortWith("卸裝途中讀不到僱員裝備欄。");
 
             // 🔴 只掃防具與飾品槽（2~12）。這裡曾經從槽 0 開始掃＝先撞主手武器
-            //    （MoveItemSlot 回傳 10 失敗→整段中止；2026-08-23 實機兩次都炸在「卡扎納爾之書」）。
+            //    （MoveItemSlot 回傳 10 失敗→整段中止；實機兩次都炸在「卡扎納爾之書」）。
             //    「記錄目前裝備」那步的槽位過濾（.54）不夠——這個實際卸裝的迴圈自己又掃了一次容器。
             var slot = -1;
             for (var i = 2; i <= 12 && i < container->Size; i++)
@@ -1551,7 +1551,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
 
         queue.Enqueue($"穿回裝備（{work.OldName}）", () =>
         {
-            // 🔴 招呼 Talk 可能在這一步期間才冒出來（裝備欄比 Talk 先就緒；2026-08-23 實機）。
+            // 🔴 招呼 Talk 可能在這一步期間才冒出來（裝備欄比 Talk 先就緒）。
             //    Talk 開著就先點掉、這一 tick 不做別的——不在對話框開著時搬裝備。
             if (UiHelper.IsAddonReady(TalkAddon))
             {
@@ -1572,7 +1572,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
                 return true;
             }
 
-            // 🔴🔴 崩潰硬守衛 v2（2026-08-24 實機第二次 C0000005 定案）：
+            // 🔴🔴 崩潰硬守衛 v2（第二次 C0000005 定案）：
             //    GetActiveRetainer() 回的是 LastSelectedRetainerId 指到的僱員——「上次選過誰」，
             //    離開僱員後不歸零＝陳舊真值，第一版守衛因此放行了「清單剛開、僱員還沒傳喚出來」的搬移。
             //    正確證據＝**僱員指令選單（含「讓僱員返回」）開著**：那只在僱員真的被傳喚出來時存在，
@@ -2061,7 +2061,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
         queue.Enqueue("讓僱員返回", () =>
         {
             // 🔴 傳喚後僱員會先講一句招呼（Talk），指令選單要等這句被點掉才會出現。
-            //    YesAlready 對僱員／傳喚鈴的 Talk 是「Not proceeding」（2026-08-23 實機確認不自動推進），
+            //    YesAlready 對僱員／傳喚鈴的 Talk 是「Not proceeding」（實機確認不自動推進），
             //    而自動改名期間我們又暫停了 YesAlready ⇒ 這句招呼一定得自己點，否則卡在等指令選單。
             if (UiHelper.IsAddonReady(TalkAddon))
             {
@@ -2088,7 +2088,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
         }, 30_000);
 
         // 僱員退下的道別 Talk 自己點掉，等指令選單真的關了才算退完
-        //（2026-08-24 實機：最後結束時的對話停著等手動，下一隻也會因此接不上）。
+        //（最後結束時的對話停著等手動，下一隻也會因此接不上）。
         queue.Enqueue("等僱員退下", () =>
         {
             if (UiHelper.IsAddonReady(TalkAddon))
@@ -2134,7 +2134,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
             if (!Svc.Condition[ConditionFlag.OccupiedSummoningBell] && !UiHelper.IsAddonReady(RetainerListAddon))
                 return true;
 
-            // 僱員退下的道別 Talk 也要自己點（2026-08-24 實機：卡在這裡等手動）。
+            // 僱員退下的道別 Talk 也要自己點（卡在這裡等手動）。
             if (UiHelper.IsAddonReady(TalkAddon))
             {
                 if (Throttle.Pass($"{InternalName}-LeaveTalk", 300)) UiHelper.ClickTalkIfOpen();
@@ -2352,7 +2352,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
             // (A3) CharaMake 編輯器——只有「閘門已過＋剛剛真的載入了儲存檔＋編輯器帶著已載入的外觀」
             //     三者同時成立才按「完成」（_CharaMakeFeature [Int=100]）。空白編輯器一律不碰、等內部期限。
             // 🔴 CharaMake 根 addon 的 IsReady 在實機恆 false（隱形容器），要用子視窗 _CharaMakeFeature
-            //    判「編輯器開著」（2026-08-23 實機：A3 分支從沒進過，完成鍵是使用者手動按的）。
+            //    判「編輯器開著」（A3 分支從沒進過，完成鍵是使用者手動按的）。
             if (UiHelper.IsAddonReady(CharaMakeFeatureAddon) || UiHelper.GetAddon(CharaMakeAddon) != null)
             {
                 everSawRenameUi = true;
@@ -3079,11 +3079,6 @@ public sealed unsafe class RetainerBatchRename : TcModule
         return true;
     }
 
-    /// <summary>
-    /// 取僱員裝備欄容器。
-    /// ⚠️ <c>RetainerEquippedItems</c> <b>只有在僱員視窗開著時才載入</b>，沒開就是 null
-    /// ——那是常態不是異常（AutoRetainer 的除錯視窗註解也這麼寫）。
-    /// </summary>
     /// <summary>僱員指令選單（含「讓僱員返回」）是否開著＝僱員此刻真的被傳喚在場。</summary>
     private bool IsRetainerSubmenuOpen()
     {
@@ -3097,6 +3092,11 @@ public sealed unsafe class RetainerBatchRename : TcModule
             .Exists(e => e.StartsWith(quitText, StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// 取僱員裝備欄容器。
+    /// ⚠️ <c>RetainerEquippedItems</c> <b>只有在僱員視窗開著時才載入</b>，沒開就是 null
+    /// ——那是常態不是異常（AutoRetainer 的除錯視窗註解也這麼寫）。
+    /// </summary>
     private static bool TryGetRetainerEquipContainer(out InventoryContainer* container)
     {
         container = null;
@@ -3171,10 +3171,6 @@ public sealed unsafe class RetainerBatchRename : TcModule
     }
 
     /// <summary>
-    /// 對附近的傳喚鈴送出互動。
-    /// 🔴 <c>IGameObject</c> 只在這一幀之內使用，不留到下一幀。
-    /// </summary>
-    /// <summary>
     /// 對附近的僱員管理人（<c>ENpcResident.Title</c>＝「僱員窗口」）送出互動，開「有什麼事？」選單。
     /// 🔴 <c>IGameObject</c> 只在這一幀之內使用，不留到下一幀。
     /// </summary>
@@ -3233,6 +3229,10 @@ public sealed unsafe class RetainerBatchRename : TcModule
         return Svc.Data.GetExcelSheet<ENpcResident>().GetRowOrDefault(dataId)?.Title.ExtractText() ?? string.Empty;
     }
 
+    /// <summary>
+    /// 對附近的傳喚鈴送出互動。
+    /// 🔴 <c>IGameObject</c> 只在這一幀之內使用，不留到下一幀。
+    /// </summary>
     private static bool InteractWithNearbyBell()
     {
         var names = GetBellNames();

@@ -143,7 +143,7 @@ public sealed unsafe class LetterCollectAll : TcModule
 
         // 🔴 最後一道：按過的那個實例在觀察到它收掉之前不再按。這裡掛了 PostDraw ＝每幀都會回來，
         //    而「按下之後正在關閉」的那幾幀 IsReady 三關照樣全過，再送 callback 就是攔不到的
-        //    存取違規（2026-08-31 實機崩潰 crash-20260831205734 的形狀）。
+        //    存取違規。
         //    守衛已下沉到 UiHelper.TryFireCallback 裡：回 false ＝這一幀沒送。
         if (!UiHelper.TryFireCallback((AtkUnitBase*)addon, true, 0)) return;
 

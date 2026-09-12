@@ -142,7 +142,7 @@ public sealed unsafe partial class AutoGardensWork : TcModule
     // ── 狀態台詞（同一張表的第 0／7～10 列）。這是作物狀態的唯一來源。──────────
     // 🔴 這幾行不是裝飾：本 pin 的 FFXIVClientStructs 沒有任何園圃作物欄位，
     //    互動時遊戲顯示的這句話就是「種了什麼、成熟了沒、枯萎了沒」的全部證據。
-    //    fallback 是 2026-09-08 直讀台服 sqpack 取得的實際值（不是手打的）。
+    //    fallback 是直讀台服 sqpack 取得的實際值（不是手打的）。
     private string textPlotEmpty = "地壟裡沒有種任何東西。";
     private string textStatusDead = "已經枯萎了……";
     private string textStatusVigorous = "正茁壯成長。";

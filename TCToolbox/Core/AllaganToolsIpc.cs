@@ -25,22 +25,22 @@ internal static class AllaganToolsIpc
     private static readonly Lazy<ICallGateSubscriber<string, Dictionary<uint, uint>>> FilterItemsGate =
         new(() => Svc.PluginInterface.GetIpcSubscriber<string, Dictionary<uint, uint>>("AllaganTools.GetFilterItems"));
 
-    // InventoryTools/IPC/IPCService.cs:522 GetIpcProvider<Dictionary<string,string>>("AllaganTools.GetCraftLists")
+    // InventoryTools/IPC/IPCService.cs GetIpcProvider<Dictionary<string,string>>("AllaganTools.GetCraftLists")
     private static readonly Lazy<ICallGateSubscriber<Dictionary<string, string>>> CraftListsGate =
         new(() => Svc.PluginInterface.GetIpcSubscriber<Dictionary<string, string>>("AllaganTools.GetCraftLists"));
 
-    // InventoryTools/IPC/IPCService.cs:503
+    // InventoryTools/IPC/IPCService.cs
     //   GetIpcProvider<string, Dictionary<uint, uint>>("AllaganTools.GetCraftItems")
     private static readonly Lazy<ICallGateSubscriber<string, Dictionary<uint, uint>>> CraftItemsGate =
         new(() => Svc.PluginInterface.GetIpcSubscriber<string, Dictionary<uint, uint>>("AllaganTools.GetCraftItems"));
 
-    // InventoryTools/IPC/IPCService.cs:512
+    // InventoryTools/IPC/IPCService.cs
     //   GetIpcProvider<bool, HashSet<ulong>>("AllaganTools.GetCharactersOwnedByActive")
     private static readonly Lazy<ICallGateSubscriber<bool, HashSet<ulong>>> OwnedCharactersGate =
         new(() => Svc.PluginInterface.GetIpcSubscriber<bool, HashSet<ulong>>(
             "AllaganTools.GetCharactersOwnedByActive"));
 
-    // InventoryTools/IPC/IPCService.cs:458 GetIpcProvider<uint, ulong, int, uint>("AllaganTools.ItemCount")
+    // InventoryTools/IPC/IPCService.cs GetIpcProvider<uint, ulong, int, uint>("AllaganTools.ItemCount")
     private static readonly Lazy<ICallGateSubscriber<uint, ulong, int, uint>> ItemCountGate =
         new(() => Svc.PluginInterface.GetIpcSubscriber<uint, ulong, int, uint>("AllaganTools.ItemCount"));
 

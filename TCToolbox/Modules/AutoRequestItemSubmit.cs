@@ -214,7 +214,7 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
 
             // 🔴 先確認「真的填滿了」再按。
             //
-            // 「按得動 ⇒ 填完了」這個假設是錯的：2026-08-07 實機直證，理符繳交視窗開啟後
+            // 「按得動 ⇒ 填完了」這個假設是錯的：理符繳交視窗開啟後
             // 43 毫秒（約 2 幀）ClickButton 就回 true，而當時一格都還沒填，空手交出被遊戲
             // 當成取消。因為這裡是「先試按、按不動才填」，那一按就 return，
             // FillNextSlot() 從頭到尾沒被呼叫過 —— 十次繳交十次失敗。

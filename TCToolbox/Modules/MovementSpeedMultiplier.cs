@@ -60,7 +60,7 @@ public sealed unsafe class MovementSpeedMultiplier : TcModule
     /// 倍率上限。
     /// </summary>
     /// <remarks>
-    /// 🔴 3.0 是使用者要求的上限（2026-08-31 自 1.5 提高），不是量到的安全值。
+    /// 🔴 3.0 是使用者要求的上限，不是量到的安全值。
     /// 遊戲原生的疾跑約是 1.3~1.4 倍——超過那個範圍越多，離「客戶端本來就會出現的速度」越遠。
     /// <b>伺服器端對位移速度的容忍門檻無法離線證明</b>，倍率開多高等於拿帳號試多少，由使用者自己拿捏。
     /// </remarks>
@@ -278,13 +278,6 @@ public sealed unsafe class MovementSpeedMultiplier : TcModule
     }
 
     /// <summary>
-    /// 算出這一幀該套用的倍率。<b>全部在 framework 執行緒上做完</b>，detour 只讀結果。
-    /// </summary>
-    /// <remarks>
-    /// 🔑 每一個「不確定」都回 1（＝原速）。這個方向的錯誤是「該加速時沒加速」，
-    /// 反方向是「在不該生效的地方偷偷改了移動速度」——後者才是會出事的那個。
-    /// </remarks>
-    /// <summary>
     /// 把「這支函式到底只為本地玩家跑、還是也為別的角色跑」寫進記錄，<b>各只寫一次</b>。
     /// </summary>
     /// <remarks>
@@ -307,6 +300,13 @@ public sealed unsafe class MovementSpeedMultiplier : TcModule
         }
     }
 
+    /// <summary>
+    /// 算出這一幀該套用的倍率。<b>全部在 framework 執行緒上做完</b>，detour 只讀結果。
+    /// </summary>
+    /// <remarks>
+    /// 🔑 每一個「不確定」都回 1（＝原速）。這個方向的錯誤是「該加速時沒加速」，
+    /// 反方向是「在不該生效的地方偷偷改了移動速度」——後者才是會出事的那個。
+    /// </remarks>
     private float ComputeMultiplier()
     {
         var configured = ClampedConfigMultiplier();

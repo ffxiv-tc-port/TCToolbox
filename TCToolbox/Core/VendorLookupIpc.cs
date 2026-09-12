@@ -128,13 +128,13 @@ internal static class VendorLookupIpc
     /// <summary>Item Vendor Location 的外掛內部名（feed 上的 <c>InternalName</c>）。</summary>
     public const string PluginInternalName = "ItemVendorLocation";
 
-    // ItemVendorLocation/IPC/ItemVendorLocation.cs:30
+    // ItemVendorLocation/IPC/ItemVendorLocation.cs
     //   GetIpcProvider<uint, List<VendorLocationInfo>?>("ItemVendorLocation.GetItemVendorsWorld")
     private static readonly Lazy<ICallGateSubscriber<uint, List<VendorLocationEntry>?>> ItemVendorsWorldGate =
         new(() => Svc.PluginInterface.GetIpcSubscriber<uint, List<VendorLocationEntry>?>(
             "ItemVendorLocation.GetItemVendorsWorld"));
 
-    // ItemVendorLocation/IPC/ItemVendorLocation.cs:28
+    // ItemVendorLocation/IPC/ItemVendorLocation.cs
     //   GetIpcProvider<uint, object?>("ItemVendorLocation.OpenVendorResults")
     // 📌 這一支是 Func<uint, object?> 不是 Action：它回 null，所以要用 InvokeFunc。
     private static readonly Lazy<ICallGateSubscriber<uint, object?>> OpenVendorResultsGate =

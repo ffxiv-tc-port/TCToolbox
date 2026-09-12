@@ -57,11 +57,11 @@ internal static class MarketPriceIpc
     /// <summary>本模組需要的最低契約版本（對方 <c>MarketCacheApiVersion</c>）。</summary>
     private const int RequiredApiVersion = 1;
 
-    // Marketbuddy/IPCManager.cs:153 GetIpcProvider<int>("Marketbuddy.MarketCache.Version")
+    // Marketbuddy/IPCManager.cs GetIpcProvider<int>("Marketbuddy.MarketCache.Version")
     private static readonly Lazy<ICallGateSubscriber<int>> VersionGate =
         new(() => Svc.PluginInterface.GetIpcSubscriber<int>("Marketbuddy.MarketCache.Version"));
 
-    // Marketbuddy/IPCManager.cs:155
+    // Marketbuddy/IPCManager.cs
     //   GetIpcProvider<uint, MarketDataCache.PublicSnapshot?>("Marketbuddy.MarketCache.Get")
     private static readonly Lazy<ICallGateSubscriber<uint, MarketSnapshotEntry?>> GetGate =
         new(() => Svc.PluginInterface.GetIpcSubscriber<uint, MarketSnapshotEntry?>("Marketbuddy.MarketCache.Get"));

@@ -57,7 +57,7 @@ public sealed class CraftShoppingList : TcModule
 
     /// <summary>水晶／碎晶／晶簇的 <c>ItemUICategory</c> 列號。</summary>
     /// <remarks>
-    /// ✅ 2026-09-12 以台服 EXD dump 實證：<c>ItemUICategory</c> #59 的名稱逐字是「水晶」，
+    /// ✅ 以台服 EXD dump 實證：<c>ItemUICategory</c> #59 的名稱逐字是「水晶」，
     /// 而 <c>Item</c> #2 火之碎晶／#8 火之水晶／#14 火之晶簇的 <c>ItemUICategory</c> 都是 59。
     /// ⚠️ 寫死的列號在台服一律先驗過再用——這一個驗了，不要照抄到別的類別去。
     /// </remarks>

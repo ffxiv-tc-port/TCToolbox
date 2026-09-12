@@ -740,11 +740,6 @@ public sealed class BetterFateProgressConfig
     public int RequestIntervalMs { get; set; } = 1000;
 }
 
-/// <summary>狩獵列車顯示到 Mappy。</summary>
-/// <remarks>
-/// 📌 這裡沒有「總開關」欄位——<b>模組本身的啟用狀態就是總開關</b>
-/// （與 TC Toolbox 其他模組一致：預設關閉，由使用者自己勾）。
-/// </remarks>
 /// <summary>Questionable 目前步驟顯示到 Mappy 與資訊列。</summary>
 /// <remarks>
 /// 📌 這裡沒有「啟用」欄位是刻意的：模組本身預設就是關的（所有模組都是），
@@ -792,6 +787,12 @@ public sealed class PalacePalOnMappyConfig
     /// <summary>埋藏寶藏的圖示 id。0＝用內建預設值。</summary>
     public uint HoardIconId { get; set; }
 }
+
+/// <summary>狩獵列車顯示到 Mappy。</summary>
+/// <remarks>
+/// 📌 這裡沒有「總開關」欄位——<b>模組本身的啟用狀態就是總開關</b>
+/// （與 TC Toolbox 其他模組一致：預設關閉，由使用者自己勾）。
+/// </remarks>
 public sealed class HuntTrainOnMappyConfig
 {
     /// <summary>已擊殺的目標也畫出來（用另一顆圖示）。</summary>
@@ -1504,7 +1505,7 @@ public sealed class PlayerWatchRule
     /// <summary>同一位玩家再次觸發的冷卻（秒）。</summary>
     public int CooldownSeconds = 300;
 
-    // ── 以下為多條件判定（2026-08-07 新增；預設值一律等於既有行為）──────────────
+    // ── 以下為多條件判定（預設值一律等於既有行為）──────────────
 
     /// <summary>條件之間的組合方式。預設 <see cref="WatchRuleMatchMode.Any"/>。</summary>
     /// <remarks>只有一個條件啟用時，Any 與 All 完全等價，所以舊規則不受影響。</remarks>

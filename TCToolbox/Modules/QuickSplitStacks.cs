@@ -33,7 +33,7 @@ public sealed unsafe class QuickSplitStacks : TcModule
 
     public override bool HasConfigUI => true;
 
-    /// <summary>台服 <c>Addon#92</c>＝「拆分」（2026-08-25 對 <c>exd-tc/7.20/Addon.csv</c> 查證）。</summary>
+    /// <summary>台服 <c>Addon#92</c>＝「拆分」（對 <c>exd-tc/7.20/Addon.csv</c> 查證）。</summary>
     private const uint SplitAddonRow = 92;
 
     /// <summary>遊戲拆分數量輸入框的 addon 名。</summary>

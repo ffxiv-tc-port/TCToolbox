@@ -36,23 +36,23 @@ public readonly record struct FleetStopResult(string Target, FleetStopOutcome Ou
 internal static class FleetStop
 {
     // ── 移動層 ───────────────────────────────────────────────────────────────
-    // vnavmesh/IPCProvider.cs:38 RegisterAction("Nav.PathfindCancelAll", …)  → <object> / InvokeAction
-    // vnavmesh/IPCProvider.cs:62 RegisterAction("Path.Stop", followPath.Stop) → <object> / InvokeAction
+    // vnavmesh/IPCProvider.cs RegisterAction("Nav.PathfindCancelAll", …)  → <object> / InvokeAction
+    // vnavmesh/IPCProvider.cs RegisterAction("Path.Stop", followPath.Stop) → <object> / InvokeAction
     private static readonly Lazy<ICallGateSubscriber<object>> VnavPathfindCancelAll =
         new(() => Svc.PluginInterface.GetIpcSubscriber<object>("vnavmesh.Nav.PathfindCancelAll"));
 
     private static readonly Lazy<ICallGateSubscriber<object>> VnavPathStop =
         new(() => Svc.PluginInterface.GetIpcSubscriber<object>("vnavmesh.Path.Stop"));
 
-    // Lifestream/IPC/IPCProvider.cs:107 [EzIPC] public void Abort() → 前綴 "Lifestream"，Action 無參數
+    // Lifestream/IPC/IPCProvider.cs [EzIPC] public void Abort() → 前綴 "Lifestream"，Action 無參數
     private static readonly Lazy<ICallGateSubscriber<object>> LifestreamAbort =
         new(() => Svc.PluginInterface.GetIpcSubscriber<object>("Lifestream.Abort"));
 
-    // AutoDuty/IPC/IPCProvider.cs:168 [EzIPC] public void Stop() → 前綴 "AutoDuty"
+    // AutoDuty/IPC/IPCProvider.cs [EzIPC] public void Stop() → 前綴 "AutoDuty"
     private static readonly Lazy<ICallGateSubscriber<object>> AutoDutyStop =
         new(() => Svc.PluginInterface.GetIpcSubscriber<object>("AutoDuty.Stop"));
 
-    // Questionable/External/QuestionableIpc.cs:191 GetIpcProvider<string, bool>("Questionable.Stop")
+    // Questionable/External/QuestionableIpc.cs GetIpcProvider<string, bool>("Questionable.Stop")
     // ⚠️ 這一支是 Func 不是 Action：參數是「誰叫停的」標籤，會寫進它自己的記錄。
     private static readonly Lazy<ICallGateSubscriber<string, bool>> QuestionableStop =
         new(() => Svc.PluginInterface.GetIpcSubscriber<string, bool>("Questionable.Stop"));
@@ -61,20 +61,20 @@ internal static class FleetStop
     private static readonly Lazy<ICallGateSubscriber<object>> VislandStopRoute =
         new(() => Svc.PluginInterface.GetIpcSubscriber<object>("visland.StopRoute"));
 
-    // BossmodReborn/BossMod/Framework/IPCProvider.cs:494 Register("AI.SetEnabled", (bool)=>bool)
+    // BossmodReborn/BossMod/Framework/IPCProvider.cs Register("AI.SetEnabled", (bool)=>bool)
     // 🔴 前綴是 "BossMod" 不是 "BossmodReborn"，而且它是 Func<bool,bool>（回傳關掉之後的實際狀態）。
     private static readonly Lazy<ICallGateSubscriber<bool, bool>> BossModAiSetEnabled =
         new(() => Svc.PluginInterface.GetIpcSubscriber<bool, bool>("BossMod.AI.SetEnabled"));
 
     // ── 自動化本體 ───────────────────────────────────────────────────────────
-    // AutoRetainer/Modules/EzIPCManagers/IPC_PluginState.cs:15 EzIPC.Init(this, "<內部名>.PluginState")
+    // AutoRetainer/Modules/EzIPCManagers/IPC_PluginState.cs EzIPC.Init(this, "<內部名>.PluginState")
     private static readonly Lazy<ICallGateSubscriber<object>> ArAbortAllTasks =
         new(() => Svc.PluginInterface.GetIpcSubscriber<object>("AutoRetainer.PluginState.AbortAllTasks"));
 
     private static readonly Lazy<ICallGateSubscriber<object>> ArDisableAllFunctions =
         new(() => Svc.PluginInterface.GetIpcSubscriber<object>("AutoRetainer.PluginState.DisableAllFunctions"));
 
-    // Artisan/IPC/IPC.cs:50,54,57 GetIpcProvider<bool, object>(…).RegisterAction(…)
+    // Artisan/IPC/IPC.cs GetIpcProvider<bool, object>(…).RegisterAction(…)
     private static readonly Lazy<ICallGateSubscriber<bool, object>> ArtisanSetStopRequest =
         new(() => Svc.PluginInterface.GetIpcSubscriber<bool, object>("Artisan.SetStopRequest"));
 
@@ -84,20 +84,20 @@ internal static class FleetStop
     private static readonly Lazy<ICallGateSubscriber<bool, object>> ArtisanSetListPause =
         new(() => Svc.PluginInterface.GetIpcSubscriber<bool, object>("Artisan.SetListPause"));
 
-    // GatherBuddyReborn/GatherBuddy/Plugin/GatherBuddyIpc.cs:16 EzIPC.Init(this, GatherBuddy.InternalName)
+    // GatherBuddyReborn/GatherBuddy/Plugin/GatherBuddyIpc.cs EzIPC.Init(this, GatherBuddy.InternalName)
     // 🔴 那個常數是 "GatherBuddyReborn"（大寫 B），與 feed 上的 InternalName 拼法不同——
     //    這裡要用的是<b>提供端寫死的那個常數</b>，不是 feed 的拼法。
     private static readonly Lazy<ICallGateSubscriber<bool, object>> GbrSetAutoGatherEnabled =
         new(() => Svc.PluginInterface.GetIpcSubscriber<bool, object>("GatherBuddyReborn.SetAutoGatherEnabled"));
 
-    // AutoHook/IPC/AutoHookIPC.cs:73 [EzIPC] public void SetPluginState(bool) → EzIPC.Init(this, "AutoHook")
+    // AutoHook/IPC/AutoHookIPC.cs [EzIPC] public void SetPluginState(bool) → EzIPC.Init(this, "AutoHook")
     // 🔑 刻意用 SetPluginState 而不是 SetPluginStatePersistent：前者走 IpcConfigOverrides，
     //    只改執行期的值、存檔時換回使用者自己的設定 ⇒ 急停關掉釣魚，但不會把使用者的
     //    「啟用 AutoHook」永久改成關。急停要停的是現在，不是下次開遊戲。
     private static readonly Lazy<ICallGateSubscriber<bool, object>> AutoHookSetPluginState =
         new(() => Svc.PluginInterface.GetIpcSubscriber<bool, object>("AutoHook.SetPluginState"));
 
-    // ICE/IPC/IceCosmicExplorationIPC.cs:33 [EzIPC] public void Disable() → EzIPC.Init(this) ⇒ 前綴＝內部名 "ICE"
+    // ICE/IPC/IceCosmicExplorationIPC.cs [EzIPC] public void Disable() → EzIPC.Init(this) ⇒ 前綴＝內部名 "ICE"
     // 📌 同源的 ExplorersIcebox 沒有任何 IPC 提供端，所以這一條只會打到 ICE。
     private static readonly Lazy<ICallGateSubscriber<object>> IceDisable =
         new(() => Svc.PluginInterface.GetIpcSubscriber<object>("ICE.Disable"));

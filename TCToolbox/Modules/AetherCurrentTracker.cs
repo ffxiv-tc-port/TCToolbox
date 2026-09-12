@@ -198,8 +198,6 @@ public sealed unsafe class AetherCurrentTracker : TcModule
 
         // 🔑 「回 0」比「報錯」常見。四個數字一起印才分得出「表讀不到」與「鏈斷在中間」，
         //    所以期望值也一起印——這樣使用者回報的 log 不必再回頭查資料就看得出對不對。
-        //    📌 台服 7.20 離線實測（2026-08-25，兩路獨立驗證）：
-        //       31 個區域／303 個風脈泉（任務型 151、地圖實體 152）／實體型座標覆蓋率 152/152。
         //    ⚠️ 舊資料片每張圖只有 4 個實體風脈泉（黃金之遺產才是 10 個）——
         //       那是遊戲現況不是資料壞掉（已與全球服的 Questionable 資料集逐一比對過）。
         Svc.Log.Information(
@@ -655,7 +653,7 @@ public sealed unsafe class AetherCurrentTracker : TcModule
     /// <param name="inFront">目標在不在鏡頭前方（＝<c>WorldToScreen</c> 的回傳值）。</param>
     /// <remarks>
     /// 🔴 <b>鏡頭背後的投影是鏡像的，方向要反過來。</b>Dalamud 的實作在除以 W 時用的是
-    /// <c>MathF.Abs(1.0f / pCoords.W)</c>（<c>GameGui.cs:165</c>）——取絕對值代表
+    /// <c>MathF.Abs(1.0f / pCoords.W)</c>（<c>GameGui.cs</c>）——取絕對值代表
     /// <c>W &lt; 0</c>（目標在身後）時，投影點會落在畫面中心的<b>相反</b>側。
     /// </remarks>
     private static void DrawEdgeArrow(

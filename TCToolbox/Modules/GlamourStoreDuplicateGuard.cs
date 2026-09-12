@@ -214,7 +214,7 @@ public sealed unsafe class GlamourStoreDuplicateGuard : TcModule
         // 🔴 讀提示文字一律走 UiHelper.GetSelectYesnoText（底下是 MemoryHelper.ReadSeString().TextValue），
         //    不可以自己內聯 Utf8String.ToString()：後者不剝 SeString payload，只要確認框裡有道具連結，
         //    解出來就必定含 U+FFFD，下一行那道 LooksMidUpdate 就會每一幀都成立 ⇒ 這個模組整個靜默失效。
-        //    （合建交納 2026-09-08 就是這樣停擺六天。）它同時把 addon／PromptText／StringPtr 三道空指標閘門包好。
+        //    它同時把 addon／PromptText／StringPtr 三道空指標閘門包好。
         var text = UiHelper.GetSelectYesnoText(baseAddon);
 
         // 🔴 讀出 U+FFFD 替換字元＝窗的記憶體正在變動（多半是關閉中）：這一幀不判也不碰，candidate 留著下一幀重讀。

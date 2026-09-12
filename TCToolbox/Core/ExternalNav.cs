@@ -59,7 +59,7 @@ internal static class ExternalNav
     private static readonly Lazy<ICallGateSubscriber<Vector3, float, float, Vector3?>> VnavNearestPoint =
         new(() => Svc.PluginInterface.GetIpcSubscriber<Vector3, float, float, Vector3?>("vnavmesh.Query.Mesh.NearestPoint"));
 
-    // 📌 vnavmesh 端這兩個是 RegisterAction／RegisterFunc（見 vnavmesh/IPCProvider.cs:35-36）：
+    // 📌 vnavmesh 端這兩個是 RegisterAction／RegisterFunc（見 vnavmesh/IPCProvider.cs）：
     //    Path.Stop 無參數無回傳 → 訂閱型別是 ICallGateSubscriber<object> 且用 InvokeAction()，
     //    寫成 InvokeFunc() 會在執行期炸（型別對不上），編譯期看不出來。
     private static readonly Lazy<ICallGateSubscriber<bool>> VnavPathIsRunning =
@@ -73,7 +73,7 @@ internal static class ExternalNav
 
     // 📌 vnavmesh 端註冊成 RegisterFunc("Query.Mesh.PointOnFloor",
     //    (Vector3 p, bool allowUnlandable, float halfExtentXZ) => ...FindPointOnFloor(p, halfExtentXZ))
-    //    （vnavmesh/IPCProvider.cs:32）。回傳是 Vector3?——查不到落點時是 null，不是 Vector3.Zero，
+    //    （vnavmesh/IPCProvider.cs）。回傳是 Vector3?——查不到落點時是 null，不是 Vector3.Zero，
     //    ⚠️ 拿 Zero 當「查不到」會把地圖原點附近的合法落點誤判成失敗。
     private static readonly Lazy<ICallGateSubscriber<Vector3, bool, float, Vector3?>> VnavPointOnFloor =
         new(() => Svc.PluginInterface.GetIpcSubscriber<Vector3, bool, float, Vector3?>("vnavmesh.Query.Mesh.PointOnFloor"));

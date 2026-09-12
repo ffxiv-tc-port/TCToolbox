@@ -87,7 +87,7 @@ public sealed unsafe class SelectableRecruitmentText : TcModule
         var textNode = addon->GetTextNodeById(DescriptionTextNodeId);
         if (textNode == null) return;
 
-        // 🔴 不可以用 NodeText.ToString()：那支是 Encoding.UTF8.GetString(AsSpan())（Utf8String.cs:69），
+        // 🔴 不可以用 NodeText.ToString()：那支是 Encoding.UTF8.GetString(AsSpan())（Utf8String.cs），
         //    不剝 SeString payload。招募說明是玩家自己打的自由文字，裡面常帶【自動翻譯】詞條
         //    （那是 SeString payload），直接解碼會把它變成雜字元——而這段文字是要畫給使用者看、
         //    並且拿去抓網址的，所以得跟遊戲畫面上看到的一致。

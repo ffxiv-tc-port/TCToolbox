@@ -78,7 +78,7 @@ internal static class FleetControlStatus
     private static readonly Lazy<ICallGateSubscriber<string[]>> YaSuppressionOwners =
         new(() => Svc.PluginInterface.GetIpcSubscriber<string[]>("YesAlready.GetSuppressionOwners"));
 
-    // AutoRetainer/Modules/IPC.cs:42,50
+    // AutoRetainer/Modules/IPC.cs
     //   GetIpcProvider<bool>("AutoRetainer.GetSuppressed") → ManualSuppressed 或 有任何租約
     //   GetIpcProvider<bool>("AutoRetainer.IsBusy")        → 排程開著／多角色模式／任務佇列在跑
     private static readonly Lazy<ICallGateSubscriber<bool>> ArGetSuppressed =
@@ -87,7 +87,7 @@ internal static class FleetControlStatus
     private static readonly Lazy<ICallGateSubscriber<bool>> ArIsBusy =
         new(() => Svc.PluginInterface.GetIpcSubscriber<bool>("AutoRetainer.IsBusy"));
 
-    // AutoHook/IPC/AutoHookIPC.cs:33 EzIPC.Init(this, "AutoHook")
+    // AutoHook/IPC/AutoHookIPC.cs EzIPC.Init(this, "AutoHook")
     //   [EzIPC] public bool GetPluginState()          → 使用者的開關 Configuration.PluginEnabled
     //   [EzIPC] public bool GetEffectivePluginState() → 疊上租約之後的實際值
     // 🔑 兩支的差異<b>就是</b>「有沒有人正壓著釣魚」——對方刻意分成兩個名字（不是疏漏），
@@ -98,7 +98,7 @@ internal static class FleetControlStatus
     private static readonly Lazy<ICallGateSubscriber<bool>> AhGetEffectivePluginState =
         new(() => Svc.PluginInterface.GetIpcSubscriber<bool>("AutoHook.GetEffectivePluginState"));
 
-    // vnavmesh/IPCProvider.cs:72 RegisterFunc("Path.GetMovementAllowed", () => followPath.EffectiveMovementAllowed)
+    // vnavmesh/IPCProvider.cs RegisterFunc("Path.GetMovementAllowed", () => followPath.EffectiveMovementAllowed)
     // 🔑 vnavmesh 這支<b>刻意</b>回疊加後的值（與 AutoHook 相反），所以 false 就代表
     //    「使用者自己關了，或有人用租約壓著」。它沒有對應的「是誰」端點，只能顯示有沒有。
     private static readonly Lazy<ICallGateSubscriber<bool>> VnavMovementAllowed =

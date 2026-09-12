@@ -411,7 +411,7 @@ public static unsafe class UiHelper
     /// CharaMake 編輯器是否「帶著已載入的外觀」開著。
     /// </summary>
     /// <remarks>
-    /// 🔴 實機錄製（2026-08-23）：載入儲存檔後 <c>AtkValues[0].Int==2</c>、<c>AtkValues[2]</c>＝種族字串
+    /// 🔴 實機錄製：載入儲存檔後 <c>AtkValues[0].Int==2</c>、<c>AtkValues[2]</c>＝種族字串
     /// （「拉拉菲爾族 女」）；空白（沒載檔）時 <c>[0]==0</c>、<c>[2]</c>＝「? ? ?」。
     /// 判定不到（版面變了／值型別不符）一律回 false——寧可不按「完成」也不碰空白編輯器。
     /// </remarks>
