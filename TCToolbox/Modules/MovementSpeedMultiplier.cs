@@ -26,10 +26,7 @@ namespace TCToolbox.Modules;
 /// （詳見 <see cref="IsLocalPlayer"/>）。除此之外只有 float 運算。
 /// AccessViolationException 在 .NET Core 是 corrupted-state exception，<c>try/catch</c> 攔不到，
 /// 所以防護不能靠例外隔離，只能靠<b>不做沒有被證明過的解參考</b>。
-/// 要不要生效的判斷（在不在副本、在不在白名單、有沒有在戰鬥）<b>全部在 framework 執行緒上每幀算完</b>，
-/// 結果寫進 <see cref="activeMultiplier"/> 這個 <c>volatile float</c>，detour 只讀它。
 /// 🔴 <b>使用者裁決：預設關、白名單預設空。</b>開了模組但一個副本都沒加＝完全不動作。
-/// 倍率上限 3.0（2026-08-31 使用者要求自 1.5 提高）：伺服器對位移速度的容忍度<b>無法離線證明</b>，見設定畫面上的紅字。
 /// </remarks>
 public sealed unsafe class MovementSpeedMultiplier : TcModule
 {

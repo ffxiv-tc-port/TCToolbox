@@ -325,9 +325,6 @@ internal static class ExternalNav
     /// <param name="source">呼叫端模組名，只用在降級訊息裡指名；null＝不指名。</param>
     /// <remarks>
     /// 🔴 <b><paramref name="started"/> 回 <see langword="true"/> 幾乎沒有資訊量。</b>
-    /// vnavmesh 的 <c>AsyncMoveRequest.MoveTo</c> 現在對「上一筆還在跑」是接手而不是拒絕，
-    /// 兩條路徑都回 true ⇒ 呼叫端<b>不可以</b>拿它當「走得到」的證據，
-    /// 一定要自己用距離判定抵達、自己設上限判定走不到。
     /// </remarks>
     public static bool TryMoveCloseTo(
         Vector3 destination, bool fly, float range, out bool started, string? source = null)

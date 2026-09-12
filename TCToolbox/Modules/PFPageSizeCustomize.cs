@@ -16,10 +16,6 @@ namespace TCToolbox.Modules;
 /// <b>為什麼不 hook：</b>該欄位是物件的常駐成員，寫進去就一直有效（只有建構式會覆寫成 50，
 /// 而建構式一個 InfoModule 生命週期只跑一次）。既然不需要攔截時機，就沒有理由去改遊戲的控制流——
 /// 直接定期比對並補寫即可，連 <c>Framework.Update</c> 的成本都只是一次指標讀取加一次整數比較。
-/// <b>上限 100 的依據：</b>接收端 <c>0x140531BCA</c> 有 <c>cmp ebp, 0x64 / jae</c>——
-/// 招募清單累積到 100 筆時客端<b>直接拒收</b>，不會寫進 <c>_listingIds</c>，
-/// 與 <c>AgentLookingForGroup.ListingsSub</c> 宣告的 <c>Size = 0x320</c>（＝100 × 8）一致。
-/// 也就是說即使把值調過頭也不會有緩衝區溢位，但超過 100 沒有意義。
 /// </remarks>
 public sealed unsafe class PFPageSizeCustomize : TcModule
 {
