@@ -51,11 +51,6 @@ public sealed class MainWindow : Window
     /// <remarks>
     /// 📌 存的是 <c>###</c> 後面那段<b>固定的英文 id</b>（例如 <c>tab-Inventory</c>），
     /// 不是分頁標題——標題帶著會變的數字。
-    /// <para>
-    /// ⚠️ <b>一定會被消化掉</b>：每一個分頁每幀都會建立一次，所以最慢下一幀就有人認領並清空。
-    /// 排在「啟動中」右邊的分頁（四個分類、手動觸發、全部）當幀就生效；
-    /// 左邊的「常用」慢一幀——按下去的感覺一樣是立刻跳。
-    /// </para>
     /// </remarks>
     private string? pendingTabId;
 
@@ -80,10 +75,6 @@ public sealed class MainWindow : Window
     /// 📌 <b>沒有釘選任何模組時這頁仍然存在</b>，裡面放一句怎麼釘的說明。
     /// 做成「有釘選才出現」看起來比較乾淨，但那樣這個功能就只剩星號按鈕一個入口——
     /// 使用者得先注意到那顆星、按下去、才知道有這一頁。空頁本身就是說明。
-    /// <para>
-    /// ⚠️ 標題在沒有釘選時<b>不帶數字</b>：空的分頁寫「常用 (0)」像是壞掉，寫「常用」像是還沒用。
-    /// id 照樣靠 <c>###</c> 撐住，所以數字有無不會讓 ImGui 當成另一個分頁。
-    /// </para>
     /// </remarks>
     private void DrawFavoritesTab()
     {
@@ -126,24 +117,10 @@ public sealed class MainWindow : Window
     /// 「啟動中」分頁：目前所有已啟用的模組，每一列標出它平常待在哪一頁。
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// 📌 <b>解決的問題</b>：模組分成六個分頁之後，「我到底開了哪些東西」變成要一頁一頁翻。
-    /// 這一頁把答案聚在一起；而列上的分頁標籤是為了回答下一個問題——「那它原本在哪，我等一下去哪找」。
-    /// 標籤可以點，點了就跳到那一頁。
-    /// </para>
-    /// <para>
     /// 🔴 <b>這是篩選不是分類</b>，與「常用」「手動觸發」同一種東西：模組照樣留在原本的分類分頁上。
-    /// </para>
-    /// <para>
-    /// ⚠️ 排序＝<b>先照分頁順序分組</b>（<see cref="ModuleCategoryInfo.DisplayOrder"/>），
-    /// 組內沿用 <c>Plugin.Modules</c> 的註冊順序（也就是「全部」分頁的順序）。
-    /// 刻意不按顯示名排序：註冊順序是有意義的（相關的模組排在一起），照名字排會把它打散。
-    /// </para>
-    /// <para>
     /// 🔴 <b>分類不在 <see cref="ModuleCategoryInfo.DisplayOrder"/> 裡的模組不能被跳過。</b>
     /// 那種模組在所有分類分頁上都看不到（只有「全部」找得到），正是最需要被指出來的——
     /// 它的標籤會寫「未分類」而不是消失。
-    /// </para>
     /// </remarks>
     private void DrawActiveTab()
     {
@@ -295,7 +272,6 @@ public sealed class MainWindow : Window
     /// <remarks>
     /// 📌 這頁是<b>安全網</b>，不是備援畫面：
     /// <list type="bullet">
-    /// <item>使用者原本就習慣一條長清單，想不起某個模組被分到哪一頁時不會卡住。</item>
     /// <item>萬一有模組的 <see cref="ModuleCategory"/> 沒被列進
     /// <see cref="ModuleCategoryInfo.DisplayOrder"/>，它在分類分頁上會完全消失而且不報錯——
     /// 這頁是它唯一還看得到的地方。</item>
@@ -321,14 +297,9 @@ public sealed class MainWindow : Window
 
     /// <summary>畫一個模組列：釘選星號、勾選框、顯示名、列上提示、描述、設定。</summary>
     /// <remarks>
-    /// 所有分頁（常用／四個分類／手動觸發／全部）共用這一份。同一個模組同時出現在好幾頁不會撞 id——
-    /// 一次只有一個分頁是展開的，而且每頁各自在不同的子視窗裡。
-    /// ⚠️ 代價是「設定」TreeNode 的展開狀態各頁不共用（ImGui 的 id 含所在視窗）。
-    /// <para>
     /// 🔴 <b>同一頁裡不能把同一個模組畫兩次</b>（那才是真的 id 相撞）。
     /// 這就是「常用」做成獨立分頁、而不是每頁頂端插一塊置頂區的原因之一——
     /// 置頂區得在下面的清單裡把同一個模組跳過，多一條容易寫漏的規則。
-    /// </para>
     /// </remarks>
     /// <param name="module">要畫的模組。</param>
     /// <param name="showLocation">
@@ -387,19 +358,9 @@ public sealed class MainWindow : Window
     /// 「啟動中」分頁上那幾個灰色標籤：這個模組平常待在哪些分頁。
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// 📌 <b>三種標籤各回答一個問題</b>：分類標籤＝「它原本在哪一頁」；
-    /// 「手動觸發」＝「它開著也不會自己動」（這一頁全是開著的模組，那個差別正是使用者想知道的）；
-    /// 「常用」＝「它也釘在常用頁」。三者互相正交，可能同時出現。
-    /// </para>
-    /// <para>
     /// 🔴 <b>分類不在 <see cref="ModuleCategoryInfo.DisplayOrder"/> 裡時標「未分類」，不是省略。</b>
     /// 那種模組在任何分類分頁上都找不到——省略標籤會讓它看起來跟別人一樣正常。
     /// 「未分類」沒有頁可跳，所以畫成純文字不是按鈕（按鈕按下去沒反應更糟）。
-    /// </para>
-    /// <para>
-    /// ⚠️ 這裡的按鈕 id 都在 <c>DrawModuleRow</c> 推的模組 id 底下，同一列不會有兩個同名標籤。
-    /// </para>
     /// </remarks>
     private void DrawLocationTags(TcModule module)
     {
@@ -475,14 +436,6 @@ public sealed class MainWindow : Window
     /// Dalamud 的視窗錯誤閂鎖（10 秒內兩次）就會把主視窗<b>永久關閉到外掛重載為止</b>；
     /// 而模組的啟用／停用勾選框就在同一扇視窗裡 —— 使用者會連「關掉肇事模組」的入口
     /// 一起失去。這道 try 讓故障留在單一模組列，其餘模組與勾選框照常可用。
-    /// <para>
-    /// 🔴 <c>TreePop()</c> 由呼叫端負責，所以這裡<b>絕對不能把例外往外丟</b>：
-    /// <c>TreeNodeEx</c> 回 true 之後若跳過 <c>TreePop</c>，ImGui 的 ID 堆疊就會失衡。
-    /// </para>
-    /// <para>
-    /// ⚠️ 這裡攔的是<b>一般例外</b>。AccessViolationException 在 .NET Core 屬 corrupted-state
-    /// exception，<c>try/catch</c> 本來就攔不到 —— 原生指標的安全仍然只能靠事前判空。
-    /// </para>
     /// </remarks>
     private static void DrawModuleConfig(TcModule module)
     {
@@ -517,10 +470,6 @@ public sealed class MainWindow : Window
     /// 📌 <b>刻意放在列上而不是收進「設定」或右鍵選單</b>：釘選是個一秒鐘的動作，
     /// 藏進第二層之後就沒有人會用了。兩個狀態靠顏色分辨（列上隨時掃視得到），
     /// 「這顆星是幹嘛的」放 tooltip（起疑才查）。
-    /// <para>
-    /// ⚠️ <see cref="ImGuiComponents.IconButton"/> 的顏色參數控制的是<b>按鈕底色</b>不是圖示顏色；
-    /// 圖示畫的時候讀的是 <see cref="ImGuiCol.Text"/>，所以要在外面推 Text 顏色才有用。
-    /// </para>
     /// </remarks>
     private void DrawFavoriteToggle(TcModule module)
     {

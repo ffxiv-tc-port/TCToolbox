@@ -185,21 +185,8 @@ public sealed class Plugin : IDalamudPlugin
     /// <summary>
     /// 啟動時把模組狀態寫進記錄。
     /// 🔴 **一律 <c>Information</c> 級**：使用者跑 LogLevel 1，盲區只有 Verbose,Debug 收得到但單檔數十萬行會淹沒，
-    /// 而「哪些模組是開的」是事後看實機記錄時唯一無法從別處推得的資訊
-    /// （模組啟用時本來一行都不寫，2026-08-06 的調查就是卡在這裡）。
-    /// <para>
-    /// 每一行都帶「已啟用模組」這個關鍵字，所以 <c>grep "已啟用模組"</c> 一次就能把整份清單撈出來，
-    /// 不必先找到開頭那行再往下數。
-    /// </para>
-    /// <para>
-    /// ⚠️ 順便報告兩種靜默狀況，它們都不會有別的徵兆：
-    /// <list type="bullet">
-    /// <item>設定裡開著、但 <see cref="TcModule.Enable"/> 失敗的（例外本身是 Error 級，
-    /// 但「所以最後到底幾個是開的」只有這裡看得到）。</item>
     /// <item>設定裡有、這一版卻已經不存在的模組名（改名／移除的殘留）。
     /// **只報告不清除** —— 使用者在版本之間來回時清掉就回不來了。</item>
-    /// </list>
-    /// </para>
     /// </summary>
     private void LogModuleState()
     {

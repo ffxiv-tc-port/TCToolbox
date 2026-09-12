@@ -27,15 +27,11 @@ public sealed class Configuration : IPluginConfiguration
     /// <remarks>
     /// ⚠️ 預設是<b>空集合</b>——「常用」分頁是空的，其他分頁一模一樣，
     /// 也就是升級上來的人在勾任何星號之前完全感覺不到差別。
-    /// <para>
     /// 🔴 這裡存的是 <see cref="TCToolbox.Core.TcModule.InternalName"/>，跟
     /// <see cref="EnabledModules"/> 同一組識別字。<b>模組改名時這兩份會一起失效</b>，
     /// 所以顯示名可以改、InternalName 不能改。
-    /// </para>
-    /// <para>
     /// 📌 清單裡出現這一版沒有的模組名時<b>只忽略、不清除</b>（與 <see cref="EnabledModules"/> 同樣的處理）：
     /// 使用者在版本之間來回時清掉就回不來了。
-    /// </para>
     /// </remarks>
     public HashSet<string> FavoriteModules { get; set; } = [];
 
@@ -129,14 +125,8 @@ public sealed class Configuration : IPluginConfiguration
     /// 🔴 <b>為什麼非做不可</b>：改欄位名而沿用舊名承接舊值時，舊鍵會變成孤兒被靜默丟掉、
     /// 新鍵吃預設值；而<b>改欄位語意卻沿用舊欄位名</b>更糟——舊值會被原封不動當成新語意用。
     /// 這兩件事在 OptimizedEnemyList 上同時發生了，而且對使用者完全沒有徵兆。
-    /// <para>
     /// 🔑 <b>教訓</b>：欄位語意改變時應該<b>同時改欄位名</b>（例如 <c>EdgeOffsetX</c>／
     /// <c>CenterOffsetY</c>），讓舊鍵自然孤兒化去吃新預設，而不是沿用舊名承接舊值。
-    /// </para>
-    /// <para>
-    /// ⚠️ 全新安裝也會走這裡，但每一條遷移都要求「舊 schema 的正面證據」才動手，
-    /// 所以對全新安裝是嚴格的無操作。
-    /// </para>
     /// </remarks>
     public void Migrate()
     {
@@ -195,8 +185,6 @@ public sealed class Configuration : IPluginConfiguration
 /// <remarks>
 /// ⚠️ 兩個欄位都是 <c>ushort</c> 的鍵盤配置語言 id（HKL 低字組）。
 /// 🔴 預設 0＝「不切換」，而且是<b>持久的哨兵值</b>：模組看到 0 就不動作。
-/// ⚠️ 以前是「模組啟用時把 0 補成目前系統配置並存檔」——那等於把啟用當刻的配置烙死，
-/// 之後每次 focus／unfocus 都強制切回去，與「預設不切換」的承諾相反，而且沒有回到未設定的路。
 /// 現在不烙印；<b>兩欄相同（含都是 0）也一律視為不切換</b>，所以已經被舊版烙上值的人
 /// 自動回到 no-op（烙印必然是把兩欄設成同一個值），設定畫面另有「（不切換）」選項可寫回 0。
 /// 舊設定檔沒有這兩個鍵，反序列化不會覆寫初始值，所以升級不會讓人突然被切輸入法。
@@ -304,13 +292,10 @@ public sealed class AetherCurrentTrackerConfig
     /// <summary>Mappy 上的風脈泉圖示 id。0＝用內建預設值。</summary>
     /// <remarks>
     /// ⚠️ 做成可設定的理由：圖示的<b>存在</b>可以離線驗證，<b>長什麼樣子</b>不行。
-    /// 預設值取自 Mappy 畫「已經在視野內的風脈泉」時用的編號
-    /// （<see cref="Modules.AetherCurrentTracker.DefaultMappyIconId"/>）。
     /// 🔴 <b>初始器一定要是 0，不能寫具體常數。</b>寫具體常數的話「0＝用內建預設值」這個契約
     /// 在實務上永遠不成立：任何一次 Save 就把當下的編號烙死，之後若修正
     /// <c>Default…IconId</c>（那正是這個欄位做成可設定的理由——「萬一在台服看起來不對」），
     /// 修正對<b>所有既有使用者靜默無效</b>，哨兵機制形同虛設。
-    /// 📌 已經被舊版烙上具體值的人：在設定畫面按一下「預設」就會寫回 0，重新跟隨內建預設值。
     /// </remarks>
     public uint MappyIconId { get; set; }
 }
@@ -418,17 +403,10 @@ public sealed class RetainerBatchRenameConfig
     /// 自動操作 CharaMake 改名畫面（保留容貌、只改名字），而不是停在那裡等你手動改。
     /// </summary>
     /// <remarks>
-    /// 📌 預設 <c>true</c>（呼叫者裁決）：走管理人選單「有什麼事？」→ 改變樣貌性格名字 → 選這位僱員 →
-    /// 一路按確認、<b>在「要使用已儲存的角色形象嗎？」按「是」保留原容貌</b> → 性格統一選第一項（開朗）→
-    /// 填入候選名字 → 送出。名字被占用會自動換下一個候選。
-    /// <para>
     /// 🔴 這條路徑的每一步都<b>比對話文字</b>才動作，對不上就<b>不動、逾時跳過</b>（fail-closed）——
     /// 尤其「要使用已儲存的角色形象嗎？」那道閘門若沒先通過，絕不確認任何「設定成目前的樣子」，
     /// 以免把外觀改成空白（不可逆）。
-    /// </para>
-    /// <para>
     /// ⚠️ 關掉＝退回舊行為：只自動卸裝／穿裝，改名畫面停在那裡等你手動操作（期間照舊錄製）。
-    /// </para>
     /// </remarks>
     public bool AutoCharaMakeRename = true;
 
@@ -436,16 +414,9 @@ public sealed class RetainerBatchRenameConfig
     /// 使用者手動改名的期間，把畫面資訊寫進記錄。
     /// </summary>
     /// <remarks>
-    /// 📌 預設 <c>true</c>。這一版<b>不自動操作改名畫面</b>（CharaMake 的僱員模式在台服沒有
-    /// 任何可離線查證的資料，猜 callback 序號去點它是不可逆的破壞），改成在使用者手動操作時
-    /// 把 addon 開關、選單文字、每一次 UI callback、以及背包／僱員裝備欄的每一格變化
-    /// 寫進記錄（<c>Information</c> 等級）。
-    /// 那些資料是之後判斷「能不能自動化」的唯一依據，所以預設開著。
-    /// <para>
     /// ⚠️ 錄製只在流程停在「等你改名」的那一段才生效，
     /// 其餘時間 hook 是停用的（<c>AtkUnitBase::FireCallback</c> 是全遊戲的熱路徑）。
     /// 想錄整條流程請用視窗上的「開始錄製（我自己操作）」。
-    /// </para>
     /// </remarks>
     public bool RecordDuringManualRename = true;
 
@@ -462,9 +433,6 @@ public sealed class RetainerBatchRenameConfig
     /// 卸裝之後等這麼久（毫秒）才驗證裝備真的離開僱員身上。
     /// </summary>
     /// <remarks>
-    /// 🔴 預設 10000ms（2026-08-23 主 session 抽驗時從 2500 調高：要蓋過實機量到的退回延遲上界）。<c>MoveItemSlot</c> 會<b>同步</b>改好本機容器，所以呼叫完立刻回讀一定是成功的；
-    /// 伺服器若拒絕，要幾秒之後才把道具退回來（本 repo 2026-07-31 實機量到的退回延遲是 3.9～10.6 秒，
-    /// 但那批是在沒帶 <c>a6</c> 的情況下量的，帶了 <c>a6: true</c> 之後的延遲分佈未知）。
     /// ⚠️ 設太短的後果是「卸裝其實沒生效卻繼續往下跑」，那會讓改名整個失敗；
     /// 設太長只是慢一點。不確定就往大的調。
     /// </remarks>
@@ -483,22 +451,11 @@ public sealed class RetainerBatchRenameConfig
     /// 改名之前，先把該僱員<b>已經完成</b>的探險成果收回來（<b>不重新派遣</b>）。
     /// </summary>
     /// <remarks>
-    /// 📌 預設 <c>true</c>。台服 <c>LogMessage</c> 3904「僱員在探險的過程中無法更換裝備。」
-    /// ⇒ 探險中的僱員卸不了裝、也就改不了名。先前的行為是把這種僱員<b>整個擋在前置檢查</b>，
-    /// 使用者得自己一隻一隻去收。
-    /// <para>
     /// ⚠️ 這一格只影響「探險<b>已經完成</b>」的僱員。<b>探險還在跑</b>的僱員照舊擋下來
     /// （沒有任何辦法讓探險提早結束），前置檢查會顯示剩餘時間。
-    /// </para>
-    /// <para>
-    /// 🔴 打開時流程會在卸裝之前多一道硬閘門：探險沒有真的收回就<b>當場停下</b>，
-    /// 不會讓錯誤在後面以「卸裝沒生效」的樣貌出現。
-    /// </para>
-    /// <para>
     /// 🔴 <b>與 AutoRetainer 互斥</b>：AutoRetainer 若正在跑自己的收派循環，
     /// 會把剛收回的僱員立刻重新派遣。所以「這一輪真的會去收探險」時，
     /// 前置檢查會另外要求 AutoRetainer 不在忙碌狀態。
-    /// </para>
     /// </remarks>
     public bool CollectCompletedVentureBeforeRename = true;
 
@@ -549,11 +506,9 @@ public sealed class AutoJoinPartyFinderConfig
     /// </summary>
     /// <remarks>
     /// 📌 預設 <c>true</c>：密碼招募按下去只會跳出輸入密碼的視窗，我們不會也不該去填它。
-    /// <para>
     /// ⚠️ 判斷依據是 <c>AgentLookingForGroup.LastViewedListing.JoinConditionFlags</c> 的 bit1，
     /// 這個讀法<b>無法離線證明</b>；兩個方向的失敗都設計成無害
     /// （多擋了＝這一則要自己按、少擋了＝跳出密碼視窗自己關）。
-    /// </para>
     /// </remarks>
     public bool SkipPrivate = true;
 
@@ -614,13 +569,9 @@ public sealed class GlamourStoreDuplicateGuardConfig
     /// </summary>
     /// <remarks>
     /// 📌 預設 <c>true</c>：這正是模組存在的理由，而模組本身預設是關的，所以不會有人被動生效。
-    /// <para>
     /// 🔴 <b>不論這格開或關，攔截／提醒一定會在聊天欄出現。</b>
     /// 靜默地把使用者的操作取消掉是最糟的失敗形式——他只會覺得「按了沒反應」。
-    /// </para>
-    /// <para>
     /// ⚠️ 關掉時只提醒、不動遊戲，確認框留給使用者自己決定。
-    /// </para>
     /// </remarks>
     public bool BlockConfirmation = true;
 
@@ -859,13 +810,10 @@ public sealed class HuntTrainOnMappyConfig
     /// <summary>存活目標的圖示 id。0＝用內建預設值。</summary>
     /// <remarks>
     /// ⚠️ 做成可設定的理由：圖示的<b>存在</b>可以離線驗證，<b>長什麼樣子</b>不行。
-    /// 預設值取自 Mappy 畫同類目標時用的編號，但萬一在台服看起來不對，
-    /// 使用者可以自己換而不必等改版（設定畫面上會把圖示直接畫出來對照）。
     /// 🔴 <b>初始器一定要是 0，不能寫具體常數。</b>寫具體常數的話「0＝用內建預設值」這個契約
     /// 在實務上永遠不成立：任何一次 Save 就把當下的編號烙死，之後若修正
     /// <c>Default…IconId</c>（那正是這個欄位做成可設定的理由——「萬一在台服看起來不對」），
     /// 修正對<b>所有既有使用者靜默無效</b>，哨兵機制形同虛設。
-    /// 📌 已經被舊版烙上具體值的人：在設定畫面按一下「預設」就會寫回 0，重新跟隨內建預設值。
     /// </remarks>
     public uint AliveIconId { get; set; }
 
@@ -910,7 +858,6 @@ public sealed class CustomDeliveriesOverviewConfig
     /// 在實務上永遠不成立：任何一次 Save 就把當下的編號烙死，之後若修正
     /// <c>Default…IconId</c>（那正是這個欄位做成可設定的理由——「萬一在台服看起來不對」），
     /// 修正對<b>所有既有使用者靜默無效</b>，哨兵機制形同虛設。
-    /// 📌 已經被舊版烙上具體值的人：在設定畫面按一下「預設」就會寫回 0，重新跟隨內建預設值。
     /// </remarks>
     public uint MappyIconId { get; set; }
 }
@@ -1466,11 +1413,9 @@ public sealed class AutoConstantlyClickConfig
     /// <remarks>
     /// 🔴 預設 <c>false</c>＝<b>與這個選項加入之前的行為完全一樣</b>。
     /// 舊設定檔沒有這個鍵，反序列化不會覆寫欄位初始值，所以升級上來的人不會突然多出一種行為。
-    /// <para>
     /// 📌 範圍只含十字熱鍵的動作格（<c>HOT_PAD_LL</c>–<c>HOT_PAD_RD_R</c>，194–218）。
     /// L2／R2 扳機（191／192）與切換組（193）刻意排除：那三個連發會讓十字熱鍵
     /// 在按住期間不停開關或跳組。
-    /// </para>
     /// </remarks>
     public bool IncludeGamepadHotbar;
 }
@@ -1522,16 +1467,9 @@ public enum WatchRuleMatchMode
 /// 周邊玩家偵測規則：玩家出現且<b>條件命中</b>時通知並執行指令。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 判定條件可以多選、可組合，名稱只是其中一種。目前支援四種條件，每種都有自己的啟用開關：
-/// 名稱（<see cref="MatchName"/>）、線上狀態（<see cref="MatchOnlineStatus"/>）、
-/// 部隊標籤（<see cref="MatchCompanyTag"/>）、距離（<see cref="MatchMaxDistance"/>）。
-/// </para>
-/// <para>
 /// 🔴 <b>所有新增欄位的預設值都等於「這個條件不啟用」</b>，唯一的例外是
 /// <see cref="MatchName"/>＝<c>true</c>——那正是多條件化之前的既有行為。
 /// 舊設定檔沒有這些鍵，反序列化不會覆寫欄位初始值，因此升級後行為逐字不變。
-/// </para>
 /// </remarks>
 public sealed class PlayerWatchRule
 {
@@ -1560,13 +1498,6 @@ public sealed class PlayerWatchRule
     /// 或「玩家警示」情境裡沒有已合成語音的句子時，這條路是完全安靜的 no-op
     /// （見 <see cref="TCToolbox.Core.TataruPraiseIpc"/>：每次都先問它的 <c>IsAvailableFor</c>）。
     /// 換句話說，沒裝那個外掛的人感覺不到任何差別。
-    /// <para>
-    /// ⚠️ 舊設定檔沒有這個鍵，反序列化不會覆寫欄位初始值，所以升級上來的既有規則會拿到 <c>true</c>。
-    /// </para>
-    /// <para>
-    /// 🔴 出聲與否<b>完全沿用這條規則自己的觸發時機</b>（進入視野一次、離場再出現且過了
-    /// <see cref="CooldownSeconds"/> 才會再響），沒有另外的輪詢或計時器。
-    /// </para>
     /// </remarks>
     public bool TataruPraiseOnMatch = true;
 
@@ -1668,13 +1599,11 @@ public sealed class AutoGardensWorkConfig
     /// <remarks>
     /// 📌 <b>預設開啟。</b>這是模組裡唯一一個「開著不按也會自己動」的路徑，
     /// 所以 <see cref="TCToolbox.Core.TcModule.IsManualTrigger"/> 會跟著這格走（開著就不再算「手動觸發」）。
-    /// <para>
     /// 🔴 <b>預設開啟之所以安全，是因為策略的預設本身是保守的。</b>
     /// 沒選種子時 <c>目標作物</c> 推不出來，成熟作物一律走 <see cref="OtherMaturePolicy"/>（預設跳過）；
     /// 施肥預設關、枯萎預設不動、播種沒存貨就是無操作
     /// ⇒ 一個完全沒設定過的人，這個迴圈能做的只有「護理」（不消耗東西、不可能有壞處）。
     /// ⚠️ 反過來說：<b>調過策略的人要知道那些策略從此會自己跑</b>，設定畫面上寫明了。
-    /// </para>
     /// </remarks>
     public bool AutoLoopEnabled = true;
 
@@ -1692,15 +1621,9 @@ public sealed class AutoGardensWorkConfig
     /// <remarks>
     /// 🔴 <b>預設關閉。</b>這是「角色會自己移動」的功能，升級上來的人行為必須完全不變——
     /// 要用的人自己去勾。
-    /// <para>
     /// 📌 只在<b>目前這張圖</b>裡走，不傳送、不跨區、不上坐騎（一律地面路線）。
     /// 走不到、逾時、卡住、或別的外掛正在移動角色時，這一輪就退回原本的行為
     /// （只處理站得到的那幾格），<b>不重試</b>。
-    /// </para>
-    /// <para>
-    /// ⚠️ 房屋內部與庭園有沒有可用的導航網格，取決於 vnavmesh 在那張圖建不建得出來——
-    /// 建不出來時每一輪會在記錄裡留一行 Information，功能自己降級，不會卡住也不會亂走。
-    /// </para>
     /// </remarks>
     public bool WalkBetweenPatches;
 
@@ -1710,14 +1633,8 @@ public sealed class AutoGardensWorkConfig
 
     /// <summary>缺種子／土壤／肥料而有格子被跳過時，在聊天視窗提醒一次。</summary>
     /// <remarks>
-    /// 📌 <b>預設開啟</b>，因為它修的正是一個實機觀察到的靜默失敗：
-    /// 自動整理開著、每 60 秒跑一輪，八格地壟每一格都判成「空地壟，但沒有可用的種子或土壤」，
-    /// 連續好幾輪一件事都沒做，而畫面上完全沒有任何提示（那幾行只有 Debug 級）。
-    /// 模組列與設定畫面上的提示對「當下沒在看那扇視窗」的人是到不了的。
-    /// <para>
     /// 🔴 兩道保險讓它不會變成噪音：<b>只在缺的東西變了的時候送</b>，
     /// 而且兩則之間至少隔 5 分鐘。關掉之後缺料仍然看得到（模組列與設定畫面照舊）。
-    /// </para>
     /// </remarks>
     public bool AnnounceMaterialShortage = true;
 }
@@ -1744,10 +1661,8 @@ public sealed class LetterCollectAllConfig
     /// <remarks>
     /// 📌 預設開啟，但作用範圍被壓到很窄：<b>只在本模組的佇列正在跑，而且信箱與信件視窗都開著時</b>
     /// 才會按。也就是說時間窗只有使用者自己按下按鈕之後的那幾秒。
-    /// <para>
     /// ⚠️ 關掉的話，真的跳出確認框時那一輪會停在原地直到逾時。
     /// 無論按不按，確認框的文字一律寫進記錄——台服到底會不會跳、跳哪一句，離線查不出來。
-    /// </para>
     /// </remarks>
     public bool AutoConfirm = true;
 
@@ -1990,9 +1905,6 @@ public sealed class LargerIMECandidatesConfig
 /// <remarks>
 /// 🔴 <b>預設是「未綁定」（<see cref="KeyCode"/> 為 0）。</b>新增的熱鍵一律不預先佔用按鍵——
 /// 使用者的鍵盤上每一顆鍵都可能已經綁了遊戲技能，替他決定綁哪一顆就是替他改遊戲行為。
-/// <para>
-/// 📌 邏輯與挑鍵 UI 在 <c>Core/Hotkey.cs</c>；這裡只是存檔的形狀。
-/// </para>
 /// </remarks>
 public sealed class HotkeyConfig
 {
@@ -2028,19 +1940,10 @@ public sealed class FleetEmergencyStopConfig
     /// 急停之後，所有共用 <see cref="TCToolbox.Core.AutomationGate"/> 的無人值守迴圈要靜多久（秒）。
     /// </summary>
     /// <remarks>
-    /// <para>
     /// 🔴 <b>0＝不冷卻</b>：急停照樣把正在跑的批次停掉，但下一個到期的無人值守迴圈可以立刻重開。
     /// 那是使用者可以選的，只是預設不這麼做。
-    /// </para>
-    /// <para>
-    /// 📌 預設 60 秒是原本寫死的政策值，沿用它<b>是為了讓既有使用者更新後行為不變</b>。
-    /// 挑 60 的理由：它不短於園圃重跑的預設間隔（60 秒），而急停的語意是
-    /// 「先停下來，我要接手」——至少要留給使用者一個週期去做他要做的事。
-    /// </para>
-    /// <para>
     /// ⚠️ 讀取端會自己夾範圍（見 <c>AutomationGate.EmergencyStopCooldownSeconds</c>），
     /// 所以手改設定檔填進負數或天文數字也不會讓迴圈永遠醒不過來。
-    /// </para>
     /// </remarks>
     public int EmergencyStopCooldownSeconds { get; set; } = 60;
 }
@@ -2050,11 +1953,9 @@ public sealed class FleetEmergencyStopConfig
 /// 📌 這個模組<b>預設關閉</b>（所有模組都是——啟用與否記在
 /// <see cref="Configuration.EnabledModules"/>），所以既有使用者更新後不會多出任何東西。
 /// 下面的預設值是「啟用之後」的行為：兩種來源都開，這樣打開模組就真的看得到東西。
-/// <para>
 /// 🔴 <b>這裡刻意沒有顏色設定。</b>顏色只有在「來源第一次出現在 Mini-Mappingway」時才有作用
 /// （之後對方一律讀它自己存檔的那一份），所以做成設定會變成一個看起來會動、其實不會動的選項。
 /// 顏色請在 Mini-Mappingway 自己的設定裡調。
-/// </para>
 /// </remarks>
 public sealed class NearbyOnMinimapConfig
 {
