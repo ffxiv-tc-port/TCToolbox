@@ -16,12 +16,6 @@ namespace TCToolbox.Modules;
 /// 🔴 <b>這個模組有帳號風險，預設關閉，而且應該一直保持關閉。</b>
 /// <c>TemporaryLocked</c> 是<b>客戶端自己的重登節流</b>：登出／被踢之後客戶端會擋你一小段時間，
 /// 免得你連續狂送登入請求。把它拆掉之後，客戶端不再攔你，但<b>伺服器端看得到那些密集的登入嘗試</b>——
-/// 這是外部可觀測的行為，不是本機的顯示問題。
-/// <para>
-/// ⚠️ 與 DailyRoutines 原版的差異：DR 用特徵碼 hook <c>AgentLobby::Update</c>，在原函式前後各寫一次。
-/// 這裡不需要 hook——欄位就在那裡，從 <c>Framework.Update</c> 寫同一個位址效果相同，
-/// 少一條台服沒驗過的特徵碼（特徵碼解錯位址是靜默的）。
-/// </para>
 /// </remarks>
 public sealed unsafe class AutoIgnoreLoginLock : TcModule
 {

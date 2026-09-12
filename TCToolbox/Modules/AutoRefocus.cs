@@ -17,14 +17,7 @@ namespace TCToolbox.Modules;
 /// <remarks>
 /// 🔴 <b>為什麼是存 ID 不是存 <c>IGameObject</c></b>：<c>IGameObject.Address</c> 在建構時就凍結，
 /// 之後永遠不會重新解析；而 <c>IsValid()</c> 只檢查「玩家有沒有登入」，<b>完全不驗位址</b>。
-/// 把 <c>IGameObject</c> 存進欄位＝把一個原生指標存進欄位，物件一被回收就是懸空指標，
-/// 而懸空指標產生的 AccessViolationException 在 .NET Core 是 corrupted-state exception，
 /// <b>try/catch 攔不到</b>。所以整個模組的欄位裡只有一個 <c>ulong</c>。
-/// <para>
-/// 與 DailyRoutines 原版的差異：DR 用特徵碼 hook <c>SetFocusTargetByObjectID</c> 來得知
-/// 「使用者設了哪個焦點」。這裡改成輪詢既有的焦點目標——省掉一條台服未驗證的特徵碼
-/// （特徵碼解錯位址是靜默的），代價只是「使用者設焦點後最多 200ms 才被記住」。
-/// </para>
 /// </remarks>
 public sealed class AutoRefocus : TcModule
 {

@@ -14,24 +14,8 @@ namespace TCToolbox.Modules;
 /// <see cref="Util.OpenLink"/>。零 hook、零特徵碼、不寫記憶體。
 /// </summary>
 /// <remarks>
-/// 📌 <b>解決的是「兩步變一步」</b>：原本要先在 InventoryTools 的右鍵選單點「More Information」
-/// 開 ItemWindow，再點視窗裡那顆灰機按鈕。這裡直接把那一步接到遊戲的道具右鍵選單上。
-/// <para>
-/// 網址格式與 InventoryTools 保留的那顆按鈕<b>逐字相同</b>
-/// （<c>InventoryTools/Ui/Windows/ItemWindow.cs</c>：以道具名做站內搜尋、<c>ns220</c>
-/// 是灰機的道具命名空間），所以兩邊點下去會落在同一頁，不會出現「按鈕開得到、選單開不到」。
-/// </para>
-/// <para>
 /// ⚠️ 開瀏覽器一律走 <see cref="Util.OpenLink"/>，不自己 <c>Process.Start</c>——
 /// Dalamud 那支會處理 <c>UseShellExecute</c> 與開完之後把視窗帶到前景，自己拼會少掉這些。
-/// </para>
-/// <para>
-/// 📌 <b>涵蓋範圍與 <see cref="CopyItemNameContextMenu"/> 現在一致</b>：兩種選單都做，
-/// 都走 <see cref="ItemContextResolver.TryResolveFromMenu"/>（背包用 Dalamud 給的
-/// <see cref="MenuTargetInventory"/>，其餘視窗讀具名欄位）。
-/// 差別只剩「原生已有」的排除清單——那是複製道具名才需要的，灰機 wiki 這一項遊戲本身沒有，
-/// 所以這裡<b>不排除任何視窗</b>。
-/// </para>
 /// </remarks>
 public sealed class HuijiWikiContextMenu : TcModule
 {

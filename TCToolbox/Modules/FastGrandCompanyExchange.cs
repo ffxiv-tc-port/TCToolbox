@@ -20,28 +20,11 @@ namespace TCToolbox.Modules;
 /// 參考 DailyRoutines <c>FastGrandCompanyExchange</c> 重寫（API13、無 KamiToolKit／OmenTools 相依）。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 🔴 <b>花軍票是不可逆的，所以最後由人按。</b>本模組<b>不</b>做事件驅動的自動交換鏈：
 /// 使用者要自己在面板上填好道具與數量、看到「花費 N 軍票」後按下「交換」，才會送出交換事件。
 /// 而且<b>絕不代按遊戲跳出的任何是／否確認框</b>——那一步一律留給使用者自己確認
 /// （與 <see cref="TradeAllCollectables"/>、<see cref="OptimizedFreeShop"/> 的原則一致，
 /// 但 DR 原版是自動點掉 SelectYesno 的，這裡刻意不照抄）。
-/// </para>
-/// <para>
-/// ⚠️⚠️ <b>導航用的 AtkValue 索引與 callback 序號（分頁 = callback 1、子分類 = callback 2、
-/// 道具名列在 AtkValues[17..]）全部來自國際服版面，台服 7.20 無法離線證明。</b>
-/// 安全設計讓「假設不成立」不會變成崩潰或誤花軍票：
-/// <list type="bullet">
-/// <item>讀道具名一律先驗 <see cref="ValueType"/> 是字串型別才解參考（<see cref="ReadAtkString"/>），
-/// 索引錯了只會讀到空字串，不會把非指標當指標解 → 不會 AVE。</item>
-/// <item>只有在清單裡找到<b>名稱與解析結果一字不差</b>的那一格才送交換事件；找不到就中止並提示，
-/// <b>一顆軍票都不會花</b>（fail-closed）。</item>
-/// </list>
-/// </para>
-/// <para>
-/// 🔑 道具的解析走 Lumina 表（<see cref="GCScripShopItem"/> 子列 ＋ <see cref="GCScripShopCategory"/>），
-/// 跟著玩家目前的軍隊與階級篩選，與語言無關。
-/// </para>
 /// </remarks>
 public sealed unsafe class FastGrandCompanyExchange : TcModule
 {

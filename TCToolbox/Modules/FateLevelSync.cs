@@ -12,31 +12,12 @@ namespace TCToolbox.Modules;
 /// F.A.T.E. 自動等級同步：進入等級比自己低的 F.A.T.E. 時自動開啟等級同步。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 🔴🔴 <b>絕對不送空參數的等級同步指令。</b>台服 <c>TextCommand</c> 第 270 列的說明逐字寫著
 /// 「<b>無指令</b>：在開啟或解除狀態中切換」——也就是空參數是 <b>toggle</b>。
 /// 已經同步的時候送空參數，結果是<b>反過來把同步解除掉</b>，而那正好是這個模組要做的事情的相反。
 /// 上游 PandorasBox <c>AutoSyncFate</c> 送的就是空參數。
 /// 本模組一律送 <c>on</c>，而且在送出之前先確認「現在確實沒有同步」。
-/// </para>
-/// <para>
-/// 🔑 <b>「現在有沒有同步」是讀出來的，不是猜的</b>：
-/// <c>FateManager.SyncedFateId</c>（偏移 0xA8）等於目前 F.A.T.E. 的編號就是已同步。
-/// 這個偏移是離線從台服 7.20 主程式的 <c>FateManager::IsSyncedToFate</c> 反組譯確認的
-/// （<c>movzx eax, word [rdx+0x18]</c> 取 <c>FateContext.FateId</c>、
-/// <c>cmp word [rcx+0xA8], ax</c> 比對）。
-/// ⚠️ 有了這道確認，就算指令的參數不被接受而必須退回用 toggle，也是安全的——
-/// 因為我們剛剛才確認過「現在是關的」。
-/// </para>
-/// <para>
 /// 📌 指令字串<b>從 <c>TextCommand</c> 表讀</b>，不寫死。
-/// </para>
-/// <para>
-/// 📌 <b>台服遊戲本身沒有這個功能。</b>2026-08-19 離線確認：FFXIVClientStructs 的
-/// <c>ConfigOption</c> 列舉（1041 個遊戲設定項）裡<b>沒有任何一項</b>與 fate／等級同步有關
-/// （同一個查詢對已知存在的選項會命中，所以這個 0 不是查詢壞掉）；
-/// 遊戲提供的是 <c>TextCommand</c> 270 這個手動指令，以及 F.A.T.E. 進度框上那顆要自己點的按鈕。
-/// </para>
 /// </remarks>
 public sealed unsafe class FateLevelSync : TcModule
 {

@@ -18,34 +18,11 @@ namespace TCToolbox.Modules;
 /// 風脈泉一覽：列出目前所在區域的每一個風脈泉、是否已共鳴，並提供標旗／場地標記／導航。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 🔴🔴 <b>移動一律走「傳送最近的乙太之光 ＋ vnavmesh 走過去」，不做記憶體瞬移。</b>
 /// DailyRoutines 原版的 <c>TeleportTo()</c> 是 <c>MovementManager.TPSmart_BetweenZone</c>
 /// ——直接改寫角色座標的記憶體瞬移，是本艦隊的紅線，<b>整段丟棄</b>。
-/// 這裡的導航形狀與 <see cref="CustomDeliveriesOverview"/> 完全相同
-/// （Lifestream IPC 傳送 → 等進圖 → vnavmesh <c>PathfindAndMoveTo</c>），
-/// 那是已經出貨、使用者用過的那條路。
-/// </para>
-/// <para>
-/// 📌 <b>資料鏈</b>（全部走 Lumina，零 hook、零特徵碼、不寫記憶體）：
-/// <list type="number">
-/// <item><c>AetherCurrentCompFlgSet</c>：一列＝一個區域，欄位 <c>AetherCurrents</c> 是該區
-/// 所有風脈泉的 <c>AetherCurrent</c> 參照。</item>
-/// <item><c>AetherCurrent</c>：台服 7.20 共 <b>448 列</b>，列號是 <c>EventId</c>
-/// （<c>0x2B0000</c>..<c>0x2B01BF</c>，已對 <c>exd-tc/7.20/AetherCurrent.csv</c> 查證）。
-/// 只有兩個欄位：<c>#</c> 與 <c>Quest</c>。
-/// <b><c>Quest</c> 非 0 ＝任務給的</b>（沒有地圖上的實體，走過去也沒用）；
-/// <b><c>Quest</c> ＝ 0 ＝地圖上的實體風脈泉</b>，才查得到座標。</item>
-/// <item>實體的：拿 <c>AetherCurrent</c> 列號去 <c>EObj.Data</c> 反查 <c>EObj</c> 列號，
-/// 再用該列號去 <c>Level</c>（<c>Object</c> 指向 <c>EObj</c> 的那些列）拿世界座標。</item>
-/// <item>共鳴狀態：<c>PlayerState.UnlockedAetherCurrentsBitArray</c>，
-/// 索引＝<c>列號 - 0x2B0000</c>。</item>
-/// </list>
-/// </para>
-/// <para>
 /// 🔴 <b>查不到座標的一律顯示「？」，絕不顯示 (0, 0, 0)。</b>
 /// 把未知畫成 0 會讓使用者被導到地圖原點，而那看起來像個正常答案。
-/// </para>
 /// </remarks>
 public sealed unsafe class AetherCurrentTracker : TcModule
 {
@@ -81,20 +58,9 @@ public sealed unsafe class AetherCurrentTracker : TcModule
     /// 風脈泉在 Mappy 上的圖示。
     /// </summary>
     /// <remarks>
-    /// 📌 <b>來源＝Mappy 自己</b>：<c>Mappy/MapRenderer/MapRenderer.GameObject.cs</c> 對
-    /// <c>ObjectKind.EventObj</c> 且事件內容是 <c>EventHandlerContent.AetherCurrent</c> 的物件
-    /// 畫的就是 60653。換句話說<b>風脈泉只要進了 ObjectTable，Mappy 本來就用這顆圖示畫它</b>——
-    /// 本模組做的事情是把「還沒走到附近、所以不在 ObjectTable 裡」的那些也用同一顆畫出來，
-    /// 視覺上完全一致。
-    /// <para>
-    /// ✅ 2026-08-26 以 <c>tools/sqpack/path_exists.py</c> 離線直讀台服 <c>060000.win32.index</c>
-    /// 確認 <c>ui/icon/060000/060653.tex</c> 存在（校準閘門通過，另附一個必不存在的負對照）。
-    /// </para>
-    /// <para>
     /// ⚠️ <b>沒有離線驗證過的部分＝這顆圖示長什麼樣子。</b>圖示的「存在」與「語意」是兩件事，
     /// 而 <c>MapSymbol</c> 表（地圖圖示的官方名稱對照）只收地標類圖示，查不到 606xx 這段。
     /// ⇒ 做成可設定的，設定畫面也直接把圖示畫出來讓使用者自己看。
-    /// </para>
     /// </remarks>
     public const uint DefaultMappyIconId = 60653;
 
@@ -150,22 +116,8 @@ public sealed unsafe class AetherCurrentTracker : TcModule
     /// </summary>
     /// <remarks>
     /// 🔴 <b>刻意不做「自動挑最近的那一顆」。</b>台服 7.20 的資料裡<b>查不到主水晶的世界座標</b>：
-    /// <c>Level</c> 表中 <c>Object</c> 指向乙太之光的只有 <b>5 列</b>（全 239 顆水晶），
-    /// 而 <c>Aetheryte.Level[0]</c> 指到的列號在整張 <c>Level</c> 表裡<b>根本不存在</b>
-    /// （108 顆主水晶全部解不到，2026-08-25 實測）。剩下的來源是 <c>MapMarker</c>，
-    /// 但那是地圖座標，換算回世界座標需要一組<b>沒有辦法離線校準</b>的公式
-    /// （我沒有任何一顆水晶的世界座標真值可以對）。
-    /// <para>
-    /// ⚠️ 而 31 個有風脈泉的區域裡有 <b>28 個</b>不只一顆主水晶（最多 4 顆），
-    /// 所以「挑最近」不是可有可無的細節——猜錯的失敗形式是「傳到比較遠的那顆」，靜默。
     /// ⇒ 改成<b>把選擇權交給使用者</b>：選單直接列出該區每一顆已解鎖的水晶名字，
     /// 使用者看得到自己會落在哪裡。這比一個可能算錯的「最近」誠實。
-    /// </para>
-    /// <para>
-    /// 📌 同樣的資料限制也套在 <see cref="CustomDeliveriesOverview"/> 上
-    /// （它用 <c>Level.Type == 12</c> 找水晶座標，在台服只會命中 5 列，
-    /// 於是「挑最近」實際上退化成「挑第一顆」）。那邊沒有改，因為退化的後果只是路程比較遠。
-    /// </para>
     /// </remarks>
     private readonly Dictionary<ushort, List<(uint Id, string Name)>> aetherytesByTerritory = [];
 
@@ -299,20 +251,8 @@ public sealed unsafe class AetherCurrentTracker : TcModule
     /// 把「還沒共鳴、而且查得到座標」的風脈泉同步成 Mappy 地圖上的標記。
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// 🔑 <b>推的是全部區域，不是只有目前所在區域。</b>共鳴狀態是玩家層級的資料，離開該區也讀得到，
-    /// 所以在任何一張地圖上都答得出「這張圖還差哪幾個」——那正是規劃路線時最想知道的事。
-    /// 數量上也放得下：台服 7.20 全部地圖實體風脈泉共 152 個，Mappy 每個來源可放 512 筆。
-    /// </para>
-    /// <para>
-    /// 📌 <b>只推未共鳴的。</b>已共鳴的畫出來對「還差哪幾個」沒有幫助，而且要區分兩種狀態就得再挑
-    /// 一顆「已完成」的圖示——那顆<b>沒有任何資料來源可以佐證</b>（<c>MapSymbol</c> 查不到這段），
-    /// 猜一顆出來是靜默的錯。想確認已共鳴的位置請用世界疊加層的「已共鳴的也畫出來」。
-    /// </para>
-    /// <para>
     /// 🔴 <b>任務型與查不到座標的一律不推。</b>任務型沒有地圖實體（標上去等於叫人白跑一趟）；
     /// 查不到座標的更不能拿 <c>(0,0,0)</c> 去換算——那會在地圖角落長出一個看起來很正常的標記。
-    /// </para>
     /// </remarks>
     private void SyncMappy()
     {
@@ -453,11 +393,6 @@ public sealed unsafe class AetherCurrentTracker : TcModule
     /// 🔴 在<b>啟用時</b>探而不是用到才探：那是 <c>[MemberFunction]</c>，特徵碼失配時是在
     /// 第一次呼叫的當下擲受管理例外，而按鈕在 Draw 路徑上——例外逸出到 Dalamud 的 Draw，
     /// 整個介面到重開遊戲前都不會回來。先探一次，之後只看旗標。
-    /// <para>
-    /// 📌 2026-08-25 離線對台服 7.20 驗過：該特徵碼在 <c>.text</c> <b>唯一命中</b>
-    /// （<c>0x140DC9541</c>，跟隨 <c>E8</c> 後落在 <c>0x140A0E560</c>）。
-    /// 這裡仍然把它做成執行期閘門，不相信離線結論會永遠成立。
-    /// </para>
     /// </remarks>
     private void ProbePlacePreset()
     {
@@ -624,15 +559,6 @@ public sealed unsafe class AetherCurrentTracker : TcModule
     /// 那支是 <c>UnlockedAetherCurrentsBitArray.Get(id - 0x2B0000)</c>，而 <c>Get</c>
     /// 對越界是<b>擲 <c>ArgumentOutOfRangeException</c></b>——這條路徑會被 Draw 走到，
     /// 例外逸出到 Dalamud 的 Draw 就是整個介面到重開遊戲前都不回來。
-    /// <para>
-    /// ⚠️ 而且 <c>BitArray.Get</c> 的上界檢查寫的是
-    /// <c>ThrowIfGreaterThan(index, bitCount)</c> 而不是 <c>…OrEqual</c>——
-    /// <b><c>index == bitCount</c> 會通過檢查並讀到陣列後面那一個 byte</b>
-    /// （風脈泉這個位元陣列剛好 448 bits／56 bytes，後面緊接著的是
-    /// <c>_unlockedAetherCurrentCompFlgSets</c>）。目前 <c>AetherCurrent</c> 恰好 448 列
-    /// 所以踩不到，但改版加列就會靜默讀到隔壁的旗標。<c>TryGet</c> 用的是
-    /// <c>(uint)index >= (uint)bitCount</c>，沒有這個問題。
-    /// </para>
     /// </remarks>
     private static bool IsResonated(uint aetherCurrentId)
     {
@@ -664,9 +590,6 @@ public sealed unsafe class AetherCurrentTracker : TcModule
     /// <remarks>
     /// 「可能有」與「已確認」的兩態參考 PalacePal：<b>已共鳴＝細的灰圈</b>（存在但不必再去），
     /// <b>未共鳴＝粗的亮圈＋序號</b>。兩者都只畫外框不填色，疊在一起也還讀得出來。
-    /// <para>
-    /// 📌 在畫面外的目標畫成螢幕邊緣的箭頭（那就是「有方向」）。
-    /// </para>
     /// </remarks>
     private void DrawWorldOverlay()
     {
@@ -731,16 +654,9 @@ public sealed unsafe class AetherCurrentTracker : TcModule
     /// </param>
     /// <param name="inFront">目標在不在鏡頭前方（＝<c>WorldToScreen</c> 的回傳值）。</param>
     /// <remarks>
-    /// 🔑 <b>方向完全由 <c>WorldToScreen</c> 的輸出推出來，不自己算鏡頭朝向。</b>
-    /// 那支用的就是遊戲當下真正在用的 <c>ViewProjectionMatrix</c>，所以推出來的方向
-    /// 與畫面上看到的一定一致；自己去解 view matrix 的 yaw 則是「錯了也不會有人發現」的那種錯。
-    /// <para>
     /// 🔴 <b>鏡頭背後的投影是鏡像的，方向要反過來。</b>Dalamud 的實作在除以 W 時用的是
     /// <c>MathF.Abs(1.0f / pCoords.W)</c>（<c>GameGui.cs:165</c>）——取絕對值代表
     /// <c>W &lt; 0</c>（目標在身後）時，投影點會落在畫面中心的<b>相反</b>側。
-    /// 少了這個反轉，站在風脈泉前面轉過身時箭頭會指向完全相反的方向，
-    /// 而那看起來只是「箭頭怪怪的」，不像壞掉。
-    /// </para>
     /// </remarks>
     private static void DrawEdgeArrow(
         ImDrawListPtr drawList, Vector2 viewportSize, Vector2 center, Vector2 screen, bool inFront)
@@ -1096,17 +1012,9 @@ public sealed unsafe class AetherCurrentTracker : TcModule
 
     /// <summary>下達 vnavmesh 導航指令；沒開始移動就退化成標旗＋開地圖。</summary>
     /// <remarks>
-    /// 📌 <b>2026-09-08 起這條退路才真的會生效。</b>在那之前「導航網格還沒載入」是以例外的形式
-    /// 逃過 <see cref="ExternalNav.TryMoveTo"/>，被 <see cref="TaskQueue"/> 接住並中止整條佇列
-    /// ——使用者看到的是「傳送過去了、然後什麼都沒發生」，連地圖旗都沒插。
-    /// 現在那種失敗會回 <see langword="false"/>，走到下面的標旗路徑。
-    /// <para>
     /// ⚠️ <c>started</c> 恆為 true，所以「路徑算不出來」仍然不會走到這條退路——
     /// 那件事在下指令的當下查不到。走到 <c>return true</c> 只能算「已經交給 vnavmesh 了」。
-    /// </para>
-    /// <para>
     /// 📌 這一步是佇列的<b>最後一步</b>（兩條分支皆然），後面沒有任何步驟預設「已經走到了」。
-    /// </para>
     /// </remarks>
     private static bool IssueWalkOrFallback(Point point)
     {
@@ -1152,11 +1060,6 @@ public sealed unsafe class AetherCurrentTracker : TcModule
     /// <c>MarkingController.FieldMarkers</c> 來判斷。
     /// 場地標記在戰鬥中、或該區域不允許時會被遊戲拒絕，而那是<b>靜默</b>的——
     /// 沒有這道回讀，使用者會看到「已插上 8 個」然後畫面上一個都沒有。
-    /// <para>
-    /// 📌 座標是整數，單位是<b>世界座標 × 1000</b>（<c>MarkerPresetPlacement</c> 的
-    /// <c>_x</c>／<c>_y</c>／<c>_z</c> 都是 <c>int</c>，而 <c>FieldMarker</c> 同時存
-    /// <c>Vector3 Position</c> 與同名的整數三元組）。
-    /// </para>
     /// </remarks>
     private void PlaceFieldMarkers(List<Point> markable)
     {

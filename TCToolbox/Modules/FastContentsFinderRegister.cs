@@ -13,25 +13,10 @@ namespace TCToolbox.Modules;
 /// 任務搜尋器旁的「快速登記」面板：一鍵把搜尋器開到目前選取的副本，或收藏起來的常用副本。
 /// </summary>
 /// <remarks>
-/// 參考 DailyRoutines <c>FastContentsFinderRegister</c> 的意圖重寫，但<b>換了實作路線</b>：
-/// <para>
-/// 🔴 <b>不掃原生列表節點。</b>DR 原版靠寫死的節點編號（52／57／5／18／3）加一堆
-/// 像素位移（<c>Y&gt;=300</c>、<c>ScreenY</c> 比較、<c>NodeList[3+i]</c>）去讀每一列的副本名，
-/// 再用名稱反查 ID——那串偏移在台服沒驗過，而且列表節點索引正是 <c>CustomCS</c> 會讓它整代倒退的地方。
-/// 這裡改讀 <c>AgentContentsFinder</c> 自己的結構欄位：<c>SelectedDuty</c>（含類型＋列號）
-/// 直接就是「目前選取的那一項」，穩定且與版面繪製無關。
-/// </para>
-/// <para>
 /// 🔴 <b>登記＝呼叫 <c>OpenRegularDuty</c> / <c>OpenRouletteDuty</c>（開啟並選取），不送報名封包。</b>
 /// DR 原版送的是 <c>/pdrduty</c>→<c>RequestDuty*</c>（等於幫你按「參加」排隊）；這裡只把搜尋器
 /// 開到那一項，使用者仍要自己按「參加」。跟 <see cref="ContentFinderCommand"/> 同一條安全路徑，
 /// 也因此<b>不依賴</b>指令模組（DR 是硬相依 <c>ContentFinderCommand</c> 才發得出 <c>/pdrduty</c>）。
-/// </para>
-/// <para>
-/// ⚠️ 與既有的 <see cref="OptimizedDutyFinderSetting"/> 同一個 addon，但兩者不重疊：
-/// 那個是把「任務設定」開關攤在搜尋器<b>上方</b>；這個是在<b>左側</b>放常用副本的一鍵登記，
-/// 兩排各管各的、位置也錯開。
-/// </para>
 /// </remarks>
 public sealed unsafe class FastContentsFinderRegister : TcModule
 {

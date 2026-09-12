@@ -9,10 +9,8 @@ namespace TCToolbox.Modules;
 
 /// <summary>
 /// 投影台重複幻影取出：把投影台裡同一件裝備的多餘份數取回背包，一次一件、按下按鈕才動。
-///
 /// 🔴 <b>純手動</b>：只有在設定面板按下「開始」才會執行，不掛任何自動觸發。
 /// 參考 DailyRoutines <c>AutoRemoveDuplicateGlamours</c> 的用途重寫（API13、無 OmenTools 相依）。
-///
 /// 與 DR 的兩處刻意差異，理由寫在對應位置：
 ///  1. 每輪重新快照、一次只送一件（見 <see cref="PrismBoxRestoreRunner"/>）。
 ///  2. 預設把「染色不同」視為不同幻影（見 <see cref="Configuration.GlamourDuplicateCleanup"/>）。

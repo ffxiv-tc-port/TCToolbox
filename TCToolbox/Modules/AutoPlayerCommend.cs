@@ -41,19 +41,6 @@ public sealed unsafe class AutoPlayerCommend : TcModule
     /// 最優隊員推薦通知的<b>實體視窗</b>：它在 ⇔ 這一局真的掛著一則「可以給推薦」的通知。
     /// </summary>
     /// <remarks>
-    /// 🔑 <b>離線機械證明</b>（台服 7.20 <c>ffxiv_dx11.exe</c>，image base <c>0x140000000</c>）：
-    /// <list type="number">
-    /// <item>通知種類的名字指標表在 <c>0x142123DA0</c>，共 34 筆（筆數來自關閉函式
-    /// <c>0x14146CC20</c> 開頭的界限檢查 <c>cmp edi, 0x22</c>），
-    /// <b>索引 11 就是 <c>_NotificationIcMvp</c></b>——本模組送的第二個參數正是 11。</item>
-    /// <item>整顆執行檔<b>只有一處</b>引用那張表（<c>0x14146E5EA</c> 的
-    /// <c>lea r12,[rip+…]</c> ＋ <c>mov r12,[r12+rbp*8]</c>），而那段程式碼做的事就是
-    /// 「把 <c>表[種類]</c> 這個名字的視窗開起來」⇒「這扇視窗在」與「這種通知正掛著」是同一件事。</item>
-    /// <item><c>_Notification</c> 自己的 <c>ReceiveEvent</c>（vtable <c>0x142123900</c> 第 2 格、
-    /// 實作 <c>0x14146CAA0</c>）在點擊事件上組出的參數正是
-    /// <c>{Int 0, Int 種類索引, …}</c> 再對自己 <c>FireCallback</c>——
-    /// 也就是說本模組送的 <c>(0, 11)</c> <b>逐欄與玩家真的用滑鼠點下去完全相同</b>。</item>
-    /// </list>
     /// ⚠️ 目前<b>只拿來寫診斷、刻意不當閘門</b>：「查不到它就直接放棄」還沒有實機證據，
     /// 猜錯的話失敗形式是「推薦從此永遠不送出」，而且一樣安靜。
     /// </remarks>
@@ -185,8 +172,6 @@ public sealed unsafe class AutoPlayerCommend : TcModule
     /// 🔴 <b>還原一定要放在這裡</b>：<see cref="TaskQueue.Tick"/> 逾時時是<b>先 <c>Abort()</c>
     /// 再叫 <see cref="TaskQueue.OnTimeout"/></b>，佇列尾巴那個「還原推薦清單顯示設定」步驟
     /// <b>已經連同整條佇列被丟掉了</b>。在補上這一支之前，逾時之後要一路等到換區
-    /// （<see cref="OnTerritoryChanged"/>）或停用模組才會還原——玩家留在原地不走的話，
-    /// 遊戲的「最優隊員推薦顯示方式」就一直被我們壓成 0。
     /// </remarks>
     private void OnQueueTimeout(string step)
     {
@@ -249,8 +234,6 @@ public sealed unsafe class AutoPlayerCommend : TcModule
     /// <see cref="VoteAddonName"/> 開起來為止。
     /// </summary>
     /// <remarks>
-    /// 📌 <b>按壓行為刻意與先前完全相同</b>（同樣的參數、同樣的 1 秒節流、同樣不因為
-    /// <see cref="MvpNoticeAddonName"/> 不在就提早放棄）——這一版只多記了兩個診斷欄位。
     /// 「通知不在就別按」看起來很合理，但它會把「推薦不送出」這個失敗形式變成靜默的，
     /// 而目前還沒有實機證據能排除「通知在、只是 addon 查不到」。
     /// </remarks>

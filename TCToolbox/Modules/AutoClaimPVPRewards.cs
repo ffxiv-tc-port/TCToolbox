@@ -19,56 +19,11 @@ namespace TCToolbox.Modules;
 /// 零 hook、零特徵碼、不寫記憶體，只重新觸發節點自己的事件（等同你親手點）。
 /// </summary>
 /// <remarks>
-/// <para><b>2026-08-08 全部改寫。舊版是錯的，而且會傷到使用者：</b></para>
-/// <list type="bullet">
-/// <item>舊版的 <c>ClaimButtonNodeId = 124</c>（抄自 DailyRoutines 的 DLL，註解自己寫著「尚待實機確認」）
-/// 在台服 7.20 是<b>「關閉」鈕</b>。按下去就把使用者的視窗關掉，於是
-/// <c>PreFinalize</c> 把流程 abort 掉 —— 使用者回報的「無效＋他會把我界面關掉」就是這個。</item>
-/// <item>舊版的 <c>PendingCountValueIndex = 7</c> 讀到的是「本季已達成的系列賽等級」，不是待領取的等級數。</item>
-/// </list>
-///
-/// <para><b>台服 7.20 的真值（離線解出，證據見下）：</b></para>
-/// <list type="bullet">
-/// <item>addon <c>PvpReward</c> 的 addonNameId 是 <b>595</b>，載入的 ULD 是
-/// <b><c>ui/uld/PVPMKSReward.uld</c></b>（不是 <c>PvpReward.uld</c>——那個檔在台服 sqpack 裡根本不存在）。
-/// 對應關係取自 <c>0x1401077A8</c> 的註冊表：<c>lea rax,[建構函式]</c> 之後緊接
-/// <c>mov edx, 0x253</c>(=595) 再 <c>call</c> 註冊函式。</item>
-/// <item>整個視窗只有三種可互動元素，全都是 <c>AtkEventType.ButtonClick</c>(25)：
-/// <list type="bullet">
-///   <item><b>param 0 → 節點 124</b>：<c>AddEvent(ButtonClick, param=0)</c> 在 <c>0x141224411</c>。
-///   addon 的 <c>ReceiveEvent</c>(<c>0x141224470</c>) 收到 param 0 就呼叫 vfunc16
-///   （<c>FireCallback([Int -1])</c> 然後 <c>Hide</c>）＝<b>關閉視窗</b>。</item>
-///   <item><b>param 1..31 → 31 顆獎勵格</b>：<c>FireCallback([Int 1, UInt 等級])</c>。</item>
-///   <item><b>param 32 → 節點 8</b>：賽季切換鈕（ULD 靜態標籤 Addon 14885/14886
-///   「查看上個／目前賽季系列賽獎勵」），<c>FireCallback([Int 2, UInt 32])</c>。</item>
-/// </list></item>
-/// <item>agent 的回呼處理（<c>0x140ED75A0</c>）：case 1 → <c>0x140ED9D40(this, 等級)</c>＝<b>領取入口</b>，
-/// 它會擋掉「等級 != 已領取等級+1」、檢查背包空間，然後跳出
-/// <c>SelectYesno</c>「確定要領取獎勵嗎？」（Addon 14888／確定 14889／取消 14890）。</item>
-/// <item>等級 ↔ 節點編號（取自 <c>OnSetup</c> 0x141224267 的三層迴圈與 0x141224364 的第 31 格）：
-/// 1–10→22–31、11–20→33–42、21–30→44–53、31→54。</item>
-/// <item>AtkValue 版面（agent 的 <c>0x140ED9900</c> 逐格填、addon 逐格讀，兩邊互相對得起來）：
-/// <c>values[7]</c>＝本季<b>已達成</b>等級、<c>values[8]</c>＝本季<b>已領取到第幾級</b>。
-/// 待領取等級數＝<c>values[7] - values[8]</c>。</item>
-/// </list>
-///
 /// <para><b>防護（驗不出來就不點）：</b>目標節點一律自己走 <c>UldManager.NodeList</c> 用
 /// <b>節點 ID</b> 找（不是索引、也不用 <c>GetComponentButtonById</c> 那種綁特徵碼的
 /// <c>[MemberFunction]</c>），找到之後還要<b>比對節點型別等於該格在 ULD 裡的元件編號</b>
 /// （第 1 格是 1007、其餘是 1006）。型別對不上就整輪停手並寫一行 Information —— 這條檢查
 /// 正好就能擋掉舊版那種「點到別顆按鈕」的整類問題：關閉鈕（節點 124）的元件是 1001。</para>
-///
-/// <para>
-/// ⚠️ <c>AtkComponentNode</c> 在 CS 的散文註解寫「type 10xx where xx is the component type」，
-/// <b>那是錯的</b>。台服 7.20 的 ULD 節點工廠 <c>0x140636680</c> 是
-/// <c>movzx edi,[rdx+0x14]</c>（ULD 節點記錄的 NodeType）再 <c>mov [rcx+0x40], di</c>
-/// —— <c>AtkResNode.Type</c> 存的是 <b>ULD 檔自己的元件編號原值</b>，不是 1000+ComponentType。
-/// 若是後者，本檔所有按鈕都會是 1001，這條型別檢查就形同虛設。
-/// （同一結論在 Artisan 的 <c>WKSRecipeNotebook</c> 實機傾印也成立：1028/1029 超出 ComponentType 值域。）
-/// </para>
-///
-/// <para><b>確認框只回應自己造成的那一個：</b>唯有我們剛按下獎勵格、且 <c>PvpReward</c> 還開著、
-/// 且在時限內出現的 <c>SelectYesno</c> 才會被按「是」。其餘一律不碰。</para>
 /// </remarks>
 public sealed unsafe class AutoClaimPVPRewards : TcModule
 {
@@ -184,10 +139,6 @@ public sealed unsafe class AutoClaimPVPRewards : TcModule
     /// 🔴 <c>AtkUnitBase.AtkValuesSpan</c> 的實作是
     /// <c>new Span&lt;AtkValue&gt;(AtkValues, AtkValuesCount)</c>：
     /// <b>它自己不判 <c>AtkValues</c> 這個欄位</b>，而 <c>Span</c> 的建構子也不驗指標。
-    /// addon 拆解時 <c>AtkValues</c> 會先被釋放成 null、<c>AtkValuesCount</c> 卻可能還留著殘值，
-    /// 這個組合會<b>合法建構出一個長度非零的 Span</b>，連 Span 自己的邊界檢查都會放行，
-    /// 一直到真的索引下去才對位址 0 解參考 ＝ AccessViolationException
-    /// （corrupted-state exception，<c>try/catch</c> 攔不到，整個遊戲行程直接死）。
     /// ⇒ 只判 <c>addon == null</c> 和 <c>Length</c> 都擋不住這條，必須另外自判 <c>AtkValues</c> 欄位。
     /// </remarks>
     private static int ReadValue(AtkUnitBase* addon, int index)

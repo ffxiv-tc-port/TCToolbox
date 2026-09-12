@@ -14,34 +14,13 @@ namespace TCToolbox.Modules;
 /// 狩獵列車顯示到 Mappy：把 Hunt Helper 的狩獵列車清單同步成 Mappy 地圖上的標記。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 🔴 <b>純顯示，零自動化。</b>本模組只做「讀清單 → 放標記」：不追怪、不移動、不傳送、
 /// 不碰目標、也<b>不呼叫 Hunt Helper 的 <c>ImportTrainList</c></b>（那會改寫使用者的列車清單）。
 /// 唯一的副作用是 Mappy 地圖上多出一組來源為 <see cref="MarkerSource"/> 的標記。
-/// </para>
-/// <para>
-/// 📌 <b>兩端都不必改。</b>Hunt Helper 的 <c>HH.*</c> 與 Mappy 的 <c>Mappy.*</c> 都是既有的
-/// 對外 IPC，本模組是純粹的中介：<c>HH.GetTrainList</c> → <c>Mappy.AddMarker</c>。
-/// 座標不需要換算——兩邊講的都是<b>地圖座標</b>（介面上顯示的 X/Y），
-/// 詳見 <see cref="HuntHelperIpc.TrainMob"/> 的註解。
-/// </para>
-/// <para>
-/// 🔑 <b>同步策略</b>：每隔幾秒（可設定）拉一次清單，算出一個內容簽章；簽章沒變就什麼都不做。
-/// 有變動時交給 <see cref="MappyMarkerPublisher"/> 做<b>增量</b>比對（只加新的、只刪不要的、
-/// 內容沒變的原地不動）。
-/// <para>
-/// 🔴 <b>週期性重推刻意不用 <c>ClearSource</c>。</b>那支是把整個來源從 Mappy 的表裡拿掉，
-/// 下一次 <c>AddMarker</c> 會被判成「新的標記來源」而寫一行 <c>Information</c> 記錄；
-/// 每分鐘保險重推一次、又有好幾個來源的話，那些沒有資訊量的行會把使用者的記錄檔淹掉。
-/// <c>ClearSource</c> 只留給模組停用／卸載。
-/// </para>
-/// </para>
-/// <para>
 /// 🔴 <b>為什麼還要定期強制重建</b>：Mappy 被重新載入時它的標記表是空的，而我們的簽章還記得
 /// 「已經同步過了」——那會變成<b>標記再也不會出現，而且完全沒有徵兆</b>。
 /// 所以除了「Mappy 從無到有」的狀態轉換會重設簽章之外，另外每
 /// <see cref="ForceResyncIntervalMs"/> 毫秒無條件全量重建一次當保險。
-/// </para>
 /// </remarks>
 public sealed class HuntTrainOnMappy : TcModule
 {
@@ -90,20 +69,9 @@ public sealed class HuntTrainOnMappy : TcModule
     /// 存活目標的圖示。
     /// </summary>
     /// <remarks>
-    /// 📌 <b>來源＝Mappy 自己</b>：<c>Mappy/MapRenderer/MapRenderer.GameObject.cs</c> 對
-    /// <c>ObjectKind.BattleNpc</c> 且 <c>IsBoss</c>（判準是 <c>BNpcBase.Rank is 2 or 6</c>，
-    /// 也就是狩獵標記怪的階級）、且未被接戰時畫的就是 60402。
-    /// 換句話說<b>同一隻怪只要進了 ObjectTable，Mappy 本來就會用這顆圖示畫它</b>，
-    /// 我們只是把「還沒進視野」的那些也用同一顆畫出來，視覺上是一致的。
-    /// <para>
-    /// ✅ 2026-08-26 以 <c>tools/sqpack/path_exists.py</c> 離線直讀台服 <c>060000.win32.index</c>
-    /// 確認 <c>ui/icon/060000/060402.tex</c> 存在（校準閘門通過）。
-    /// </para>
-    /// <para>
     /// ⚠️ <b>沒有離線驗證過的部分＝這顆圖示長什麼樣子。</b>圖示的「存在」與「語意」是兩件事，
     /// 而 <c>MapSymbol</c> 表（Mappy 用來反查圖示名稱的那張）只收地標類圖示，查不到 604xx 這段。
     /// ⇒ 所以這兩個 id 都做成<b>可設定</b>的，設定畫面上也直接把圖示畫出來讓使用者自己看。
-    /// </para>
     /// </remarks>
     public const uint DefaultAliveIconId = 60402;
 
@@ -114,7 +82,6 @@ public sealed class HuntTrainOnMappy : TcModule
     /// 📌 同樣取自 Mappy 的 <c>MapRenderer.GameObject.cs</c>：60424 是它對「一般敵對 NPC 且未接戰」
     /// 用的圖示——刻意選一顆比 60402 低調、又確定同屬一組地圖標記的，
     /// 讓「已經打完的」和「還沒打的」在地圖上分得開。
-    /// ✅ 2026-08-26 同批離線確認 <c>ui/icon/060000/060424.tex</c> 存在。
     /// </remarks>
     public const uint DefaultDeadIconId = 60424;
 
@@ -195,11 +162,8 @@ public sealed class HuntTrainOnMappy : TcModule
     /// </summary>
     /// <remarks>
     /// 🔴🔴 <b>按鈕不直接打 IPC，一律先擱在這裡，交給 <see cref="OnUpdate"/> 去送。</b>
-    /// 這是本模組既有的紀律（<c>DrawStatus</c> 那段註解寫著同一條）：對方的端點內部是
-    /// <c>IpcFrameworkGate</c>／<c>RunOnFrameworkThread(…).Result</c>，
     /// 從繪製路徑呼叫等於在主執行緒上等一個要靠主執行緒才跑得到的 tick。
     /// 真的發生時的樣子是「按下去之後整個遊戲卡住好幾秒」，而不是任何一種錯誤訊息。
-    /// <para>📌 只留最後一次：連按只會出發一次，不會排成一串。</para>
     /// </remarks>
     private GoToRequest? pendingGoTo;
 
@@ -281,11 +245,9 @@ public sealed class HuntTrainOnMappy : TcModule
     /// <remarks>
     /// 🔴 <b>這支絕對不能擲例外。</b>它是被 Hunt Helper 的 <c>SendMessage</c> 直接叫的，
     /// 例外會一路傳回對方的事件裡去——我們的 bug 會表現成<b>別人家的外掛壞掉</b>。
-    /// <para>
     /// 🔴 這裡<b>只打旗標，不做任何 IPC 呼叫</b>。除了上面那條之外還有第二個理由：
     /// <c>HH.GetTrainList</c> 內部是 <c>RunOnFrameworkThread(…).Result</c>，
     /// 而這支的執行緒無法保證，在這裡呼叫它有阻塞的風險。真正的重拉留給 <see cref="OnUpdate"/>。
-    /// </para>
     /// </remarks>
     private void OnMarkSeen(object _)
     {
@@ -516,9 +478,7 @@ public sealed class HuntTrainOnMappy : TcModule
     /// ⚠️ 這個值走過一次 JSON 來回（見 <see cref="HuntHelperIpc"/>），<c>Kind</c> 有可能掉成
     /// <c>Unspecified</c>——那時候直接 <c>ToLocalTime()</c> 會把它<b>當成當地時間</b>再加一次時差，
     /// 結果是靜默地差好幾個小時。所以 <c>Unspecified</c> 一律當成 UTC。
-    /// <para>
     /// 📌 沒有時間資料時顯示「？」而不是某個看起來很具體的時間——「不知道」要看得出來是不知道。
-    /// </para>
     /// </remarks>
     private static string FormatLastSeen(DateTime lastSeenUtc)
     {
@@ -699,14 +659,10 @@ public sealed class HuntTrainOnMappy : TcModule
     /// 狩獵列車清單，每一列一顆「前往」。
     /// </summary>
     /// <remarks>
-    /// <para>
     /// 🔴 <b>手動觸發，而且只走到那裡為止。</b>按下去只做一件事：請 Lifestream 把角色帶過去。
     /// 不選取目標、不開打、不自動接續下一隻——那些都是無人值守的自動化，本模組刻意不做。
-    /// </para>
-    /// <para>
     /// 🔑 <b>「別的外掛正在移動」寫在表格上方一行，不是每一列各寫一次。</b>
     /// 那是一個全域狀態，每一列都一樣；重複 20 次只是噪音，而使用者要看的是按鈕為什麼是灰的。
-    /// </para>
     /// </remarks>
     private void DrawTrainList()
     {

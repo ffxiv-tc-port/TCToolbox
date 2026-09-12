@@ -16,32 +16,13 @@ namespace TCToolbox.Modules;
 /// 製作清單缺料：AllaganTools 的製作清單要做什麼 → 缺哪些材料 → 哪裡買 → 一鍵走到商人。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 🔴🔴 <b>紅線</b>：①<b>零採購、零掛單、零市場查詢</b>——價格只顯示 Marketbuddy
 /// <b>已經看過</b>的快取，我們不送任何市場請求。②會讓角色移動的只有「前往」那一顆，
 /// <b>使用者親手按下才動、一次只去一個地方、絕不自己接續下一個目的地</b>。
 /// ③本模組<b>預設關閉</b>（TCToolbox 全體政策）。
-/// </para>
-/// <para>
-/// 🔑 <b>為什麼「缺料」要自己算。</b><c>AllaganTools.GetCraftItems</c> 回的是<b>成品</b>
-/// （它的實作只收 <c>IsOutputItem</c>），而 Artisan 沒有「清單裡有什麼」的端點
-/// ⇒ 材料只能自己從 Lumina <c>Recipe</c> 表展開（<see cref="RecipeMaterials"/>），
-/// 持有量再逐一向 <c>AllaganTools.ItemCount</c> 問。
-/// </para>
-/// <para>
-/// 🔴 <b>持有量是「HQ 與 NQ 合計」。</b>對方的 <c>ItemCount</c> 不看品質旗標，
-/// 而製作材料本來就不分品質都能用。缺口＝需要 − 合計持有，夾在 0 以上。
-/// </para>
-/// <para>
-/// 🔑 <b>Draw 路徑上一律不做 IPC。</b>持有量查詢對 AllaganTools 而言是對「所有已知道具欄
-/// 的每一格」做一次全掃，而一次重新整理要問「材料數 × 擁有者數」次
-/// ⇒ 全部切在 <c>Framework.Update</c> 裡分幀做（有進度顯示），Draw 只讀算好的欄位。
-/// </para>
-/// <para>
 /// ⚠️ <b>刻意不接 <see cref="AutomationGate"/>。</b>那道閘門是給「自己會醒過來的迴圈」用的；
 /// 這個模組的每一個動作都是使用者當下按的，擋下來只會變成「按了沒反應」。
 /// 會移動的按鈕另外用 <see cref="ExternalNav.TryGetActiveMover"/> 擋住「別人正在帶著角色走」。
-/// </para>
 /// </remarks>
 public sealed class CraftShoppingList : TcModule
 {
@@ -849,15 +830,8 @@ public sealed class CraftShoppingList : TcModule
     /// <remarks>
     /// 📌 判準依序是：①有位置 ②用 Gil 買得到（<c>SourceType == "GilShop"</c>）
     /// ③清單裡的第一個。
-    /// <para>
-    /// 🔑 <b>為什麼優先 GilShop</b>：其他管道（<c>SpecialShop</c>／<c>Achievement</c>／
-    /// <c>QuestReward</c>）多半不是「走過去就買得到」——把角色帶到一個他其實買不了的地方
-    /// 是最沒有價值的一趟。完整清單在 tooltip 與 IVL 自己的視窗裡，沒有資訊被藏起來。
-    /// </para>
-    /// <para>
     /// ⚠️ 這是<b>顯示與捷徑</b>用的選擇，不是「最便宜」或「最近」。要精挑請按「商人清單」
     /// 開 IVL 自己的視窗（它有篩選）。
-    /// </para>
     /// </remarks>
     private static VendorLocationEntry? PickBestVendor(List<VendorLocationEntry> vendors)
     {

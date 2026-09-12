@@ -16,39 +16,11 @@ namespace TCToolbox.Modules;
 /// 招募詳細視窗自動加入：點開一則招募的詳細內容之後，直接按下「加入」。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 🔴 <b>只有你自己點開某一則招募才會觸發</b>——模組不會去翻招募清單、不會自己開任何視窗、
 /// 也不會定時做任何事。要停手就把詳細視窗關掉（或按住底下設定的「取消鍵」）。
-/// </para>
-/// <para>
-/// ⚠️ 但它<b>不是</b>「手動觸發」模組：開著的時候，每一次你點開詳細內容遊戲行為就會不一樣，
-/// 所以 <see cref="TcModule.IsManualTrigger"/> 維持 <c>false</c>。
-/// </para>
-/// <para>
-/// 📌 <b>怎麼按下「加入」</b>：取 <c>AddonLookingForGroupDetail.JoinPartyButton</c>
-/// （FFXIVClientStructs 具名欄位）再<b>重播那顆按鈕自己的事件</b>。
-/// 上游 PandorasBox <c>AutoJoinPF</c> 走的是 <c>Callback.Fire(addon, false, 0)</c> ＋
-/// <c>NodeList[111]</c>（鎖頭）／<c>NodeList[113]</c>（招募人名稱）這種<b>節點索引</b>，
-/// 台服完全沒有可離線驗證的依據，而且差一格就是按到別的東西。
-/// 這裡三個判斷全部改用具名欄位：
-/// <list type="bullet">
-/// <item>是不是自己的招募 → <c>AgentLookingForGroup.OwnListingId</c> 與
-/// <c>LastViewedListing.ListingId</c> 相比，不去讀畫面上的名字。</item>
-/// <item>是不是密碼招募 → <c>LastViewedListing.JoinConditionFlags</c>，不去看鎖頭圖示。</item>
-/// <item>按不按得下去 → 按鈕自己的 <c>IsEnabled</c> 與可見性。</item>
-/// </list>
-/// </para>
-/// <para>
 /// 🔴 <b>確認框只在「我們剛剛按過加入」之後才代按。</b>判準是四個條件同時成立：
 /// 我們按下加入 <see cref="ConfirmWindowMs"/> 毫秒以內、當時畫面上<b>沒有</b>確認框、
 /// 詳細視窗還開著、<b>而且提示文字真的是「加入招募」那一句</b>。
-/// </para>
-/// <para>
-/// 🔴 <b>為什麼光靠時間窗不夠</b>：前三個條件排掉的只有「按下加入<b>那一刻</b>已經存在的框」，
-/// 蓋不住按下之後才冒出來的<b>外來</b>框（交易申請、別的外掛的確認框）——
-/// 那是一個 5 秒的盲窗，而且失敗形式是靜默的（別人的對話框被按下「是」）。
-/// → 按之前另外拿 <c>Addon</c> 表的加入確認句做比對（見 <see cref="JoinPromptRows"/>）。
-/// </para>
 /// </remarks>
 public sealed unsafe class AutoJoinPartyFinder : TcModule
 {
@@ -73,8 +45,6 @@ public sealed unsafe class AutoJoinPartyFinder : TcModule
     /// 判定「這個 SelectYesno 是不是加入招募的確認框」用的 <c>Addon</c> 列。
     /// </summary>
     /// <remarks>
-    /// 🔑 台服 7.20 實查：<c>Addon#11115</c> ＝「確定要加入任務「＿UNKNOWN＿」的＿UNKNOWN＿嗎？\n招募人為＿UNKNOWN＿。」
-    /// —— 全表 14850 列裡只有這一列含「招募人為」。
     /// 用列號查客戶端自己的字串，所以跟語言無關，也不會因為台服用全形標點而失效。
     /// ❌ <b>不能整句逐字比對</b>：句子裡的任務名、隨募類型、招募人名全都是 placeholder。
     /// 比對規則見 <see cref="AddonPrompt"/>（只留固定片段、全部依序出現才算命中）。
@@ -260,13 +230,6 @@ public sealed unsafe class AutoJoinPartyFinder : TcModule
     /// 代按加入之後的確認框。
     /// </summary>
     /// <remarks>
-    /// 🔴 四個條件同時成立才按，缺一不可：
-    /// <list type="bullet">
-    /// <item>是我們按過加入之後 <see cref="ConfirmWindowMs"/> 毫秒以內；</item>
-    /// <item>按下加入的那一刻畫面上<b>沒有</b>確認框（否則這個框跟我們無關）；</item>
-    /// <item>招募詳細視窗還開著；</item>
-    /// <item><b>提示文字命中 <see cref="JoinPromptRows"/> 的加入確認句。</b></item>
-    /// </list>
     /// 前三個只能排掉「按下那一刻已經在的框」；第四個才排得掉「按下之後才冒出來的外來框」。
     /// 不命中一律不按，<b>也不把 <c>joinClickTick</c> 歸零</b>——外來的框留給使用者自己按，
     /// 真正的加入確認框如果隨後才出現，窗口還在就還接得到（fail-closed）。

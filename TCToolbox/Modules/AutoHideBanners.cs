@@ -34,15 +34,8 @@ public sealed unsafe class AutoHideBanners : TcModule
     /// SimpleTweaks 裡做同一件事的 tweak 鍵（完整識別是 <c>UiAdjustments@HideUnwantedBanner</c>）。
     /// </summary>
     /// <remarks>
-    /// 🔴 <b>不是「功能相似」，是同一支遊戲函式</b>：SimpleTweaks
-    /// <c>Tweaks/UiAdjustment/HideUnwantedBanner.cs</c> 用的特徵碼與上面的
-    /// <see cref="SetImageSignature"/> <b>逐字元相同</b>——2026-08-07 直接對使用者機器上安裝的
-    /// <c>SimpleTweaksPlugin.dll</c>（1.10.12.0）數字串命中數：UTF-8 恰好 1 次、UTF-16LE 0 次。
-    /// 兩邊要屏蔽的橫幅 id 清單也高度重疊。
-    /// <para>
     /// ⚠️ 這裡刻意<b>只顯示提示、不自動關掉任何一邊</b>：兩個都開不會壞，
     /// 而替使用者裁決「留哪一邊」不是這個模組該做的事。
-    /// </para>
     /// </remarks>
     private const string SimpleTweaksBannerTweak = "HideUnwantedBanner";
 
@@ -95,20 +88,8 @@ public sealed unsafe class AutoHideBanners : TcModule
 
     /// <summary>
     /// 橫幅清單。
-    /// <para>
-    /// 名稱不是猜的，也不是任何 Excel 表提供的：ScreenImage 表只有 Image／Jingle／Type／Lang 四欄，
-    /// 全 1138 張台服表裡沒有任何一張替這些圖示命名。作法是**把台服 sqpack 內的材質實際解出來看**——
-    /// 以 Lumina 讀 <c>ui/icon/{folder}/tc/{id}_hr1.tex</c>（DXT5、2560x720）轉 PNG 後逐張辨識，
-    /// 下列文字即橫幅上實際顯示的台服字樣。
-    /// </para>
-    /// <para>
-    /// 分類沿用台服官方用語；Jingle 表（ScreenImage.Jingle → Jingle.Name，如 Que_Start／Fate_Clear／
-    /// Gate_Enc）只拿來交叉驗證分類，不當顯示名用。
-    /// </para>
-    /// <para>
     /// ⚠️ DR 清單裡的 128525–128532（宇宙探索任務鏈橫幅）經 sqpack 索引比對，
     /// **台服 7.20 客端根本沒有這些材質**（該內容尚未實裝），因此整組移除——列出來也勾不到東西。
-    /// </para>
     /// </summary>
     private static readonly BannerInfo[] Banners =
     [

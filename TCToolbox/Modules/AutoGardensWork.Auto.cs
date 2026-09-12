@@ -15,21 +15,8 @@ namespace TCToolbox.Modules;
 /// 自動園圃作業的<b>決策層</b>：讀出每一格的狀態，依使用者的策略決定要做什麼。
 /// </summary>
 /// <remarks>
-/// 🔴 <b>狀態讀不到記憶體裡。</b>本 pin 的 <c>FFXIVClientStructs</c> 沒有任何園圃作物欄位
-/// （<c>HousingFurniture</c> 只有 Id／Stain／Position／Rotation／Index），
-/// 全艦隊唯一專門追蹤作物的 Accountant 也是監看 UI 與聊天、自己存一份資料庫。
-/// ⇒ <b>唯一的狀態來源是互動時遊戲顯示的那句 Talk</b>
-/// （<c>custom/001/CmnDefHousingGardeningPlant_00151</c> 的第 0／7～10 列），
-/// 次要來源是選單上出現了哪些選項。兩者都必須真的互動一次才拿得到。
-/// <para>
-/// 📌 這一層取代的是使用者原本寫在 SomethingNeedDoing 巨集裡的 Lua 決策
-/// （那份腳本的分工註解寫著「TCToolbox 只做互動與選單操作，本腳本負責決策」）。
-/// 逐格的<b>互動</b>仍然走既有的狀態機，一行都沒有改。
-/// </para>
-/// <para>
 /// 🔴 <b>兩個來源必須互相同意才動手</b>：Talk 判出來要做的事，如果選單上根本沒有那個選項，
 /// 一律略過。單靠其中一個的失敗形式是「按到別的選項」，而園圃的動作有一半是不可回復的。
-/// </para>
 /// </remarks>
 public sealed unsafe partial class AutoGardensWork
 {
@@ -191,8 +178,6 @@ public sealed unsafe partial class AutoGardensWork
     /// <remarks>
     /// ⚠️ 表裡存的只有「句尾那段固定文字」，句首的作物名是一個執行期才展開的 item 巨集
     /// ⇒ 這裡一律比對<b>句尾</b>，作物名取它前面那一段。
-    /// 四句話彼此沒有子字串關係（2026-09-08 直讀台服 sqpack 確認），所以判斷順序不影響結果；
-    /// 仍然把「枯萎」放第一個，因為那是唯一不可回復的分支。
     /// </remarks>
     private PatchState ClassifyTalk(string text, out string cropName)
     {
@@ -425,20 +410,10 @@ public sealed unsafe partial class AutoGardensWork
     /// 每一幀問一次：現在該不該自己開一輪「自動整理」。
     /// </summary>
     /// <remarks>
-    /// <para>
     /// 🔴 <b>走位預設關著。</b>關著的時候條件是「站在有花盆的地方」而不是「走去有花盆的地方」，
     /// 行為與加走位之前完全一樣。使用者自己打開
     /// <see cref="AutoGardensWorkConfig.WalkBetweenPatches"/> 之後，條件才放寬成
     /// 「<see cref="SearchRange"/> 內有花盆」，由 <c>EnqueueWalkToPatch</c> 逐格帶過去。
-    /// </para>
-    /// <para>
-    /// 🔑 <b>決策與佇列與手動按鈕完全共用</b>：這支唯一做的事是決定「要不要呼叫
-    /// <see cref="StartAutoBatch"/>」，一格園圃該做什麼、怎麼做，一行都沒有另外寫。
-    /// </para>
-    /// <para>
-    /// 📌 <b>擋下來的時候一律靜默。</b>「附近沒花盆」「正在戰鬥」是常態不是錯誤，
-    /// 每個週期報一次的話這個功能會變成噪音來源。理由留在設定畫面上給想知道的人看。
-    /// </para>
     /// </remarks>
     private void TickAutoLoop()
     {
@@ -541,14 +516,9 @@ public sealed unsafe partial class AutoGardensWork
     /// 目前的策略要用、但現在拿不到的材料；空字串＝都拿得到。
     /// </summary>
     /// <remarks>
-    /// 🔴 <b>只講這套策略真的會用到的東西。</b>一個只想收穫、把施肥設成「不施肥」的人
-    /// 被告知「缺肥料」，跟什麼都不講一樣糟——他會去查一個根本不存在的問題，
-    /// 然後學會忽略這一行字。
-    /// <para>
     /// 🔑 「有沒有貨」一律走 <see cref="FindInventoryItem"/>，也就是<b>決策層用的同一個判準</b>。
     /// 換成 <c>GetInventoryItemCount</c>（設定畫面的下拉選單用的那個）會把裝備欄／兵器庫也算進去，
     /// 失敗形式是「面板說有、跑起來說沒有」——那正好是這次要修掉的那種矛盾。
-    /// </para>
     /// </remarks>
     private string BuildMaterialShortage()
     {
@@ -580,8 +550,6 @@ public sealed unsafe partial class AutoGardensWork
     /// 把「還沒選」與「選了但背包沒有」分開講，並把道具名一起帶上。
     /// </summary>
     /// <remarks>
-    /// 📌 道具名走 <see cref="ItemNames.Get"/>（Lumina <c>Item</c> 表，台服自帶繁中），
-    /// 程式碼裡沒有寫死任何道具名稱。
     /// ⚠️ 兩種缺法的處理方式完全不同（一個去設定畫面選、一個去買），
     /// 合成同一句「缺種子」會讓使用者往錯的方向找。
     /// </remarks>
@@ -603,11 +571,6 @@ public sealed unsafe partial class AutoGardensWork
     /// <remarks>
     /// 🔴 <b>判準是決策層的旗標，不是「這一輪做了幾格」。</b>
     /// 一輪可以「收了三格、另外五格因為沒種子沒種回去」——那仍然要講。
-    /// <para>
-    /// 📌 記錄一律寫（<c>Information</c>，而且只在<b>狀態變化</b>時寫一行，
-    /// 不是每一輪寫一行——這個迴圈預設每 60 秒跑一次）。
-    /// 聊天訊息另外還有一道 <see cref="ShortageChatFloor"/> 的下限。
-    /// </para>
     /// </remarks>
     private string ReportRoundShortage()
     {
@@ -646,14 +609,6 @@ public sealed unsafe partial class AutoGardensWork
     /// <remarks>
     /// 🔴 <b>這是 ImGui 的繪製路徑，只准讀快取欄位、不准掃記憶體、不准擲例外。</b>
     /// 實際的評估在 <see cref="UpdateMaterialShortage"/>（框架執行緒、每秒一次）。
-    /// <para>
-    /// 📌 模組關著時回 <see langword="null"/>：關著就不會有任何一輪跑起來，
-    /// 這時候在列上喊「缺種子」只是噪音。
-    /// </para>
-    /// <para>
-    /// 🔑 <b>只在「講了有用」的時候講</b>：人就在園圃旁邊，或者已經有一輪真的被擋掉了。
-    /// 否則一個把策略設成會重種、但人在外面跑本的使用者，會看到一句永遠掛在那裡的橘字。
-    /// </para>
     /// </remarks>
     public override ModuleNotice? RowNotice
     {
@@ -710,10 +665,6 @@ public sealed unsafe partial class AutoGardensWork
     /// 🔴 <b>降級只發生在自動重跑這條新路徑上，手動那條一個字都沒改。</b>
     /// 一輪 24 格會寫約 48 行；每分鐘一輪就是每小時近三千行，那足以把使用者記錄檔裡
     /// <b>別的</b>東西淹掉——包含事後要拿來查這個功能自己出了什麼事的那些行。
-    /// <para>
-    /// 📌 使用者的 <c>LogLevel</c> 是 1，<c>Debug</c> 收得到（真正的盲區只有 Verbose），
-    /// 所以降級不等於丟掉，需要時仍然查得到；而每一輪的<b>結果</b>照樣是 Information。
-    /// </para>
     /// </remarks>
     private void LogPerPatch(string message)
     {

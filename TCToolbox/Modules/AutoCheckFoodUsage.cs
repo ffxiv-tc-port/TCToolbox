@@ -23,16 +23,6 @@ namespace TCToolbox.Modules;
 /// 🔴🔴 <b>使用者裁決：預設關 ＋ 明確開關。</b>這是唯一會在你沒按任何按鈕的情況下替你使用道具的模組，
 /// 所以模組本身預設關（<c>EnabledModules</c> 不含它），而且三個「觸發時機」也<b>全部預設關</b>——
 /// 開了模組但一個時機都沒勾＝完全不動作。要它真的動，得自己勾食物、勾時機。
-/// <para>
-/// 🔴 <b>修掉 DR 的一個內部 bug</b>：DR 的 <c>LastFoodUsageTime</c> 是 <c>readonly</c> 且永遠是
-/// <c>DateTime.MinValue</c>，於是它宣稱的「10 秒冷卻」<b>是死碼、從不生效</b>。這裡改成真的記錄上次用道具
-/// 的時間並據以冷卻，避免短時間內連續喂食。
-/// </para>
-/// <para>
-/// 🔴 所有原生指標都<b>在同一個 tick／detour 內同步取用</b>，不跨幀保存（每次要用時重新
-/// <c>Control.GetLocalPlayer()</c>）。解不到 CountdownInit 特徵碼＝那個時機停用並記 Information，
-/// 其餘兩個時機（進副本／條件變更）不受影響。
-/// </para>
 /// </remarks>
 public sealed unsafe class AutoCheckFoodUsage : TcModule
 {

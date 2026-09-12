@@ -14,22 +14,11 @@ namespace TCToolbox.Modules;
 /// </summary>
 /// <remarks>
 /// 參考 DailyRoutines <c>ContentFinderCommand</c> 重寫，但<b>刻意縮小到「開啟＋選取」</b>：
-/// <para>
 /// 🔴 <b>指令名不用 <c>/pdrduty</c>。</b>那是 DailyRoutines 的指令，使用者機器上還裝著 DR，
 /// 兩邊都註冊同一個名字時第二個會靜默失敗（誰先載入誰贏，之後那條指令的行為變成賭運氣）。
 /// 一律用 TC Toolbox 自己的前綴 <c>/tcduty</c>。
-/// </para>
-/// <para>
 /// 🔴 <b>只呼叫 <c>AgentContentsFinder::OpenRegularDuty</c> / <c>OpenRouletteDuty</c>
 /// ——「開啟搜尋器並把這一項選起來」，不送報名封包、不自動排隊。</b>
-/// DR 原版走的是 <c>ContentsFinderHelper.RequestDuty*</c>（等於幫你按下「參加」把整隊送進佇列），
-/// 那條路要靠一支 <c>ExecuteCommand</c> 呼叫點特徵碼，台服有 9 個近乎相同的函式、抓錯一個是靜默災難。
-/// 這裡整條避開：使用者自己還要在搜尋器上按「參加」，跟手動選好副本一模一樣，只是省掉翻頁找。
-/// </para>
-/// <para>
-/// 🔴 <b>對不到就不開，也不猜。</b>名稱比對到多個副本時列出前幾個讓使用者自己挑，
-/// 絕不拿「第一個 Contains 命中」去賭——那正是 DR 原版的 <c>FirstOrDefault</c> 會做的事。
-/// </para>
 /// </remarks>
 public sealed unsafe class ContentFinderCommand : TcModule
 {

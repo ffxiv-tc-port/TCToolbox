@@ -17,38 +17,13 @@ namespace TCToolbox.Modules;
 /// 投影台：已擁有的幻影不要再收納一次。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 與 <see cref="GlamourDuplicateCleanup"/> 互補：那個是<b>事後清</b>（把已經重複的取回背包），
-/// 這個是<b>事前擋</b>（在「幻影化」的確認框上就攔下來），兩個可以同時開。
-/// </para>
-/// <para>
-/// 📌 <b>遊戲自己不擋。</b>台服 7.20 的 <c>LogMessage</c> 表裡只有
-/// 「投影台中所保存的幻影數量已達上限」(#4266) 這種容量錯誤，
-/// <b>沒有</b>任何「這件外觀已經有了」的拒絕訊息（離線全表掃過）；
-/// 道具說明上那句「投影台中有 N 個」(<c>LogMessage</c> #1452) 只是告知，不會阻止你再收一次。
-/// 所以重複收納會白白吃掉一格投影台格數與一顆觸媒。
-/// </para>
-/// <para>
-/// 🔴 <b>攔截點是確認框，不是任何原生節點。</b>流程是：
-/// <list type="number">
-/// <item>背包道具右鍵（Dalamud 的 <c>OnMenuOpened</c>）→ 記下「使用者現在瞄準的是哪一格」。
-/// <b>只記數值，不留任何原生指標</b>。</item>
-/// <item>那一格的外觀若已經在投影台裡，就把它記成候選（有效期 <see cref="CandidateTtlMs"/>）。</item>
-/// <item>候選有效期內出現 <c>SelectYesno</c>，而且它的內容含有<b>台服自己的</b>
-/// 「幻影化」確認字串（<c>Addon</c> 第 11994 列）時 → 提示，並視設定按下「否」。</item>
-/// </list>
-/// </para>
-/// <para>
 /// 🔴 <b>字串錨點是執行期從 <c>Addon</c> 表算出來的，不是寫死的中文。</b>
 /// 取該列<b>最長的一段純文字 payload</b>（跳過所有參數與換行巨集）當比對錨，
 /// 所以換語言、換版本都跟著走。算不出錨點時<b>整個攔截功能停用</b>並寫進記錄
 /// —— 失效的方向是「遊戲照常運作」，不是「亂按對話框」。
-/// </para>
-/// <para>
 /// 🔴 <b>按的是「否」按鈕本身（<c>AddonSelectYesno.NoButton</c>），不是寫死的 callback 序號。</b>
 /// 用序號的話萬一 0/1 的意義相反，這個模組就會從「攔截重複收納」變成「自動確認收納」——
 /// 那比什麼都不做還糟。改成重播那顆按鈕自己的事件，按不到就只提示不動作。
-/// </para>
 /// </remarks>
 public sealed unsafe class GlamourStoreDuplicateGuard : TcModule
 {
@@ -201,11 +176,9 @@ public sealed unsafe class GlamourStoreDuplicateGuard : TcModule
     /// <remarks>
     /// 📌 <b>刻意不比對優質／普通</b>：投影台裡的優質與普通品長得一模一樣，
     /// 兩件都留著就是純粹浪費一格。
-    /// <para>
     /// ⚠️ 染色則<b>預設要一致</b>才算同一件（<see cref="GlamourStoreDuplicateGuardConfig.DistinguishByDye"/>）——
     /// 同一件裝備染成兩個顏色在投影台裡是兩種可用的外觀，一律當重複會擋掉正當的收納。
     /// 這個預設與 <see cref="GlamourDuplicateCleanup"/> 一致。
-    /// </para>
     /// </remarks>
     private int CountExisting(uint baseItemId, byte stain0, byte stain1)
     {

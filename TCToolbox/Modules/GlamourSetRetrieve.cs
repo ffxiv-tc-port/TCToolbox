@@ -11,17 +11,12 @@ namespace TCToolbox.Modules;
 /// <summary>
 /// 投影台整套幻影取出：依遊戲「套裝幻影化」用的裝備組合（Lumina <c>MirageStoreSetItem</c>），
 /// 找出投影台裡湊得齊的整組，一件一件取回背包。手動按鈕，不自動執行。
-///
 /// 🔴 <b>刻意只做「取出」這一半。</b>DailyRoutines <c>AutoAttireItems</c> 還有一半是
 /// 自動把「套裝幻影化」視窗填好並送出，那一半依賴
 /// <c>AtkValues[15]</c>／<c>AtkValues[20 + i * 7]</c> 的版面位置、9999 這個哨兵值、
 /// LogMessage 4280、以及 ContextIconMenu 的常數 1021003 —— 全部是版本相依的寫死值，
 /// 而且在台服失效時的表現是**靜默做錯事**（填錯格、點錯選單項），不是報錯。
 /// 使用者已裁決不做那一半，這裡連程式碼都不留，避免以後有人「順手打開」。
-///
-/// 📌 資料來源是 Lumina <c>MirageStoreSetItem</c>，不寫死組合。
-/// 台服 7.20 dump（<c>exd-tc/7.20/MirageStoreSetItem.csv</c>）有 528 列、
-/// 11 個部位欄位（MainHand/OffHand/Head/Body/Hands/Legs/Feet/Earrings/Necklace/Bracelets/Ring），
 /// 與這裡讀的欄位一致 —— **沒有腰部欄位**，不要照國際服的舊資料補一欄上去。
 /// </summary>
 public sealed class GlamourSetRetrieve : TcModule

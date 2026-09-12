@@ -10,15 +10,10 @@ namespace TCToolbox.Modules;
 /// <summary>
 /// 投影台裡「可以收進收藏櫃」的裝備取出：收藏櫃（Armoire）本身就能當投影來源且不佔投影台格數，
 /// 所以這些裝備放在投影台是純浪費格子。手動按鈕，一次一件取回背包。
-///
 /// 🔴 <b>純手動</b>：只有按下「開始」才動，不掛任何自動觸發。
 /// 🔴 <b>只負責取出到背包</b>，**不會**幫你放進收藏櫃 —— 那要在收藏櫃視窗自己收，
 /// 我們不去點原生視窗（點錯一格的代價太高，而且那條路的索引沒有離線可驗的依據）。
-///
 /// 📌 判斷依據是 Lumina <c>Cabinet</c> 表，**不寫死道具清單**。
-/// 台服 7.20 dump（<c>exd-tc/7.20/Cabinet.csv</c>）有 1048 列、欄位為 <c>Item</c>，
-/// 與這裡讀的欄位一致。改版新增可收納道具時自動跟上。
-///
 /// 參考 DailyRoutines <c>AutoRemoveArmoireItemsFromDresser</c> 的用途重寫（API13、無 OmenTools 相依）。
 /// </summary>
 public sealed class GlamourArmoireCleanup : TcModule

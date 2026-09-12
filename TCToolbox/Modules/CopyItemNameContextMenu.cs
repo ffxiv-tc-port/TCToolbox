@@ -14,21 +14,9 @@ namespace TCToolbox.Modules;
 /// <see cref="ItemContextResolver"/>。零 hook、零特徵碼、不寫記憶體。
 /// </summary>
 /// <remarks>
-/// 🔴 <b>2026-08-08 修正：生效位置原本整個反了。</b>
-/// 舊版寫死 <c>if (args.MenuType != ContextMenuType.Default) return;</c>，
-/// 理由是註解裡那句「背包本來就有這個選項」——<b>台服實測不成立</b>
-/// （使用者附截圖：背包右鍵完全沒有複製項，而聊天欄道具連結與製作筆記素材<b>原生就有</b>，
-/// 反而被本模組加成兩份）。現在改成：
-/// <list type="bullet">
-/// <item><see cref="ContextMenuType.Inventory"/>（背包／雇員背包／陸行鳥鞍囊／裝備欄……
-/// 全部共用 <c>AgentInventoryContext</c>，不必逐 addon 枚舉）＝<b>要加</b>，這才是本模組的本意。</item>
-/// <item><see cref="ContextMenuType.Default"/> 中，<see cref="ExcludedAddons"/> 列到的視窗＝<b>不加</b>。</item>
-/// </list>
-/// <para>
 /// 📌 台服 EXD 已驗證：<c>Addon</c> 159 ＝「複製道具名」（選單文字直接取這一列，跟遊戲用語一致）。
 /// ⚠️ 台服對「尚未開放的道具」會保留列但把名稱留成空字串，所以判定不能用「查不查得到列」，
 /// 必須檢查名稱內容——查得到列但名稱是空的一律當成不存在，不加選單項。
-/// </para>
 /// </remarks>
 public sealed unsafe class CopyItemNameContextMenu : TcModule
 {
@@ -54,15 +42,6 @@ public sealed unsafe class CopyItemNameContextMenu : TcModule
     /// <remarks>
     /// 🔴 <b>這份清單只放「有依據」的，不確定的一律不填</b>——
     /// 多出現在原生沒有的地方只是重複一項，把功能擋掉卻是靜默地少一個功能。
-    /// <list type="bullet">
-    /// <item><c>ChatLog</c>：聊天欄道具連結。<b>原生已有</b>複製道具名（2026-08-08 使用者截圖實證）。</item>
-    /// <item><c>RecipeNote</c>：製作筆記的素材。<b>原生已有</b>複製道具名（同上）。</item>
-    /// <item><c>RecipeProductList</c>：「會用到所選材料的配方」視窗（<c>Addon</c> 13440 就是這個標題；
-    /// 對應 <c>AgentRecipeProductList.SearchForRecipesUsingItem</c>）。
-    /// <b>使用者明示不做。</b>順帶一提現況本來就不會出現——它既不在
-    /// <see cref="ItemContextResolver"/> 的具名欄位分支裡，也不在 HoveredItem 白名單裡；
-    /// 寫在這裡是為了把「刻意不做」與「剛好沒做到」分開，免得日後有人把它加進白名單。</item>
-    /// </list>
     /// </remarks>
     private static readonly HashSet<string> ExcludedAddons = new(StringComparer.Ordinal)
     {

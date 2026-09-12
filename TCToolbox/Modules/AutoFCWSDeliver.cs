@@ -79,9 +79,6 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
     /// 「交納視窗還開著，但一扇確認框都找不到」這個狀態是從什麼時候開始的（<c>null</c>＝現在不是這個狀態）。
     /// </summary>
     /// <remarks>
-    /// 🔴 這是 2026-09-02 使用者回報「卡在確認是否繳交」時<b>唯一缺的那條線索</b>：
-    /// 舊碼在這個狀態下完全不寫 log，實機 log 裡就是整整 9 秒的空白，
-    /// 分不出「模組死了」「看不到那扇窗」還是「在等別的東西」。
     /// 超過 <see cref="ConfirmStallReportMs"/> 就把 <c>SelectYesno</c> 每一格的狀態印出來。
     /// </remarks>
     private DateTime? confirmStallSince;
@@ -102,13 +99,6 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
     /// 送出合成事件之後，等交納視窗（或交納確認框）出現的上限。
     /// </summary>
     /// <remarks>
-    /// 🔴 <b>舊碼這裡是一個寫死的 <c>EnqueueDelay(500)</c>，那不是等待、是賭。</b>
-    /// 實機 log（2026-08-29 17:53／18:07）顯示交納視窗常常要 600 毫秒以上才開得起來：
-    /// 500 毫秒一到 <see cref="FillRequest"/> 就因為「視窗還沒 ready」直接回 true，
-    /// <see cref="ConfirmRequest"/> 接著在同一幀走進「兩扇視窗都不在」那條路回 true，
-    /// 於是解析步驟立刻跑下一輪、對<b>同一項</b>再送一次合成事件
-    /// ——log 裡同一項的「確定要為合建設備提供…」確認框在一秒內出現兩次就是這個。
-    /// 清單當然沒變，三輪之後零進展保險絲就把整條流程判成「交納沒有生效」。
     /// ⚠️ 這個值只有在事件<b>真的</b>沒生效時才會被等滿，調大只是讓保險絲晚一點觸發，不會漏交。
     /// </remarks>
     private const int RequestAppearWaitMs = 3_000;
@@ -137,9 +127,6 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
     /// 交完一項之後，等合建視窗的素材清單反映出去的上限。
     /// </summary>
     /// <remarks>
-    /// 📌 實機 log 顯示 <c>SubmarinePartsMenu</c> 在單項交納後<b>並不會</b>被 Finalize 重建
-    /// （整趟只有結束時那一次 Finalize），它是原地更新 AtkValues 的
-    /// ——所以「等重建」等不到東西，真正該等的是<b>清單指紋變了</b>。
     /// 等不到就照樣往下走，讓零進展保險絲去判，不會因此卡死。
     /// </remarks>
     private const int ListUpdateWaitMs = 3_000;
@@ -151,9 +138,6 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
     /// 交納流程<b>第二種</b>會冒出來的確認框：含 HQ 素材時的「確定要交易優質道具嗎？」。
     /// </summary>
     /// <remarks>
-    /// 🔑 用 <c>Addon</c> 表的列號查客戶端自己的字串，不寫死中文——與 <see cref="AutoRequestItemSubmit"/>
-    /// 用的是同一組列（台服 7.20 EXD 已核對：5450「繳交優質道具」、11514「遞交優質道具」、
-    /// 102434「確定要交易優質道具嗎？」，全形問號）。
     /// ⚠️ <b>本模組必須自己認得它</b>：<c>AutoRequestItemSubmit</c> 在合建視窗開著時會整支讓路
     /// （見那支的 <c>ShouldYieldToFcwsDeliver</c>），所以這一扇沒有別人會按。
     /// </remarks>
@@ -177,13 +161,8 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
     /// 連續幾輪解析結果完全相同就判定「交納沒有生效」並中止。
     /// </summary>
     /// <remarks>
-    /// 🔴 <b>這整條批次迴圈原本沒有任何無進展保險絲。</b>解析步驟會無條件遞迴重排下一輪，
-    /// 而送出 agent 事件被台服靜默拒絕（台服的拒絕常常完全沒有徵兆）或 <c>Request</c> 視窗
-    /// 因任何原因沒開時，<see cref="FillRequest"/> 把「視窗沒出現」當成「已完成」回 true、
-    /// <see cref="ConfirmRequest"/> 接著把它計成已交納，下一輪又解析到同一批素材
     /// ⇒ 每約 0.7 秒重送一次 agent 事件，永不自停。
     /// 逾時保底管不到：每一步都很快就「完成」了。
-    /// 📌 同類模組（AutoMerge／OpenAllCoffers／TradeAllCollectables）本來就都有這兩道保險絲。
     /// </remarks>
     private const int MaxNoProgressRounds = 3;
 
@@ -456,15 +435,8 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
     /// 送出合成事件之後，真的等到交納視窗出現為止。
     /// </summary>
     /// <remarks>
-    /// 📌 台服 7.20 實機順序（2026-08-29 log 直證）是
-    /// <b>送事件 → <c>Request</c> 交納視窗直接開啟 → 填完按「交出」之後才出現
-    /// 「確定要為合建設備提供○○×N嗎？」確認框</b>——確認框在<b>後面</b>，不在前面。
-    /// 但確認框先出現的順序這裡照樣擋得住：看到就按「是」，按完<b>繼續等</b>交納視窗，
-    /// 不會像舊碼那樣把「確認框按掉了」誤當成「這一項交完了」。
-    /// <para>
     /// ⚠️ 只認帶「合建設備」字樣的確認框。這裡是交納視窗<b>還沒開</b>的時段，
     /// 無差別按「是」等於幫任何路過的確認框做決定。
-    /// </para>
     /// </remarks>
     private bool? WaitForRequest()
     {
@@ -540,16 +512,6 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
             // 🔴 選了就關：關閉中那幾幀 IsReady 照過，這裡又是每 tick 回來、沒有節流——
             //    守衛（ContextIconMenu 是併鍵的單答窗）擋住對同一實例的第二次，
             //    而且只有真的送出去才推進游標，否則游標會多跳、漏填格。
-            // 🔴🔴 2026-09-09：這一步就是使用者回報「選擇道具要等約三秒」的地方，
-            //    而真因不在本檔：ContextIconMenu 是<b>常駐視窗</b>（整場遊戲同一個實例位址、
-            //    收起來只是被隱藏），AddonPressGuard 的兩個生命週期解除點對它都不會發生
-            //    ⇒ 上一項按下的記號要撐滿 ReleaseTimeoutMs（2 秒）才逾時放行，
-            //    於是「下一項的道具選單」一開起來就被上一項的記號擋住，每一項都卡到滿 2 秒。
-            //    實機 dalamud.log（2026-09-08 22:55 那一場）：91 項裡 62 項（68%）在這一步被擋，
-            //    中位數 1.183 秒，整趟多花 73.4 秒；沒被擋的那 28 項只花 8~12 毫秒。
-            //    ⇒ 修法是把 ContextIconMenu 收進 AddonPressGuard.PersistentAddons，
-            //      改由「連續隱藏 20 幀」解除、並同時多一道互為邏輯反面的「送出前必須可見」——
-            //      不是把等待調小，也沒有動到任何一道崩潰防護。
             if (UiHelper.TryFireCallback(contextIcon, false, 0, 0, 1021003, 0, 0))
                 fillSlotCursor++;
             return false;
@@ -571,28 +533,10 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
     /// 讀這一扇確認框的提示文字，<b>payload 已經剝掉，只剩純文字</b>。
     /// </summary>
     /// <remarks>
-    /// 🔴🔴 <b>2026-09-09 修正的根因就是這一行讀法。</b>舊碼走
-    /// <c>UiHelper.GetSelectYesnoText(yesno)</c>，那支底下是 <c>Utf8String.ToString()</c>
-    /// ——它把 SeString 的 <b>payload 控制位元組原樣一起解碼</b>。合建確認框的道具名是
-    /// item link payload，所以那串位元組<b>永遠</b>解不成合法 UTF-8，解碼器每次都吐出
-    /// U+FFFD 替換字元。實機 log 逐字為證（2026-08-31 20:53:12，模組自己印出來的）：
-    /// <code>確定要為合建設備提供\x02H\x04�\x02%\x03\x02I\x04�\x02&amp;\x03鬚鯨級船體骨架\x02I\x02\x01\x03\x02H\x02\x01\x03×1嗎？</code>
-    /// ⇒ 緊接在後面的 <c>AddonPrompt.LooksMidUpdate</c>（判「字串裡有沒有 U+FFFD」）對
-    /// <b>每一扇合建確認框、每一幀</b>都回 <see langword="true"/>，
-    /// <see cref="ConfirmRequest"/> 於是永遠在按下去之前就 <c>return false</c>。
-    /// <para>
-    /// 🔑 <b>失敗形式是「看得到、但一次都按不下去」，而且全程零 log。</b>實機語料的分界線乾淨得可怕：
-    /// 全部 22 份 <c>dalamud*.log</c> 裡「交納確認框按下『是』」共 113 次，<b>最後一次是
-    /// 2026-09-02 18:20:08</b>；那之後（含 09-03 的 86 次與 09-08 的 20 次交納）<b>一次都沒有</b>
-    /// ——正好是把這道 mid-update 檢查加進本檔的那顆 commit（<c>d9ede27</c>，2026-09-02）之後的第一次重載。
-    /// 這道檢查本身是對的（它防的是關閉中的窗），錯的是<b>餵給它的字串</b>。
-    /// </para>
-    /// <para>
     /// ⇒ 改讀 <see cref="AddonPrompt.ReadSelectYesnoText"/>（<c>MemoryHelper.ReadSeString().TextValue</c>），
     /// 與本 repo 其他確認框判定（<c>AutoRequestItemSubmit</c>／<c>OptimizedFreeShop</c>／
     /// <c>AutoJoinPartyFinder</c>）同一個基準。剝掉 payload 之後只剩純文字，
     /// U+FFFD 就恢復成它原本的語意：<b>真的</b>讀到半個字元＝窗的記憶體正在變動。
-    /// </para>
     /// </remarks>
     private static string ReadPrompt(AtkUnitBase* yesno)
     {
@@ -631,10 +575,6 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
     /// <summary>這扇確認框是不是「這條交納流程自己叫出來的」——只有這兩種才准自動按「是」。</summary>
     /// <remarks>
     /// 🔴 優質道具那一組刻意用<b>包含</b>而不是<b>逐字相等</b>。
-    /// <c>AutoRequestItemSubmit</c> 用的是逐字相等，而全部 22 份實機 <c>dalamud*.log</c> 裡
-    /// 「已確認優質道具交易」與「交易中出現未認得的確認框」<b>兩句都是 0 次</b>
-    /// ——那條相等比對從來沒有被實機驗證過（它平常沒機會跑：合建視窗開著時那個模組整支讓路）。
-    /// 把沒驗證過的嚴格比對放進這條流程的必經路徑上，失敗形式會是「HQ 素材的那一項卡到步驟逾時」。
     /// 包含比對比它寬鬆，不可能比它更難命中，而誤中的風險被前置條件壓得很低：
     /// 這一段只有「本模組剛按下交出鈕、還沒收尾」的數百毫秒會執行。
     /// </remarks>
@@ -675,21 +615,6 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
         // 「確定要交易優質道具嗎？」（含 HQ 時）與「確定要為合建設備提供○○×N嗎？」。
         // ⚠️ 這裡刻意不做文字過濾（維持既有行為）：這個時點交納視窗是我們自己開的，
         //    冒出來的確認框就是這條流程的，漏按任何一扇都會讓這一項卡住。
-        //
-        // 🔴🔴 2026-09-02 使用者回報「卡在確認是否繳交」的兩個成因都在這幾行裡（實機 log 直證）：
-        //   ① 舊碼用 GetAddon("SelectYesno")＝只看第 1 格。兩扇連著跳的時候第 1 格常常是
-        //      已經關掉的那一扇，IsReady 回 false ⇒ 模組判定「沒有確認框」而真正開著的第 2 格
-        //      完全看不到；接著控制流掉到下面的 Request 分支，每 500 毫秒重按一次「交出」，
-        //      整段沒有任何 log（2026-09-02 18:15:52 實機：確認框開著，模組靜默空轉 9.3 秒）。
-        //      ⇒ 改用 FindReadyAddon 掃全部實例。
-        //   ② 舊碼用一面「按過了、還沒看到它消失」的布林旗（yesnoWaitingToClose）當防重按。
-        //      它只認名字不認實例：按掉第一扇之後第二扇在同一幀（實測 3 毫秒）就頂上，
-        //      IsReady 從頭到尾都是 true ⇒ 旗永遠清不掉 ⇒ 第二扇永遠不按
-        //      （2026-09-02 18:16:02.319 按下 HQ 那扇 → 18:16:02.322 合建那扇出現 → 停住到使用者手動點掉）。
-        //      ⇒ 改由 UiHelper.TryFireCallback 底下的 AddonPressGuard 擋，它記的是【實例位址】
-        //        （只做等值比較、永不解參考），解除點是那扇窗自己的 PreFinalize／PostSetup，
-        //        另有 2 秒逾時放行。防的還是同一件事（對關閉中的窗重按＝crash-20260831205734 的
-        //        原生 AVE），但「新的一扇」位址不同，本來就該放行。
         var yesno = UiHelper.FindReadyAddon(UiHelper.SelectYesnoAddonName);
         if (yesno != null)
         {
@@ -814,8 +739,6 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
     /// <remarks>
     /// 🔴 沒有這一步的話，下一輪解析讀到的是<b>交納前</b>的 AtkValues：指紋沒變
     /// ⇒ 零進展保險絲把「還沒更新」誤判成「交納沒有生效」，而且會對同一項再送一次合成事件。
-    /// 📌 <c>SubmarinePartsMenu</c> 單項交納後不會被重建（整趟只有結束時一次 Finalize，
-    /// 2026-08-29 實機 log 直證），所以判準是<b>指紋變了</b>而不是「重建完成」。
     /// </remarks>
     private bool? WaitListRefreshed()
     {
@@ -856,14 +779,6 @@ public sealed unsafe class AutoFCWSDeliver : TcModule
     }
 
     /// <summary>把清單指紋壓成一行（首項 Index／清單長度／道具 ID／持有數），純診斷用。</summary>
-    /// <remarks>
-    /// 🔴 <b>加這一支的理由</b>：<see cref="ListUpdateWaitMs"/>（3 秒）在實機上是<b>真的會被等滿</b>的——
-    /// 2026-09-08 22:55 那一場 <c>dalamud.log</c> 裡 91 項有 <b>13 項</b>（14%）走到逾時那一行，
-    /// 合計約 39 秒，而且<b>散在整趟裡</b>（同一趟第 8、7、2、1 項都中過），不是「最後一項」這種好解釋的形狀。
-    /// 舊的逾時訊息<b>一個指紋欄位都沒印</b> ⇒ 分不出是哪一軸沒動（是清單真的沒變，
-    /// 還是 <c>Owned</c> 這一軸在這一項上本來就不會變），離線完全定案不了。
-    /// 成功那一行同樣補上完整指紋當<b>對照組</b>：沒有對照組就不知道「正常情況下動的是哪一軸」。
-    /// </remarks>
     private static string DescribeFingerprint((uint Index, int Count, uint ItemId, uint Owned)? fingerprint) =>
         fingerprint is null
             ? "（無）"

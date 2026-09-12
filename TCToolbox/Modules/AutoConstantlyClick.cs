@@ -16,26 +16,9 @@ namespace TCToolbox.Modules;
 /// 參考 DailyRoutines AutoConstantlyClick 設計重寫（API13、無 OmenTools 相依）。
 /// </summary>
 /// <remarks>
-/// 📌 <b>鍵盤／滑鼠與手把是兩個完全獨立的處理函式</b>（2026-08-19 對台服 7.20 主程式離線反組譯確認）：
-/// <list type="bullet">
-/// <item><c>0x140748090</c>＝鍵盤／滑鼠快捷欄。它查詢的 <c>InputId</c> 是 45–56（上下捲動與切換組）、
-/// 57–68（快捷欄 1）、69–176（快捷欄 2–10）、177–188（擴充快捷欄）、189／190（副本專用動作）、
-/// 447（切換擴充組）。<b>整段完全不碰 191 以上的十字熱鍵</b>。</item>
-/// <item><c>0x1407484F0</c>＝手把十字熱鍵。它查的是 191／192（L2／R2）、193（切換組）、
-/// 194–201（八個方向鍵）、202–218（展開後的左右擴充組）。</item>
-/// </list>
 /// 也就是說<b>只把第一個 hook 的 InputId 範圍放寬到十字熱鍵是沒有用的</b>——那些 id 根本不會在
 /// 第一個函式的執行期間被查詢，範圍閘門永遠不成立，功能會靜默地什麼都不做。
 /// 手把支援必須是「多掛一個範圍閘門」，這就是本模組現在的做法。
-/// <para>
-/// 🔴 <b>刻意不採用 PandorasBox <c>TurboController</c> 的做法。</b>那支 hook 手把輪詢函式，
-/// 並在呼叫原函式前把 <c>GamepadInputData.Buttons</c> 裡對應的位元<b>減掉</b>。三個問題：
-/// ①它用 <c>-=</c> 而不是清位元，位元本來就沒設時會<b>借位破壞其他按鍵</b>；
-/// ②那支函式（台服 <c>0x1400BD0D0</c>，唯一命中）除了 <c>rcx</c> 之外還吃一個 <c>xmm1</c> 浮點參數，
-/// 而上游的委派宣告成 <c>int(IntPtr)</c>——<b>呼叫原函式時 xmm1 是託管碼留下的垃圾</b>；
-/// ③它改寫的是輸入資料本身，作用範圍是<b>整個遊戲的所有手把按鍵</b>，不只是快捷欄。
-/// 本模組的做法只在十字熱鍵處理函式的執行期間改寫一支查詢函式的回答，不寫入任何遊戲記憶體。
-/// </para>
 /// </remarks>
 public sealed unsafe class AutoConstantlyClick : TcModule
 {
@@ -59,13 +42,8 @@ public sealed unsafe class AutoConstantlyClick : TcModule
     /// 遊戲的<b>十字熱鍵</b>（手把）輸入處理函式。
     /// </summary>
     /// <remarks>
-    /// 台服 7.20 離線驗證：<c>.text</c> 唯一命中 <c>0x1407484F0</c>，該位址是 <c>.pdata</c> 認可的
-    /// 函式進入點（非鏈結延續區塊），並有 2 個 <c>call</c> 交叉引用
-    /// （<c>0x140745FB5</c>／<c>0x140745FCD</c>）——不是被內聯掉的死碼。
-    /// <para>
     /// ⚠️ 這條特徵碼刻意從函式序言取而不是從呼叫點取：它的兩個呼叫點在同一個函式裡且形狀相近，
     /// 用呼叫點取樣式就得賭哪一個先被掃到。
-    /// </para>
     /// </remarks>
     private const string CheckPadHotbarClickedSignature =
         "89 54 24 10 48 89 4C 24 08 56 41 55 48 81 EC ?? ?? ?? ?? 48 8B F1 44 8B EA 48 8B 49 ?? " +
@@ -80,7 +58,6 @@ public sealed unsafe class AutoConstantlyClick : TcModule
     /// 所以宣告成 <c>byte</c> 會把第 8–15 位元<b>靜默截掉</b>，而我們是把這個值原封不動轉交給原函式的——
     /// 截掉等於幫遊戲把它自己的參數改小。用 <c>uint</c> 收下：值域上限是 <c>0xFFFF</c>，
     /// 32 位元一定裝得下，來回不會有任何轉換。
-    /// <para>📌 2026-08-19 離線反組譯發現並修正；在此之前這個委派宣告的是 <c>byte</c>。</para>
     /// </remarks>
     private delegate void CheckHotbarClickedDelegate(nint a1, uint a2);
 

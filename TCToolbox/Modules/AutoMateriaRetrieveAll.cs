@@ -18,43 +18,10 @@ namespace TCToolbox.Modules;
 /// 沒有掃背包、沒有批次入口、沒有指令 —— 第一顆一定是使用者自己在遊戲裡點的。
 /// 取出魔晶石是會送到伺服器而且不可逆的操作，所以入口收得越窄越好。
 /// </para>
-/// <para>
-/// 對照 DailyRoutines <c>AutoMateriaRetrive</c>（自動回收魔晶石）：那邊除了 hook 之外還有一個
-/// 「選道具名稱 → 開始」的批次面板，會掃過背包＋兵裝庫找同名裝備自己動手。
-/// 這裡<b>刻意沒有移植那一半</b> —— 它讓「按錯一次」的代價變成整套裝備的魔晶石。
-/// </para>
 /// </summary>
 /// <remarks>
-/// <para>
-/// <b>為什麼是 hook：</b>遊戲沒有「一次取完」的原生按鈕可以按，而「使用者剛剛取出了哪一格」
-/// 沒有任何具名欄位讀得到。這條 hook 的範圍是<b>單一函式</b>
-/// （<c>EventFramework::MaterializeItem</c>），不是 DR 那種掛在所有 agent 共用的
-/// <c>ReceiveEvent</c> 上再用寬鬆條件猜的做法。
-/// </para>
-/// <para>
-/// 🔑 <b>事件 ID 不寫死。</b>DR 送的是字面常數 <c>3735553</c>；這裡用 ClientStructs 的具名列舉
-/// 組出來（<see cref="EventHandlerContent.Materialize"/> ＋ <see cref="MaterializeEntryId.Retrieve"/>），
-/// 改版時是編譯期就看得到的東西，不是一個沒人看得懂的數字。
-/// </para>
-/// <para>
 /// ⚠️ <b>ClientStructs 的散文註解在這裡是錯的，不要照著讀。</b><c>EventHandler.cs</c> 那行寫
 /// 「Materia Extraction (0x390001)」，但 <c>MaterializeEntryId.Retrieve = 0x0001</c> 才是對的。
-/// 台服 7.20 主程式離線反組譯的證據（三條互相獨立）：
-/// <list type="number">
-/// <item>送 <c>0x390000</c> 的兩個呼叫點都落在 <c>SalvageDialog</c>／<c>SalvageResult</c>
-/// 那塊（分解），送 <c>0x390002</c> 的六個都落在 <c>Purify*</c> 那塊（精選）
-/// —— 也就是 Desynth=0、Purify=2 兩端都對得上具名列舉。</item>
-/// <item>唯一送 <c>0x390001</c> 的呼叫點（RVA <c>0xEAFE1D</c>）所在的那個函式，
-/// <b>另一條分支</b>呼叫的是 <c>0x14084BEC0</c> —— 那正是本外掛
-/// <see cref="AutoMaterialize"/> 已經在用的「精製魔晶石」函式。
-/// 精製自己有專用函式，所以 <c>0x390001</c> 不可能又是精製。</item>
-/// <item>DailyRoutines 自己的 <c>AutoMaterialize</c>（精製）hook 的是同一個函式裡
-/// <b>那條分支</b>的 call，跟本模組走的完全不是同一條。</item>
-/// </list>
-/// 反過來說，若這個判斷錯了，最壞情況是把「取出魔晶石」送成「分解裝備」。
-/// 上面第 1 點已經把分解釘死在 <c>0x390000</c>，所以這條路徑不成立；
-/// 但這也是為什麼這個模組寧可只做「接續」而不做批次。
-/// </para>
 /// </remarks>
 public sealed unsafe class AutoMateriaRetrieveAll : TcModule
 {
@@ -81,12 +48,10 @@ public sealed unsafe class AutoMateriaRetrieveAll : TcModule
     /// <summary>
     /// 遊戲的「精製系」事件入口。四種操作共用這一個函式，靠事件 ID 區分：
     /// 分解 / 取出魔晶石 / 精選。
-    /// <para>
     /// ⚠️ 回傳型別跟著 ClientStructs 宣告成 <c>void</c>。DR 宣告成 <c>bool</c> 並且拿它當判斷，
     /// 但實際呼叫端（RVA <c>0xEAFE1D</c> 之後那幾行）根本沒有讀 <c>eax</c> ——
     /// 宣告成 <c>bool</c> 讀到的是上一個函式留在暫存器裡的殘值。
     /// 這裡不需要回傳值：每一輪都用「魔晶石數量有沒有真的變少」當進度判準，比回傳碼可靠。
-    /// </para>
     /// </summary>
     private delegate void MaterializeItemDelegate(
         EventFramework* framework, EventId eventId, InventoryType container, short slot, int extraParam);

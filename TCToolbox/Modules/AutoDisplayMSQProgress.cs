@@ -22,10 +22,6 @@ namespace TCToolbox.Modules;
 /// 🔴 <b>台服未離線證明的假設</b>：注入的欄位索引（<c>AtkValues[7]</c>）、按鈕節點 id（13）、
 /// 其內文字節點 id（6）沿用 DR 對國服客端的觀測值。台服若不同，最壞情況只是「標題顯示錯位或沒變化」，
 /// 不會崩潰——全部經界限與 null 檢查，且只有真的算出進度時才寫。下一次遊戲自己重繪就會蓋回正常內容。
-/// <para>
-/// 🔴 呼叫 <c>OnRefresh</c> 會再觸發一次 PostRefresh（Dalamud 掛在該 vfunc 上），
-/// 用 <see cref="inRefresh"/> 這道再入旗標擋掉，避免無窮遞迴。
-/// </para>
 /// </remarks>
 public sealed unsafe class AutoDisplayMSQProgress : TcModule
 {
@@ -75,10 +71,6 @@ public sealed unsafe class AutoDisplayMSQProgress : TcModule
     /// </summary>
     /// <remarks>
     /// 🔴 <b>節流只能包住「計算」，不能包住「注入」。</b>這裡的注入是覆蓋遊戲自己的標題文字，
-    /// 而<b>下一次遊戲自己重繪就會蓋回正常內容</b>（見類別註解）——也就是說「最後一次 PostRefresh」
-    /// 才是有效狀態。若把整個處理常式節流掉，1 秒內連續 refresh（開冒險筆記、任務進度變動時很常見）
-    /// 的第二次就會把我們的文字蓋掉，而那次事件被節流吃掉、又沒有輪詢或重試路徑
-    /// ⇒ 進度顯示消失／過期，直到下一次撐過節流的 refresh 為止。
     /// ⇒ 每次 PostRefresh 都無條件重新注入（注入本身很便宜），只有昂貴的
     /// <see cref="TryComputeProgress"/>（掃整張 Quest 表）走節流＋快取。
     /// </remarks>

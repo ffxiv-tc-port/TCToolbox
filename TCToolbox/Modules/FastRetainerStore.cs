@@ -15,19 +15,9 @@ namespace TCToolbox.Modules;
 /// 零封包偽造、零記憶體 patch。參考 DailyRoutines <c>FastRetainerStore</c> 重寫。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 🔴 <b>與 DR 原版最大的差異：不用 <c>MoveItemSlot</c>。</b>DR 是對雇員頁呼叫
-/// <c>MoveItemSlot(a6: true)</c>，但那條在台服<b>沒有實機證據</b>、而且對雇員的已知失敗形式是
-/// 「假成功、伺服器退回」（見 <see cref="RetainerItemTransfer"/> 的說明）。這裡改走
-/// AutoInventoryTransfer 實機驗證過的雇員道具命令。
-/// </para>
-/// <para>
 /// 🔴 <b>fail-closed</b>：特徵碼解析不到（<see cref="RetainerItemTransfer.IsAvailable"/> 為
 /// <c>false</c>）就<b>不加</b>選單項，也不會靜默無效地假裝搬了。
-/// </para>
-/// <para>
 /// 📌 觸發方式是右鍵選單項目，<b>開著不去點就完全不動</b>——因此標記為手動觸發。
-/// </para>
 /// </remarks>
 public sealed unsafe class FastRetainerStore : TcModule
 {

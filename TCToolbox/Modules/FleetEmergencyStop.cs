@@ -17,13 +17,8 @@ namespace TCToolbox.Modules;
 /// <remarks>
 /// 🔴 <b>只停不啟。</b>這個模組沒有、也不要有「一鍵恢復」——急停的價值就在於它永遠只往
 /// 安全的方向走。要恢復請各自到那些外掛裡開回來（那也順便強迫使用者確認自己真的想繼續）。
-/// <para>
-/// 📌 對象清單與端點出處全部寫在 <see cref="FleetStop"/>。這個檔只管觸發、顯示與存檔。
-/// </para>
-/// <para>
 /// ⚠️ 這是<b>手動觸發</b>模組（<see cref="IsManualTrigger"/> 恆為 true）：開著但不去按它，
 /// 遊戲行為完全不變。它唯一掛的東西是熱鍵輪詢，而熱鍵預設未綁定。
-/// </para>
 /// </remarks>
 public sealed class FleetEmergencyStop : TcModule
 {
@@ -195,21 +190,11 @@ public sealed class FleetEmergencyStop : TcModule
     /// 把<b>本外掛自己</b>會自己動的流程叫停，並讓共用閘門進入急停冷卻。
     /// </summary>
     /// <remarks>
-    /// <para>
     /// 🔴 <b>「別的外掛都停了」不等於「全部停了」。</b>急停對象清單列的都是別人，
     /// 而本外掛自己也有會發起移動與互動的無人值守流程。漏掉自己的失敗形式最難歸因：
     /// 使用者看到角色停了一下又動起來，而急停結果視窗上每一項都是綠的。
-    /// </para>
-    /// <para>
-    /// 🔴 <b>光是中止佇列不夠，還要壓住「下一個週期」。</b>園圃的無人值守重跑是按時間排程的，
-    /// 佇列清掉之後它下一次到期就會自己再開一輪。所以這裡另外通知
-    /// <see cref="AutomationGate"/> 進入冷卻——<c>NavStop</c> 那三秒補送窗口只涵蓋
-    /// 「確保 vnavmesh 真的停下來」，涵蓋不到排程。
-    /// </para>
-    /// <para>
     /// 📌 <b>三態一律回 <see cref="FleetStopOutcome.Ok"/>。</b>「沒有東西正在跑」在這裡不是
     /// 「未安裝」——模組就在這裡，冷卻也真的設下去了，畫成灰色會讓使用者以為自己這一項沒生效。
-    /// </para>
     /// </remarks>
     private static FleetStopResult StopOwnAutomation()
     {
@@ -245,23 +230,11 @@ public sealed class FleetEmergencyStop : TcModule
     /// <summary>整輪急停跑完之後，請塔塔露出一聲。</summary>
     /// <param name="failed">這一輪有幾個對象是 <see cref="FleetStopOutcome.Failed"/>。</param>
     /// <remarks>
-    /// <para>
     /// 🔴🔴 <b>判準只看 <see cref="FleetStopOutcome.Failed"/>，<c>NotInstalled</c> 不算失敗。</b>
     /// 「未安裝」是清單上最常見的狀態（沒有人裝滿十二個外掛），把它算進去的話
     /// <b>每一次</b>急停都會聽到「有幾個停不下來」——那句話會立刻失去意義，
     /// 而真正有東西沒停下來的那一次也就沒有人會當一回事了。
-    /// </para>
-    /// <para>
     /// 📌 <b>整輪跑完才叫一次</b>，不是逐項叫。急停清單有十幾項，逐項出聲等於連續轟炸。
-    /// </para>
-    /// <para>
-    /// 📌 TataruPraise 沒安裝、總開關關著、或這個情境被使用者關掉時，這一整段是安靜的
-    /// no-op（閘門在 <see cref="TataruPraiseIpc.TryPraise"/> 裡）——急停本身的行為完全不受影響。
-    /// </para>
-    /// <para>
-    /// ⚠️ 在主執行緒上呼叫：<c>Execute</c> 的兩個入口（熱鍵的 <c>Framework.Update</c>、
-    /// 指令處理常式）都在主執行緒，而 IPC 的實作是跑在<b>呼叫端的執行緒</b>上的。
-    /// </para>
     /// </remarks>
     private static void AnnounceToTataru(int failed)
     {
@@ -352,19 +325,10 @@ public sealed class FleetEmergencyStop : TcModule
 
     /// <summary>急停之後無人值守流程要靜多久。</summary>
     /// <remarks>
-    /// <para>
-    /// 🔑 <b>這個數字原本是寫死在程式裡的政策值</b>，改成可調並不改變預設行為（仍然是 60 秒）。
-    /// 會想改它的情境是真實的：常跑無人值守的人希望急停之後有更長的接手時間，
-    /// 而只把急停當「立刻剎車」用的人會希望按完就能馬上重開。
-    /// </para>
-    /// <para>
     /// 🔴 <b>0 是合法值，而且要讓使用者看得出它代表什麼。</b>滑桿拉到 0 時，下方會多出
     /// 一行說明——只留一個孤零零的 0，讀起來像是設定壞掉。
-    /// </para>
-    /// <para>
     /// ⚠️ 這只影響<b>本外掛自己</b>的無人值守迴圈（目前是園圃自動整理）。
     /// 別的外掛被急停之後會不會自己重開，是它們自己的事，這個滑桿管不到。
-    /// </para>
     /// </remarks>
     private static void DrawCooldownSetting()
     {

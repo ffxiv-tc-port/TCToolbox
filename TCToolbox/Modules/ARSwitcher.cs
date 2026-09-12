@@ -17,28 +17,10 @@ namespace TCToolbox.Modules;
 /// AutoRetainer 角色切換：伺服器資訊列顯示目前是第幾個角色，並提供切換指令。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 🔴🔴 <b>絕不呼叫空參數的 <c>/li</c>。</b>上游 CBT 的 <c>ARSwitcher</c> 在「目前不在原伺服器」時
 /// 會直接 <c>ProcessCommand("/li")</c>——那是 Lifestream 的跨世界傳送，空參數等於把角色
 /// 送到別的伺服器去。這裡完全不做「回原伺服器」這件事：不在原伺服器時就<b>只是不給切</b>，
 /// 並把原因說出來。
-/// </para>
-/// <para>
-/// 🔴 <b>零自動化。</b>不註冊 AutoRetainer 的任何 post-process 事件——那會把本外掛接進
-/// 「雇員作業做完 → 自動換下一個角色」的自動接手鏈，是艦隊紅線。
-/// 每一次切換都必須來自使用者的指令或點擊。
-/// </para>
-/// <para>
-/// ⚠️ <b>切換角色＝登出再登入。</b>所以預設<b>不</b>讓資訊列的點擊直接切換
-/// （<see cref="ARSwitcherConfig.SwitchOnDtrClick"/> 預設 <c>false</c>）：
-/// 那顆圖示就在時鐘旁邊，手滑點到的代價是整個角色被登出。
-/// 想要上游那種一點就換的行為可以自己打開。
-/// </para>
-/// <para>
-/// 📌 角色名稱透過反射從 AutoRetainer 的資料裡讀（本外掛零相依，不編進對方的型別）。
-/// 讀不到時前／後切換會停用並在提示裡說明，但<b>指定名稱</b>的切換照樣可用——
-/// 見 <see cref="AutoRetainerIpc"/>。
-/// </para>
 /// </remarks>
 public sealed class ARSwitcher : TcModule
 {

@@ -17,49 +17,11 @@ namespace TCToolbox.Modules;
 /// 收藏櫃視窗上多一顆按鈕：把背包／兵裝庫裡「可以收進收藏櫃、而且收進去不會弄壞東西」的裝備一次存入。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 🔑 <b>命令碼 425 是離線對台服 7.20 主程式驗過的，不是照抄 DailyRoutines 的常數</b>
-/// （2026-08-25 鑑識，五條互相獨立的證據）：
-/// <list type="bullet">
-/// <item><c>ExecuteCommand</c> ＝ <c>0x140A6E730</c>，內部<b>沒有 switch</b>——它只是把 5 個整數
-/// 編組成封包送出，所有本機語意都在各自的包裝函式裡。</item>
-/// <item>425 在整個 <c>.text</c> <b>只有 1 個呼叫點</b>（<c>0x140A1DABC</c>），
-/// 在包裝函式 <c>Cabinet::StoreItem</c> 裡；424（請求載入）與 426（取出）是記憶體上的連號三胞胎，
-/// 426 與 425 逐位元組相同、唯一差別是 <c>btr</c>（清位元）取代 <c>bts</c>（設位元）。</item>
-/// <item>包裝函式的上界是 <c>cmp edx, 0x417</c>（1047），而台服 <c>Cabinet.csv</c> 剛好
-/// <b>1048 列、row id 0..1047</b>（其中 958 列有真實 <c>Item</c>）——逐一吻合，
-/// 證明 <c>param1</c> 是 <b><c>Cabinet</c> 表的列號，不是道具 ID</b>。</item>
-/// <item>它動到的位元陣列就是 CS <c>Cabinet._unlockedItems</c>；同一個位元被 CS 已文件化的
-/// <c>IsItemInCabinet</c> 讀取 ⇒ <c>bts</c>＝「收藏櫃裡有了」＝<b>存入</b>。</item>
-/// <item>唯一呼叫它的是 <c>AgentCabinet</c> 的 <c>ReceiveEvent</c>，
-/// 同一個 agent 跳的確認框取 <c>Addon</c> 列 4650：「確定要將「」放入收藏櫃嗎？」。</item>
-/// </list>
-/// </para>
-/// <para>
 /// 🔴🔴 <b>可是「命令碼語意成立」不等於「可以無腦一鍵全存」。</b>
 /// 台服自己的確認文字寫死了三件事，而<b>客戶端在送 425 之前完全沒有做這些檢查</b>
 /// （包裝函式只有上界檢查）——也就是說那些是伺服器端規則，我們踩下去的後果是<b>使用者資料損失</b>：
-/// <list type="bullet">
-/// <item>「染色、徽章以及武具投影等外觀效果均會消除」——<b>不可逆</b>。</item>
-/// <item>「精煉度會變回 0%」——<b>不可逆</b>。</item>
-/// <item>「※耐久度不足 100% 的道具無法放入」——伺服器<b>靜默拒絕</b>，使用者會以為存進去了。</item>
-/// </list>
 /// ⇒ 本模組<b>一律把這幾類排除在外</b>，並在畫面上寫清楚排除了幾件、為什麼。
 /// 想連染過色的一起存的人請自己到收藏櫃視窗手動存——那時遊戲會親口告訴他外觀會消失。
-/// </para>
-/// <para>
-/// 🔴 <b>每一件都等伺服器確認才送下一件。</b>送出 425 之後盯著
-/// <c>Cabinet::IsItemInCabinet</c> 翻成 <see langword="true"/> 才算成功
-/// （那個位元是伺服器回推的，客戶端自己送 425 時<b>不會</b>先樂觀設起來）。
-/// 這道閘門存在的理由是：封包裡只帶命令碼與列號，<b>不帶任何「我正站在收藏櫃前」的證明</b>，
-/// 那個狀態在伺服器端，而台服的拒絕是<b>完全靜默</b>的。
-/// 沒有這道閘門的話，「伺服器不受理」會表現成「按了沒反應，還印了已存入」，
-/// 而且會一口氣送出好幾百個不被受理的封包。
-/// </para>
-/// <para>
-/// 📌 判斷依據是 Lumina <c>Cabinet</c> 表，<b>不寫死道具清單</b>（同
-/// <see cref="GlamourArmoireCleanup"/>）。改版新增可收納道具時自動跟上。
-/// </para>
 /// </remarks>
 public sealed unsafe class CabinetStoreAll : TcModule
 {
@@ -89,15 +51,8 @@ public sealed unsafe class CabinetStoreAll : TcModule
     /// <c>ExecuteCommand</c> 的<b>呼叫點</b>特徵碼。
     /// </summary>
     /// <remarks>
-    /// 🔴 <b>刻意用呼叫點而不是函式序言。</b>台服 7.20 的 <c>ExecuteCommand</c> 家族有
-    /// <b>9 個近乎逐位元組相同的函式</b>（<c>0x140A6E730</c> 起連續九支），
-    /// 用序言寫特徵碼必得 9 個命中；<c>ScanText</c> 取第一個雖然剛好是對的那一支，
-    /// <b>但那是運氣不是保證</b>——歧義比斷裂更糟，因為它會靜默呼叫錯的函式。
-    /// 這一條（取自 OmenTools）在台服<b>唯一命中</b>，跟隨 <c>E8</c> 位移後落在 <c>0x140A6E730</c>。
-    /// <para>
     /// ⚠️ <c>ScanAllText</c> <b>不會</b>跟隨 <c>E8</c>，<c>ScanText</c> 會——
     /// 所以「數命中數」與「取位址」必須分兩支呼叫，不能只用其中一支。
-    /// </para>
     /// </remarks>
     private const string ExecuteCommandSig =
         "E8 ?? ?? ?? ?? 48 8B 06 48 8B CE FF 50 ?? E9 ?? ?? ?? ?? 49 8B CC";
@@ -273,8 +228,6 @@ public sealed unsafe class CabinetStoreAll : TcModule
     /// Draw 只讀本模組自己算好的欄位。理由是 <c>UiBuilder.Draw</c> 一旦逸出例外，
     /// Dalamud 會把整個 Draw 委派設成 null，介面到重開遊戲前都不會回來；
     /// 而 <c>Framework.Update</c> 的例外只會被記錄下來。
-    /// 掃描與「按下按鈕之後要做的事」都相依於 <c>UIState</c>／<c>InventoryManager</c>
-    /// 這類靠特徵碼解出來的東西，所以一律搬到這一側。
     /// </remarks>
     private void OnUpdate(IFramework framework)
     {
@@ -315,10 +268,8 @@ public sealed unsafe class CabinetStoreAll : TcModule
     /// 🔴 <b>兩個條件都要。</b><c>Cabinet.State</c> 只在玩家真的去旅館房間開收藏櫃時才會變成
     /// <c>Loaded</c>（CS 的散文註解直說了這件事）；而視窗開著是「伺服器願意受理我們的請求」
     /// 目前唯一拿得到的在場證據——封包本身不帶任何場所資訊。
-    /// <para>
     /// ⚠️ 這仍然只是<b>間接</b>證據。真正的判準在伺服器端，離線證不出來。
     /// 所以下游還有一道「等伺服器把旗標翻過來」的驗證（見 <see cref="StartStoring"/>）。
-    /// </para>
     /// </remarks>
     private static bool IsCabinetUsable(out string reason)
     {
@@ -345,20 +296,8 @@ public sealed unsafe class CabinetStoreAll : TcModule
     /// 這一列在收藏櫃裡了沒有。<b>自己讀位元，不呼叫 <c>Cabinet::IsItemInCabinet</c>。</b>
     /// </summary>
     /// <remarks>
-    /// 🔴 存在的理由是<b>不要相依於一條可能失配的特徵碼</b>。
-    /// CS 的 <c>IsItemInCabinet</c> 是 <c>[MemberFunction]</c>，特徵碼失配時是在呼叫的當下
-    /// 擲受管理例外——而這條路徑會被 UI 相關的程式碼走到，例外一旦逸出到 Dalamud 的 Draw，
-    /// 整個介面到重開遊戲前都不會回來。
-    /// <para>
-    /// 位元佈局是離線對台服 7.20 主程式驗過的（2026-08-25）：包裝函式做的正是
-    /// <c>byte[this + 4 + idx/8]</c> 的 <c>bts</c>／<c>btr</c>，而 CS 宣告
-    /// <c>State</c> @0x00、<c>FixedSizeArray132&lt;byte&gt; _unlockedItems</c> @0x04——
-    /// 132 bytes ＝ 1056 bits ⊇ 1048 列，兩邊逐一對得上。
-    /// </para>
-    /// <para>
     /// ⚠️ 上界照 <c>UnlockedItems</c> 自己的長度收斂，不照 <c>Cabinet</c> 表的列數——
     /// 表比陣列長的話（改版新增道具而結構還沒跟上）越界讀的是別人的記憶體。
-    /// </para>
     /// </remarks>
     private static bool IsStored(Cabinet* cabinet, uint cabinetRow)
     {

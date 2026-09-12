@@ -13,25 +13,12 @@ namespace TCToolbox.Modules;
 /// 旗標指令：<c>/tpflag</c> 傳送到離地圖旗標最近的乙太之光、<c>/gotoflag</c> 走到旗標位置。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 🔴🔴 <b>絕不呼叫空參數的 <c>/li</c>。</b>那是 Lifestream 的跨世界傳送指令，
 /// 空參數等於把角色送到別的伺服器去。傳送一律走
 /// <see cref="ExternalNav.TryTeleport"/>（Lifestream 的 <c>Teleport</c> IPC，指定乙太之光編號），
 /// 移動一律走 <see cref="ExternalNav.TryMoveTo"/>（vnavmesh 的 <c>PathfindAndMoveTo</c>）。
-/// </para>
-/// <para>
-/// 📌 <b>旗標座標的真相</b>：<c>FlagMapMarker.XFloat</c>／<c>YFloat</c> 存的是<b>世界座標的 X 與 Z</b>，
-/// 不是地圖介面上顯示的那組座標。依據有兩個：CS 的
-/// <c>AgentMap.SetFlagMapMarker(territoryId, mapId, Vector3 worldPosition)</c> 直接把
-/// <c>worldPosition.X</c>／<c>.Z</c> 傳進去；以及艦隊裡已出貨的 vnavmesh 自己
-/// （<c>vnavmesh/MapUtils.cs</c>）就是這樣讀的。
-/// <b>高度沒有存</b>，所以要走過去必須先問 vnavmesh 地板在哪
-/// （從 Y=1024 往下打，做法同樣照抄 vnavmesh 自己）。
-/// </para>
-/// <para>
 /// ⚠️ 兩個指令都是<b>一次性</b>的：下完就結束，不會排隊、不會等抵達、不會接後續動作。
 /// 移動中隨時可以用 <c>/tcstop</c> 停下來。
-/// </para>
 /// </remarks>
 public sealed unsafe class FlagCommands : TcModule
 {
@@ -214,16 +201,10 @@ public sealed unsafe class FlagCommands : TcModule
     /// 找旗標所在區域裡、離旗標最近的<b>已解鎖</b>乙太之光。
     /// </summary>
     /// <remarks>
-    /// 📌 從 <see cref="Svc.AetheryteList"/> 出發而不是掃 <c>Aetheryte</c> 全表，
-    /// 因為那份清單就是「這個角色真的能傳送到的地方」——對沒解鎖的水晶下傳送指令一定失敗。
-    /// <para>
     /// 🔴 <b>解析不出座標的水晶要跳過，不能當成原點。</b>常見的寫法是查不到就回
     /// <c>Vector3.Zero</c> 再一起比距離——那會讓一個「查不到」的水晶在旗標靠近地圖原點時
     /// 贏過真正最近的那個，而且完全沒有徵兆。
-    /// </para>
-    /// <para>
     /// ⚠️ 距離只比水平面（X／Z）。旗標本來就沒有高度，硬湊一個 Y 只會讓比較結果更不準。
-    /// </para>
     /// </remarks>
     private bool TryFindNearestAetheryte(
         in FlagInfo flag, out uint aetheryteId, out byte subIndex, out string name, out float distance)
@@ -266,14 +247,6 @@ public sealed unsafe class FlagCommands : TcModule
     /// </summary>
     /// <remarks>
     /// 兩條路，依序試：
-    /// <list type="number">
-    /// <item><c>Aetheryte.Level[0]</c> 直接就是世界座標。台服 7.20 離線比對：108 個可傳送水晶
-    /// <b>全部</b>有非零的 <c>Level[0]</c>。⚠️ 但 <c>exd-tc</c> 的 <c>Level</c> 匯出檔是殘缺的
-    /// （這 108 個列號一個都不在裡面），所以「這條路真的解得開」<b>只能在實機驗證</b>。</item>
-    /// <item><c>MapMarker</c>（<c>DataType==3</c>）的地圖像素座標換算回世界座標。
-    /// 台服 7.20 離線比對：108 個裡有 107 個有標記，唯一沒有的是 row 1
-    /// （<c>PlaceName</c> 為空、<c>Territory</c>＝1 的佔位列，不是真的目的地）。</item>
-    /// </list>
     /// 兩條都不通就回 <c>null</c>，呼叫端會<b>跳過</b>這個水晶——絕不退化成 <c>Vector3.Zero</c>。
     /// </remarks>
     private Vector3? GetAetherytePosition(uint aetheryteId)

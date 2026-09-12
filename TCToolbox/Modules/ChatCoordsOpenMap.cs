@@ -16,26 +16,9 @@ namespace TCToolbox.Modules;
 /// 聊天座標自動開地圖：聊天訊息裡出現地圖座標連結時，自動把地圖開到那個座標並插上旗標。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 📌 <b>只做「開地圖」這一件事。</b>移植自 PandorasBox <c>AutoOpenCoords</c>，但刻意<b>不</b>移植：
-/// <list type="bullet">
-/// <item>同一份上游功能組裡的 <c>AutoTPCoords</c>（自動傳送到座標）—— 已裁決不做。</item>
-/// <item>上游的 Sonar 過濾（比對發話者是不是字串 <c>"sonar"</c>）—— 那是英文外掛的訊息來源，台服沒有意義。</item>
-/// <item>上游的「忽略 &lt;pos&gt; 旗標」（判斷訊息裡有沒有 <c>"Z:"</c>）—— 靠英文訊息格式，台服會靜默失效。</item>
-/// </list>
-/// </para>
-/// <para>
-/// 🔑 開地圖走 Dalamud 的 <c>IGameGui.OpenMapWithMapLink</c>（內部是
-/// <c>RaptureAtkModule::OpenMapWithMapLink</c>，與點擊聊天視窗裡的座標連結同一條路徑），
-/// <b>不碰任何原生指標、不寫記憶體</b>。它本身就會插旗標，所以不需要另外呼叫 <c>SetFlagMapMarker</c>。
-/// </para>
-/// <para>
 /// 📌 頻道名稱<b>從遊戲的 <c>LogFilter</c> 表現讀</b>，不寫死中文。
 /// ⚠️ <c>LogFilter.LogKind</c> 對頻道是 <b>N:1</b>（同一個 LogKind 可能有多列），
 /// 所以<b>只在唯一命中時</b>才用遊戲的名字，其餘用內建字串——這是為了避免拿到別的列的名字。
-/// （2026-08-19 離線核對台服 7.20 <c>LogFilter.csv</c>：本模組列出的頻道裡，
-/// 只有「悄悄話（收到）」的 LogKind 13 在表裡沒有對應列，其餘全部唯一。）
-/// </para>
 /// </remarks>
 public sealed class ChatCoordsOpenMap : TcModule
 {

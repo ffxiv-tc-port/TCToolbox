@@ -9,30 +9,11 @@ namespace TCToolbox.Modules;
 /// 招募清單排序：把「可加入」的招募（副本已解鎖、未被列入黑名單…）排到清單最上面，同權再交回遊戲原本的排序。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 機制＝hook 遊戲自己的招募排序比較函式，先比幾個「優先旗標」欄位，同權時<b>原封不動交回遊戲的原比較函式</b>。
-/// 參考 DailyRoutines <c>BetterPartyFinderSort</c>（作者 decorwdyun）重寫。
-/// </para>
-/// <para>
-/// <b>離線反組譯驗證紀錄（台服 7.20 主程式，imageBase 0x140000000）</b>
-/// </para>
-/// <list type="number">
-/// <item>比較函式特徵碼<b>唯一命中</b> <c>0x14053B8F0</c>，<c>.pdata</c> 確認為真函式起點；
-/// 被排序程式以 <c>lea</c> 取位址當比較器傳入（3 處），不是內聯死碼。</item>
-/// <item>結構總大小 <b>416（0x1A0）</b>已離線證明：三個呼叫端到處是 <c>imul rcx, r8, 0x1A0</c>／
-/// <c>add rsi, 0x1A0</c> 的元素步長，與 DR 的 <c>[StructLayout(Size=416)]</c> 精確相符。</item>
-/// <item>比較函式本體實際讀取的四個 byte 優先旗標欄位在 <c>0x198／0x199／0x19A／0x19B</c>
-/// （＝十進位 408／409／410／411），逐條反組譯（<c>movzx eax,[rdx+off]</c>／<c>cmp [rcx+off],al</c>）確認。</item>
-/// </list>
-/// <para>
 /// 🔴 <b>刻意只讀那四個「已離線證明」的 byte 欄位。</b>DR 的結構還宣告了 <c>DutyID@32</c> 與
 /// <c>TimeLeftSeconds@68</c>，並用後者做同權時的次要排序——但這兩個 offset<b>沒有</b>被這支比較函式碰到、
 /// 也就<b>沒有</b>在台服上得到離線佐證。與其賭一個對不上的 offset 去讀出亂掉的時間值來排序（靜默錯排），
 /// 這裡同權時直接呼叫 <c>Original</c>（遊戲的原比較函式）——那是最保守也最不會錯的次要排序。
-/// </para>
-/// <para>
 /// 🔴 找不到特徵碼時（版本不合）當成「這一版無法使用」印一行 <c>Information</c> 就退場，不硬掛 0 位址。
-/// </para>
 /// </remarks>
 public sealed unsafe class BetterPartyFinderSort : TcModule
 {

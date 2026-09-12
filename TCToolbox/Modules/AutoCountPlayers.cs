@@ -51,13 +51,6 @@ public sealed class AutoCountPlayers : TcModule
 
     /// <summary>
     /// 職業圖示 ID ＝ <c>62100 + ClassJob 列號</c>。
-    /// <para>
-    /// 依據：①艦隊裡四處已出貨的先例一致（ECommons <c>ExcelJobHelper.GetIcon</c>、
-    /// AutoRetainer <c>RetainerTable</c>、WrathCombo <c>Icons.GetJobIcon</c>、Splatoon）
-    /// ②2026-08-06 離線直讀台服 <c>060000.win32.index</c> 求證：
-    /// <c>ui/icon/062000/062100.tex</c>～<c>062146.tex</c> 全部存在，062099 與 062147 都不存在——
-    /// 區塊邊界剛好對齊台服 ClassJob 表的 46 列（0～45），所以本式對整張表都落在有效範圍內。
-    /// </para>
     /// <para>⚠️ ClassJob 表**沒有** Icon 欄，這個對應關係只能靠慣例，不是資料驅動的。</para>
     /// </summary>
     private const uint JobIconBase = 62100;
@@ -78,10 +71,6 @@ public sealed class AutoCountPlayers : TcModule
     /// 🔴 <b>兩個都要收</b>：離線比對台服 <c>exd-tc/7.20/OnlineStatus.csv</c>（全表 48 列，0–47），
     /// 列 2 與列 3 的 <c>Name</c> 都是「遊戲管理員」，差別只在圖示（61524／61532）與 <c>List</c> 旗標
     /// （列 2 為 True、列 3 為 False）。為什麼分成兩列沒有公開資料，所以不猜、兩個都認。
-    /// <para>
-    /// ⚠️ 這裡寫死列號是刻意的：UI 上會把列號旁邊的<b>遊戲自己的名稱</b>一起印出來，
-    /// 台服哪天重新編號的話使用者會直接看到名稱對不上，不是靜默失效。
-    /// </para>
     /// </remarks>
     private static readonly uint[] GameMasterStatusIds = [2u, 3u];
 
@@ -230,13 +219,11 @@ public sealed class AutoCountPlayers : TcModule
     /// 離場後再出現且超過冷卻→再次觸發。新增或修改規則對已在場的命中者立即生效。
     /// </summary>
     /// <remarks>
-    /// <para>
     /// 「已處理過」的記憶（<see cref="activeTriggered"/>）在兩種情況下解除：
     /// ①玩家離開視野 ②<b>玩家還在場，但這條規則已經不再命中他</b>。
     /// 第二種是多條件化才需要的——線上狀態與距離會在玩家不離場的情況下變動，
     /// 只看「有沒有離場」會讓狀態變回來時永遠不再響。
     /// 名稱條件不受影響（在場玩家的名稱不會變），所以既有的純名稱規則行為逐字相同。
-    /// </para>
     /// </remarks>
     private void EvaluateWatchRules()
     {

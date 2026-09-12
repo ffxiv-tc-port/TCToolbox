@@ -18,18 +18,6 @@ namespace TCToolbox.Modules;
 /// 沒有任何「到了之後接手」的行為。設計約束來自使用者對 DR <c>AutoFate</c> 的裁決原話
 /// ——「動作太明顯是自動化　需要人間管」。所以形狀是<b>顯示／追蹤 ＋ 手動觸發移動</b>，
 /// 與孤樹無援的裁決同形。要加功能前請先確認沒有跨過這條線。
-/// <para>
-/// 🔴 <b>資料一律走 Dalamud 受管理的 <see cref="IFateTable"/>，不碰原生 FateManager。</b>
-/// 而且 <c>IFate</c> 物件本身是<b>原生指標的包裝</b>（<c>Fate.Address</c> 在建構時就凍結、
-/// 之後永不重新解析），所以<b>一個 <c>IFate</c> 參照都不跨幀保存</b>：每次 Draw 重新枚舉一次，
-/// 當場抄成純受管理的 <see cref="FateSnapshot"/> 值型別再拿去畫。
-/// 需要記住「使用者選了哪一個」時記的是 <see cref="FateSnapshot.FateId"/>（ushort），不是物件。
-/// </para>
-/// <para>
-/// ⚠️ <c>IFateTable.IsValid()</c> 與 <c>Fate.IsValid()</c> <b>不是防護</b>：兩者的實作都只是
-/// 「玩家資料載入了沒」（Dalamud/Game/ClientState/Fates/FateTable.cs:62-69），
-/// 跟這一筆 F.A.T.E. 的記憶體還在不在完全無關。不要拿它當安全檢查。
-/// </para>
 /// </remarks>
 public sealed class FateTracker : TcModule
 {
@@ -64,8 +52,6 @@ public sealed class FateTracker : TcModule
     /// 🔴 為什麼需要這個：<c>vnavmesh.Path.Stop</c> <b>攔不住還在背景計算的路徑</b>——
     /// 算完之後 vnavmesh 會自己把路徑交給 FollowPath 開走，於是「按了停止、隔幾秒角色
     /// 自己走起來」。詳見 <see cref="ExternalNav.IsVnavmeshPathfindInProgress"/> 的說明。
-    /// 這個補送窗口就是拿來蓋住那段空窗的；一旦確認既沒在算也沒在走就提早結束，
-    /// 不會真的跑滿。
     /// </remarks>
     private static readonly TimeSpan StopEnforceWindow = TimeSpan.FromSeconds(15);
 

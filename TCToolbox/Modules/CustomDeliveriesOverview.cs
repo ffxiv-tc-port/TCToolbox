@@ -17,14 +17,6 @@ namespace TCToolbox.Modules;
 /// 老主顧交易總覽：唯讀顯示各老主顧的滿意度等級、當前等級進度與本週交易次數，
 /// 並支援右鍵「導航過去」——傳送到該區乙太之光（Lifestream IPC）後接 vnavmesh IPC
 /// 直接走到 NPC 座標；兩者缺一律優雅退化（見 <see cref="DrawNavigationContextMenu"/>）。
-/// 機制：靜態資料讀 Lumina SatisfactionNpc／ENpcResident／Quest／Level／Aetheryte 表
-/// （台服自帶繁中），動態狀態讀 ClientStructs SatisfactionSupplyManager 的唯讀欄位——
-/// 主體零 hook、零寫入、零封包，連原生查詢函式都不呼叫（總用量自己加總、解鎖判定用
-/// 等級欄位，不呼叫 GetUsedAllowances／IsQuestComplete）。唯一的外部作用只在使用者
-/// 右鍵點選導航選單那一刻發生（IPC 呼叫／原生 SetFlagMapMarker），且一律走 IPC、
-/// 絕不透過聊天指令（`/li` 空參數＝跨世界傳送，是明確紅線）。
-/// 另外會（可關）把老主顧的位置推給 Mappy 畫在地圖上——那條路是純粹的唯讀 IPC 呼叫，
-/// 詳見 <see cref="SyncMappy"/>。
 /// ⚠️ DR 的 FastCustomDeliveriesInfo 描述寫「顯示本週報酬增加的老主顧」但根本沒實作，
 /// 本模組不承接那個承諾——範圍就是誠實的狀態總覽（外加手動觸發的導航捷徑）。
 /// </summary>
@@ -64,16 +56,7 @@ public sealed class CustomDeliveriesOverview : TcModule
     /// 老主顧在 Mappy 上的圖示。
     /// </summary>
     /// <remarks>
-    /// 📌 <b>這個編號不是猜的，是查遊戲資料表查出來的</b>：<c>MapSymbol</c> 第 69 列的
-    /// <c>Icon</c> 欄＝60927，該列的 <c>PlaceName</c>（1298）在台服繁中逐字是<b>「老主顧交易」</b>。
-    /// 也就是說這是遊戲自己拿來標示老主顧交易地點的那顆圖示。
-    /// <para>
-    /// ✅ 2026-08-26 以 <c>tools/sqpack/path_exists.py</c> 離線直讀台服 <c>060000.win32.index</c>
-    /// 確認 <c>ui/icon/060000/060927.tex</c> 存在（校準閘門通過，另附必不存在的負對照）。
-    /// </para>
-    /// <para>
     /// ⚠️ 仍然做成可設定的：圖示的「存在」與「長什麼樣子」是兩件事，後者離線證不了。
-    /// </para>
     /// </remarks>
     public const uint DefaultMappyIconId = 60927;
 
@@ -246,19 +229,9 @@ public sealed class CustomDeliveriesOverview : TcModule
     /// 把已解鎖的老主顧同步成 Mappy 地圖上的標記。
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// 🔑 <b>加值在提示文字而不是位置本身。</b>遊戲自己在地圖上就會標老主顧的所在地，
-    /// 這裡多給的是「滿意度幾等、本週交過幾次、共用額度還剩幾次」——那三個數字要開視窗才看得到。
-    /// 預設<b>只畫本週還交得了的</b>（見 <see cref="CustomDeliveriesOverviewConfig.OnlyWithRemainingDeliveries"/>），
-    /// 已經交滿的畫出來只會讓人白跑一趟。
-    /// </para>
-    /// <para>
     /// 🔴 <b>未解鎖的一律不畫</b>，兩種設定下都一樣：那不是「今天還沒去」，是根本還去不了。
-    /// </para>
-    /// <para>
     /// 🔴 <b>不解參考可疑指標。</b>索引超出遊戲端陣列（未來改版陣列縮短）時整筆跳過，
     /// 與 <see cref="DrawContent"/> 的處理一致。
-    /// </para>
     /// </remarks>
     private unsafe void SyncMappy()
     {
@@ -876,17 +849,8 @@ public sealed class CustomDeliveriesOverview : TcModule
 
     /// <summary>下達 vnavmesh 導航指令；沒開始移動就退化成標旗＋開地圖。</summary>
     /// <remarks>
-    /// 📌 <b>2026-09-08 起這條退路才真的會生效。</b>原本的文件寫「未安裝／網格未就緒」，
-    /// 後半是做不到的：網格未載入時 vnavmesh 擲的是普通例外，逃過
-    /// <see cref="ExternalNav.TryMoveTo"/> 之後被 <see cref="TaskQueue"/> 接住並中止整條佇列
-    /// ——使用者看到的是「傳送過去了、然後什麼都沒發生」。現在那種失敗會回
-    /// <see langword="false"/>，走到下面的標旗路徑。
-    /// <para>
     /// ⚠️ <c>started</c> 恆為 true，所以「路徑算不出來」仍然不會走到這條退路。
-    /// </para>
-    /// <para>
     /// 📌 這一步是佇列的<b>最後一步</b>（兩條分支皆然），後面沒有任何步驟預設「已經走到了」。
-    /// </para>
     /// </remarks>
     private static void IssueWalkOrFallback(NpcStaticInfo npc, NpcLocation loc)
     {

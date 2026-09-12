@@ -14,32 +14,10 @@ namespace TCToolbox.Modules;
 /// 成就進度追蹤：把想盯的成就加進清單，按「重新整理」向伺服器問一次目前進度並記下來。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 🔴 <b>一次只問一筆，而且只有按按鈕才問。</b>伺服器對這種查詢的速率限制未知，
 /// 所以刻意<b>不做</b>「開著就自己輪詢」——上游 Automaton 的 <c>AchievementTracker</c> 有一個
 /// 「更新頻率（秒）」設定會定時把整份清單重問一遍，本模組沒有那個東西。
-/// </para>
-/// <para>
-/// 📌 <b>不掛 hook。</b>上游是去 hook <c>ReceiveAchievementProgress</c> 拿回應，
-/// 但遊戲把結果就寫在 <c>Achievement</c> 這個單例的四個欄位上，輪詢那四個欄位就夠了。
-/// 台服 7.20 主程式離線反組譯實證（2026-08-19）：
-/// <list type="bullet">
-/// <item><c>RequestAchievementProgress</c>（0x140A1E030）第一件事就是
-/// <c>mov dword [this+0x218], 1</c>，也就是把 <c>ProgressRequestState</c> 設成
-/// <c>Requested</c>，然後送 <c>ExecuteCommand(1000, 成就編號)</c>。</item>
-/// <item><c>ReceiveAchievementProgress</c>（0x140A1E430）整支只有四行：
-/// <c>[this+0x218]=2</c>（<c>Loaded</c>）、<c>[this+0x21C]=成就編號</c>、
-/// <c>[this+0x220]=目前進度</c>、<c>[this+0x224]=目標值</c>。</item>
-/// </list>
-/// ⇒ 「送出後等到 <c>State==Loaded</c> 且 <c>ProgressAchievementId</c> 等於我問的那一筆」
-/// 是可靠的完成判定，<b>連續問同一筆也不會誤判</b>（送出那一刻 state 被打回 <c>Requested</c>）。
-/// </para>
-/// <para>
-/// ⚠️ 遊戲只有<b>一組</b>進度欄位，所以「一次一筆」不只是保守，是機制本身的限制。
-/// </para>
-/// <para>
 /// 🔴 沒查過的進度一律在列上顯示灰色的 <c>?</c>，<b>不畫成 0</b>——0 是一個看起來很正常的錯答案。
-/// </para>
 /// </remarks>
 public sealed unsafe class AchievementProgressTracker : TcModule
 {

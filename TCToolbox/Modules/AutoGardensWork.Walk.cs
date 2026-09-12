@@ -8,31 +8,9 @@ namespace TCToolbox.Modules;
 /// 自動園圃作業的<b>走位層</b>：在同一張圖裡自己走到下一格園圃旁邊。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 🔴 <b>只走位，什麼都不改。</b>決策層（<c>ResolveAutoAction</c>）與互動狀態機一行都沒有動：
-/// 這一層只是在每一格的「互動地壟」之前插一個步驟，把角色帶進互動距離內。
-/// 走位失敗時那一格就退回原本的行為——距離太遠 ⇒ 在「互動地壟」那一步被跳過。
-/// </para>
-/// <para>
 /// 🔴 <b>不上坐騎、不飛、不傳送、不跨區。</b>
-/// vnavmesh 對「要求飛行但沒乘坐騎」的失敗是<b>完全靜默</b>的（FollowPath 走到第一個比目前高的
-/// 路徑點時直接 <c>_movement.Enabled = false; return</c>，角色站著不動、零訊息），
-/// 所以這裡一律傳 <c>fly: false</c>。而且 <see cref="AutomationGate"/> 本來就把「騎乘中」
-/// 算成忙——騎著馬的時候多數物件互動會被遊戲靜默拒絕。
-/// </para>
-/// <para>
 /// 🔴 <b>失敗一律「安全放棄」，絕不重試。</b>任何一格走不到就設下
 /// <see cref="walkGaveUpThisRound"/>，這一輪剩下的地壟全部不再嘗試走位。
-/// 重試迴圈在這裡特別危險：走不到的常見原因（庭園沒有導航網格、被家具擋住、
-/// 使用者自己在操作角色）在一輪之內都不會自己好轉，重試只會變成角色反覆亂走。
-/// </para>
-/// <para>
-/// ⚠️ <b>導航網格看不見玩家擺的家具。</b>vnavmesh 只從版面的頂層 <c>BgPart</c> 與
-/// <c>CollisionBox</c> 取幾何，而且它的快取鍵是
-/// <c>{TerritoryType.Bg}__{filterKey}__{節慶}__{ZoneSharedGroup}</c>——<b>裡面沒有任何家具資訊</b>。
-/// ⇒ 就算某一版的遊戲把家具放進了那兩種實例，同一張圖的快取也會被重複使用。
-/// 所以在房屋／庭園裡「路徑穿過柵欄或家具」是預期內的失敗，靠這裡的卡住偵測收掉。
-/// </para>
 /// </remarks>
 public sealed unsafe partial class AutoGardensWork
 {
@@ -40,11 +18,6 @@ public sealed unsafe partial class AutoGardensWork
     /// <remarks>
     /// 🔴 這個值必須<b>大於</b> <see cref="WalkNavTolerance"/>，而且<b>小於</b>
     /// <see cref="InteractRange"/>。
-    /// <para>
-    /// 大於容許值的理由：vnavmesh 端是「距離最後一個路徑點小於容許值就清空路徑點」，
-    /// 兩邊用同一個數字的話，抖動會讓 vnavmesh 先停下、我們卻還差 0.05 碼沒判到抵達，
-    /// 於是走進「vnavmesh 停了但沒到」那條放棄分支——<b>明明已經站到旁邊了卻放棄走位</b>。
-    /// </para>
     /// <para>小於互動距離的理由：判定抵達之後緊接著就是「互動地壟」那一步的距離檢查。</para>
     /// </remarks>
     private const float WalkArriveDistance = 4.5f;
@@ -316,10 +289,6 @@ public sealed unsafe partial class AutoGardensWork
     /// <remarks>
     /// 🔴 <b>Information 級。</b>逐格的記錄在無人值守重跑時會降級成 Debug（量太大），
     /// 但「走位為什麼不動」正是使用者唯一會來問的事——它不跟著降級。
-    /// <para>
-    /// 📌 不論有沒有寫記錄，理由都會留在 <see cref="lastWalkGiveUpReason"/> 給設定畫面顯示，
-    /// 所以節流不會讓「不知道」變成看不見。
-    /// </para>
     /// </remarks>
     private void GiveUpWalking(string reason)
     {

@@ -14,41 +14,9 @@ namespace TCToolbox.Modules;
 /// 生產／採集職業未滿等、且身上沒有對應的經驗加成狀態時，自動使用「工程學指南」／「生存學指南」。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 📌 <b>零 hook、零特徵碼</b>：Framework 輪詢 ＋ <c>ActionManager::UseAction</c>，
-/// 做的事情與使用者自己從背包點指南完全相同。
-/// </para>
-/// <para>
-/// 🔑 <b>所有資料都在動工前對台服 7.20 EXD dump 驗過</b>（2026-08-25，
-/// <c>exd-tc/7.20/ClassJob.csv</c>／<c>Item.csv</c>／<c>Status.csv</c>）：
-/// <list type="bullet">
-/// <item><c>ClassJobCategory</c> 32 ＝採集職（採掘師／園藝師／漁師，3 個）；
-/// 33 ＝製作職（木工師…烹調師，8 個）。<b>本模組不寫死職業 ID</b>，啟用時從 <c>ClassJob</c> 表現算。</item>
-/// <item>採集：<c>26553</c> 改訂版生存學指南 ／ <c>12668</c> 商用生存學指南 ／
-/// <c>4635</c> 軍用生存學指南第二卷 ／ <c>4633</c> 軍用生存學指南（<b>高階優先</b>）。</item>
-/// <item>製作：<c>26554</c> 改訂版工程學指南 ／ <c>12667</c> 商用工程學指南 ／
-/// <c>4634</c> 軍用工程學指南第二卷 ／ <c>4632</c> 軍用工程學指南。</item>
-/// <item>狀態 <c>45</c>＝巧手之工（製作）、<c>46</c>＝大地之恩（採集）。</item>
-/// </list>
-/// </para>
-/// <para>
-/// ⚠️ <b>與 DailyRoutines <c>AutoUseCrafterGathererManual</c> 的三個刻意差異</b>：
-/// <list type="number">
-/// <item>DR 用 <c>GetActionStatus(GeneralAction, 2, …)</c> 當「現在能不能動作」的探針，
-/// 但台服 <c>GeneralAction#2</c> 是<b>「跳躍」</b>（已對 <c>GeneralAction.csv</c> 查證），
-/// 那是一個間接得可疑的代理判斷。這裡改成直接問<b>要用的那件道具本身</b>
-/// （<c>GetActionStatus(ActionType.Item, …)</c>），語意直接、不會因為別的原因跳不起來就整個停擺。</item>
-/// <item>DR 只在事件（換區／換職／升等／條件結束）時檢查，<b>狀態到期時沒有任何事件</b>
-/// ⇒ 指南掉了要等下一次換區才會補。這裡改成低頻輪詢（預設每 10 秒看一次，成本是幾個欄位讀取）。</item>
-/// <item>DR 一律用 NQ 道具 ID。這裡先看 NQ 有沒有貨，沒有才用 HQ（<c>+1,000,000</c> 編碼）——
-/// 只有 HQ 存貨時 DR 那條會叫遊戲用一件不存在的 NQ 道具，靜默失敗。</item>
-/// </list>
-/// </para>
-/// <para>
 /// 🔴 <b>連續失敗會自己退避。</b>使用被遊戲拒絕（狀態沒出現）連續 3 次後停止嘗試 10 分鐘，
 /// 並寫一行 <c>Information</c>。沒有這道閘門的話，任何我們沒想到的拒絕原因都會變成
 /// 每 30 秒一次的無限重試。
-/// </para>
 /// </remarks>
 public sealed unsafe class AutoCrafterGathererManual : TcModule
 {
@@ -274,11 +242,6 @@ public sealed unsafe class AutoCrafterGathererManual : TcModule
     /// <remarks>
     /// 🔴 <b>兩條拒絕路徑都必須走這裡。</b>原本只有「送出後狀態沒出現」那條接上門檻檢查，
     /// <c>UseAction</c> 直接回 <see langword="false"/> 那條只做了計數遞增。
-    /// 而 <c>GetActionStatus</c> 回 0（可用）但 <c>UseAction</c> 持續回 false 是真實存在的情境
-    /// （兩者判準不完全重合），這時 <c>pendingStatusId</c> 永遠不會被設
-    /// ⇒ 結算分支永遠不執行 ⇒ 計數無界累加、退避永不觸發，
-    /// 變成每個輪詢間隔重試一次並寫一行 log，直到永遠——
-    /// 正是類別註解自己點名要防的那個失控形狀。
     /// </remarks>
     private void RegisterFailure(uint jobId, uint statusId, string reason)
     {

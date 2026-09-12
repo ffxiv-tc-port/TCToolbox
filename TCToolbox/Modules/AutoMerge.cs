@@ -14,30 +14,11 @@ namespace TCToolbox.Modules;
 /// 背包堆疊合併：把玩家背包（第 1～4 頁）裡同一款道具的零散堆疊併成滿堆。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 🔴 <b>純手動觸發</b>：開著模組但不去按按鈕，遊戲行為完全不變。
-/// 刻意<b>不</b>掛「開啟背包就自動合併」——上游 CBT 的 <c>AutoMerge</c> 是掛在
-/// 背包 addon 開啟事件上的，那等於每次開背包都對伺服器連送一串搬移封包，
-/// 而使用者沒有任何辦法知道那一串是誰送的、也沒有辦法中途喊停。
-/// </para>
-/// <para>
 /// 🔴🔴 <c>MoveItemSlot</c> 的第 6 個參數 <c>a6</c> <b>一定要帶 <c>true</c></b>。
 /// 省略＝預設 <c>false</c>＝遊戲只改本機容器、<b>一個封包都不送</b>：
 /// 畫面上堆疊會漂亮地併起來，但伺服器不知道，關掉背包／換區之後就全部散開。
 /// 失敗形式是<b>靜默</b>的，而且要隔一段時間才看得出來。
-/// （完整的旗標鑑識紀錄見 <see cref="AutoInventoryTransfer"/> 的型別註解。）
-/// </para>
-/// <para>
-/// ⚠️ 上游那份還有兩個問題，這裡都沒有照抄：
-/// <list type="bullet">
-/// <item>它在判斷 <c>item-&gt;ItemId == 0</c> <b>之前</b>就拿 ItemId 去查表
-/// （<c>Sheet[item-&gt;ItemId].StackSize</c>），空格靠「row 0 的 StackSize 剛好不等於 0」
-/// 才沒有炸開——這是巧合不是設計。這裡一律先確認格子有東西再查表。</item>
-/// <item>它把整個群組的其他堆疊<b>全部</b>搬向「第一個」堆疊，中間不重讀狀態。
-/// 第一個堆疊填滿之後，後面每一次呼叫都是無效搬移，而它不會發現。
-/// 這裡改成<b>每一步都重新從活的容器算下一步</b>，滿了就自然換一個目的地。</item>
-/// </list>
-/// </para>
 /// </remarks>
 public sealed unsafe class AutoMerge : TcModule
 {
@@ -100,12 +81,6 @@ public sealed unsafe class AutoMerge : TcModule
     /// <b>一次真正的合併之後，這兩格至少有一格會離開候選集合</b>——
     /// 不是目的地被填滿（滿堆不再是候選），就是來源被清空（空格不再是候選）。
     /// 所以<b>同一組格子不可能連續被挑中兩次</b>。
-    /// <para>
-    /// ⚠️ 這道防線防的是 <c>MoveItemSlot</c> 對同款道具做的是<b>交換</b>而不是合併的情況。
-    /// 那種情況下兩格的數量每次都會變（所以 <see cref="stuckCount"/> 永遠不會累積），
-    /// 而挑選規則會在同一組格子之間無限來回，一路跑到
-    /// <see cref="MaxMovesPerRun"/> 才停——兩分鐘的無效搬移，而且看起來像在正常工作。
-    /// </para>
     /// </remarks>
     private (InventoryType Container, ushort Slot) lastPairA;
 
@@ -260,7 +235,6 @@ public sealed unsafe class AutoMerge : TcModule
     /// 每一步都重算而不是一次排好整份計畫，理由是合併的結果會改變後續的最佳解：
     /// 目的地填滿之後就該換下一個目的地，而預先排好的計畫看不到這件事
     /// （上游那份就是這樣，填滿之後剩下的呼叫全是無效搬移）。
-    /// 重算的成本是掃 140 格，一步一次、間隔數百毫秒，完全不是瓶頸。
     /// </remarks>
     private bool TryFindNextMerge(InventoryManager* manager, out MergeStep step)
     {

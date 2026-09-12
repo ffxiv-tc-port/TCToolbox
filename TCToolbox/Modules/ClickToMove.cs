@@ -13,27 +13,10 @@ namespace TCToolbox.Modules;
 /// 點擊移動：在世界上按住修飾鍵點一下地面，角色就走過去。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 🔴🔴 <b>移動一律走 vnavmesh 的 IPC，絕不自己接管角色移動。</b>
-/// 上游 CBT 的 <c>ClickToMove</c> 有兩種模式，其中一種是它自帶的 <c>OverrideMovement</c>
-/// ——那是每幀改寫角色的移動輸入，等於自己實作一套走路，會穿牆、會卡地形、
-/// 也繞過遊戲自己的移動限制。這裡<b>只</b>保留尋路模式，全部經由
-/// <see cref="ExternalNav"/> 呼叫 vnavmesh 的 <c>PathfindAndMoveTo</c>。
-/// vnavmesh 沒裝就是不能用，並且會明確說出來，不會退化成自己走。
-/// </para>
-/// <para>
 /// 🔴 <b>預設要按修飾鍵，不是裸左鍵。</b>上游是裸左鍵放開就觸發，這在 FFXIV 裡是壞的：
 /// 左鍵拖曳是<b>旋轉鏡頭</b>，左鍵點擊是<b>選取目標</b>。裸左鍵的話，每一次轉鏡頭
 /// 都會在放開的瞬間對著鏡頭停下來的地方發一次尋路。
-/// 所以預設是「Shift ＋ 左鍵」，而且<b>另外</b>擋掉拖曳
-/// （按下與放開的螢幕距離超過 <see cref="DragTolerancePixels"/> 就當成轉鏡頭，見
-/// <see cref="OnDraw"/>）——修飾鍵設成「無」時這道防線仍然在。
-/// </para>
-/// <para>
-/// 📌 停止手段有三個，因為這個功能可以在完全沒有視窗開著的情況下讓角色跑起來：
-/// <c>/tcstop</c> 指令、設定畫面上的「停止移動」按鈕、以及再點一次新的目標
-/// （新的一次點擊會取代前一趟）。
-/// </para>
 /// </remarks>
 public sealed unsafe class ClickToMove : TcModule
 {
@@ -192,10 +175,8 @@ public sealed unsafe class ClickToMove : TcModule
     /// <remarks>
     /// 🔴 每一層解參考都要判空。<c>AtkStage</c>／<c>AtkCollisionManager</c> 在讀取畫面、
     /// 登入前等時機是空的，少判一層就是自找的存取違規，而 AVE 是 <c>try/catch</c> 攔不到的。
-    /// <para>
     /// 📌 讀不到的時候<b>回 true</b>（＝當成壓在介面上，不觸發移動）。
     /// 這個方向的錯誤是「少走一次」，反方向是「在讀取畫面時亂發尋路」。
-    /// </para>
     /// </remarks>
     private static bool IsCursorOverGameUi()
     {

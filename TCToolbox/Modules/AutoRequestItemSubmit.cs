@@ -23,35 +23,10 @@ namespace TCToolbox.Modules;
 /// 交出鈕走既有的 <see cref="UiHelper.ClickButton"/>。零 hook、零特徵碼、不寫記憶體。
 /// </summary>
 /// <remarks>
-/// 📌 <b>取代 DailyRoutines 的 <c>AutoRequestItemSubmit</c></b>。使用者裁決不走 TextAdvance 的
-/// 主開關——那會連帶啟用對話跳過／過場 ESC／自動接任務，行為擴散不可接受。
-/// <para>
-/// 🔴 與 DR 的形狀差異（DR 是每幀無節流）：這裡照本 repo 既有樣板
-/// （<see cref="AutoCustomDeliveryResult"/>）走 PostSetup ＋ PostDraw ＋
-/// <see cref="Throttle"/>，每 <c>DelayMs</c> 才動一步。填格子本來就是一步一等的流程
-/// （送出事件 → 遊戲開 <c>ContextIconMenu</c> → 選道具 → 下一格），無節流地灌事件只會
-/// 讓同一格重送十幾次。
-/// </para>
-/// <para>
-/// 🔴 <b>HQ 確認框用資料驅動判定，不寫死字串。</b>三個判準都是 <c>Addon</c> 表的列，
-/// 台服 7.20 EXD 已核對（5450「繳交優質道具」、11514「遞交優質道具」、
-/// 102434「確定要交易優質道具嗎？」）。⚠️ 而且**只有 <c>Request</c> 視窗開著時**才會去看
-/// <c>SelectYesno</c>——沒有這個前置條件的話，任何長得像的確認框都會被按掉。
-/// </para>
-/// <para>
-/// ⚠️ 預設關閉。開啟後也只在<b>任務交付</b>時接手 —— 早期版本是對所有交易視窗一律生效，
-/// 那個行為已經在 2026-08-07 因為誤觸理符繳交與以物易物而收掉（見下）。
-/// </para>
-/// <para>
 /// 🔴 <b>只在「確定是任務交付」時才動作</b>（見 <see cref="IsQuestTurnIn"/>）。
 /// <c>Request</c> 這扇視窗被遊戲重複使用在任務交付、理符繳交、部隊合建交納、
 /// 以物易物……等好幾種情境上，而視窗本身看不出自己是誰開的。
-/// 2026-08-07 實機 log 直證兩件事：①理符繳交視窗一開，本模組在 43 毫秒內就按下了交出鈕
-/// （<c>ClickButton</c> 回 true，代表那顆鈕在<b>一格都還沒填</b>時就是「可按」的），
-/// 空手交出被遊戲當成取消，NPC 隨即回「你怎麼了？做好的東西忘記拿了？」，十次皆然；
-/// ②以物易物視窗開著時，本模組按下了三次【交換】——<b>那是不可逆的資產損失</b>。
 /// 因此判準改成白名單：認得出是任務交付才接手，認不出就完全不動作。
-/// </para>
 /// </remarks>
 public sealed unsafe class AutoRequestItemSubmit : TcModule
 {
@@ -280,29 +255,9 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
     /// 這是按下交出鈕的<b>前置條件</b>。
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// 🔴 <b>為什麼需要這道守衛</b>：本模組原本拿「交出鈕按得動」當「格子填滿了」的判準。
-    /// 那個假設是錯的 —— 2026-08-07 實機 log 直證，理符繳交視窗開啟後 43 毫秒
-    /// <see cref="UiHelper.ClickButton"/> 就回 true（代表該鈕的 <c>NodeFlags.Enabled</c>
-    /// 真的是設起來的），而當時一格都還沒填；空手交出被遊戲判成取消，
-    /// NPC 隨即回「你怎麼了？做好的東西忘記拿了？」。
-    /// </para>
-    /// <para>
     /// 🔑 <b>這道守衛對「現在會成功的路徑」是 no-op</b>：交出成功的那一刻，
     /// 依定義每一格都已經填好了，所以這裡必然全部通過、必然照按。
     /// 它唯一擋掉的是「還沒填完就按」——也就是現在唯一會失敗的那條路徑。
-    /// </para>
-    /// <para>
-    /// 🔴 <b>讀不到就別按</b>：容器／要求清單任何一項取不到、或數量對不上，一律回
-    /// <c>false</c>，交給 <see cref="FillNextSlot"/> 去補，下一輪再試。
-    /// 失敗形式是「多等一輪」，不是「空手交出」。
-    /// </para>
-    /// <para>
-    /// ⚠️ 這裡<b>沒有引入任何新的原生層假設</b>：<c>InventoryManager.Instance()</c>、
-    /// <c>GetInventoryContainer(HandIn)</c>、<c>Size</c>、<c>GetInventorySlot</c>、
-    /// <c>UIState.NpcTrade.Requests</c> 全都是 <see cref="FillNextSlot"/> 出貨前就在用的東西，
-    /// 邊界收斂也照抄它的形狀。
-    /// </para>
     /// </remarks>
     private bool AreAllRequestedItemsHandedIn()
     {
@@ -459,26 +414,9 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
     /// <b>只比對指標值，完全不解參考 <paramref name="candidate"/>。</b>
     /// </summary>
     /// <remarks>
-    /// 🔴 這是 <see cref="PickTurnInItemId"/> 能安全走訪候選清單的<b>唯一理由</b>。
-    /// 候選陣列有幾格有效是遊戲填的欄位說了算，而那個欄位在台服<b>沒有被離線驗證過</b>
-    /// （<c>AgentNpcTrade</c> 在 FFXIVClientStructs 裡完全沒有特徵碼／虛擬表可以當定位錨點，
-    /// 離線探測工具的校準閘門因此無從滿足）。如果它其實不是「候選數」，
-    /// 多出來的格子可能留著上一次交易的舊指標，而解到失效指標是 AccessViolation——
-    /// .NET Core 的 corrupted-state exception，<c>try/catch</c> 攔不到，遊戲當場關閉。
-    /// <para>
     /// 🔑 所以這裡<b>反過來問</b>：不去相信清單長度，而是拿候選指標比對
     /// 「遊戲現在自己承認的每一個道具格位址」。比對只用指標值、不碰它指到的記憶體，
     /// 所以指標再爛都不會出事；比不中就當那一格不存在。
-    /// </para>
-    /// <para>
-    /// 🔑 而且這裡<b>沒有引入任何新的原生層假設</b>：<c>InventoryManager.Instance()</c>、
-    /// <c>GetInventoryContainer</c>、<c>Size</c>、<c>GetInventorySlot</c>
-    /// 全都是 <see cref="FillNextSlot"/> 出貨前就在用的東西。
-    /// </para>
-    /// <para>
-    /// 📌 成本：最壞情況約一千次指標比對，而呼叫端有 <see cref="Throttle"/> 擋著
-    /// （最快每 <c>DelayMs</c> ≥200ms 一次），不是每幀。
-    /// </para>
     /// </remarks>
     private static bool IsLiveInventorySlot(InventoryItem* candidate)
     {
@@ -509,17 +447,8 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
     /// </summary>
     /// <remarks>
     /// 🔴 <b>這是偏好不是限定</b>：偏好的那一種挑不到時退回第一個候選，不會卡住不交。
-    /// <para>
-    /// 🔴 <b>第 0 格以外的候選一律先過 <see cref="IsLiveInventorySlot"/> 才解參考。</b>
-    /// 第 0 格維持本設定加入之前的做法（直接解參考），所以既有行為與既有風險原封不動；
-    /// 新增的走訪範圍則完全不倚賴「<c>SelectedTurnInSlotItemOptions</c> 真的是候選數」
-    /// 這個未經台服驗證的假設——它現在只是個便宜的上界，就算它是錯的，
-    /// 最壞結果也只是<b>挑不到偏好的品質而退回既有行為</b>，不會是存取違規。
-    /// </para>
-    /// <para>
     /// ⚠️ 候選上界 ≤ 1 或偏好為「無」（預設）時完全不進走訪迴圈，走的是<b>與本設定加入之前
     /// 逐字相同</b>的路徑。
-    /// </para>
     /// </remarks>
     private uint PickTurnInItemId(AgentNpcTrade* agent)
     {
@@ -618,31 +547,10 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
     /// 🔴 <b>白名單：只有「確定是任務（Quest）交付」時才接手，其餘一律不動作。</b>
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// 🔴 <b>為什麼是白名單而不是逐個排除</b>：<c>Request</c> 這扇視窗被遊戲重複使用在
-    /// 任務交付、理符繳交、部隊合建交納、以物易物……等好幾種情境上，而
-    /// <see cref="AddonRequest"/> 本身完全看不出自己是誰開的。逐個排除的黑名單永遠列不完，
-    /// 而漏掉一個的代價是<b>不可逆的資產損失</b>（2026-08-07 實機：以物易物視窗被按了三次
-    /// 【交換】）。所以改成「認得出是任務交付才動作」，認不出就讓使用者自己按。
-    /// </para>
-    /// <para>
     /// 🔴 <b>失敗形式一律是「不動作」</b>：任何一個環節取不到資料、或事件對不上已接的任務，
     /// 都回 <c>false</c>。少做一次自動化的代價是多按一下；做錯一次的代價是道具沒了。
-    /// </para>
-    /// <para>
-    /// 🔑 <b>判準本身是自我驗證的</b>：不只要求「目前的事件是任務事件」
-    /// （<see cref="EventHandlerContent.Quest"/>），還要求那個事件的
-    /// <c>EntryId</c> 真的等於玩家<b>現在接著</b>的某個任務編號。
-    /// 任務事件的 ID 就是 <c>0x10000 | 任務編號</c>——這條規則在
-    /// <c>EventFramework.GetEventHandlerById(ushort)</c> 的多載裡寫得很明白
-    /// （<c>id | 0x10000</c>），而 <see cref="EventHandlerContent.Quest"/> 正好是 <c>0x0001</c>。
-    /// 兩段都吻合才算數，所以就算 <c>EventState</c> 的語意跟預期不同，
-    /// 也幾乎不可能湊巧命中——<b>對不上就是不動作</b>，倒向安全的那一邊。
-    /// </para>
-    /// <para>
     /// ⚠️ <b>已知的縮減</b>：理符繳交、部隊合建交納、以物易物、代幣／收藏品兌換，
     /// 從此一律不再自動處理（那些本來就不該由本模組接手）。
-    /// </para>
     /// </remarks>
     private bool IsQuestTurnIn()
     {

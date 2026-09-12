@@ -17,37 +17,15 @@ namespace TCToolbox.Modules;
 /// 道具丟棄清單：把想丟的道具維護成一份清單，模組列出背包裡符合的道具，由使用者逐件或整批發起丟棄。
 /// </summary>
 /// <remarks>
-/// <para>
 /// 🔴🔴 <b>永遠不會替你按下確認框。</b>發起丟棄之後跳出來的是<b>遊戲自己的</b>「確定要捨棄…嗎？」
 /// 確認框，本模組<b>完全不碰它</b>——是/否一律由你自己按。誤丟不可逆，所以這個模組刻意把
 /// 「決定要丟」（你在清單上按）與「真的丟下去」（你在遊戲確認框上按是）拆成兩個都要人動手的步驟。
 /// 上游 DailyRoutines 的 <c>AutoDiscard</c> 會自動點掉那個確認框、還能匯入別人的丟棄清單，
 /// <b>那兩件事都刻意不做</b>。
-/// </para>
-/// <para>
-/// 🔑 <b>走的是遊戲原生的右鍵「捨棄」（<c>Addon</c> 第 91 列＝台服「捨棄」）。</b>流程與你自己
-/// 右鍵那件道具、點「捨棄」完全一樣：
-/// <list type="number">
-/// <item>對那一格呼叫 <c>AgentInventoryContext.OpenForItemSlot</c>（與本專案 <c>QuickSplitStacks</c>
-/// 用的是同一支、台服實測有效的函式）叫出右鍵選單。</item>
-/// <item>用 <see cref="InventoryContextMenu.TryFireEntry"/> 在選單裡<b>比對「捨棄」這個字串</b>找到那一項並點下去
-/// —— <b>比對字串而不是寫死序號</b>，所以不會因為選單少一項就點到隔壁的「販賣」。</item>
-/// <item>遊戲跳出它自己的確認框，<b>由你按是/否</b>。</item>
-/// </list>
-/// 刻意<b>不</b>用 <c>AgentInventoryContext.DiscardItem</c> 那支直呼函式：它在 FFXIVClientStructs
-/// 是特徵碼綁定的，台服 7.20 是否對得上未經驗證，對不上就是呼叫空位址崩潰；而
-/// <c>OpenForItemSlot</c>＋選單字串比對這條路徑本專案已經在用、而且失敗形式是「找不到就不動作」。
-/// </para>
-/// <para>
 /// 🔴 <b>不保存任何原生指標、只掃主背包四袋。</b>每次要動手的那一刻才重新向
 /// <c>InventoryManager</c> 取那一格，並確認裡面還是同一件道具（背包被整理過的話就跳過）。
 /// 只掃 <c>Inventory1</c>~<c>Inventory4</c>——不碰裝備欄、兵裝庫、鞍袋，所以正在穿的裝備、
 /// 收在別處的東西都不可能被列進來、更不可能被丟。
-/// </para>
-/// <para>
-/// 📌 <b>整批也只是把你排進佇列，逐一跳確認框讓你按。</b>絕不會一次堆出一排確認框，
-/// 也絕不會替你連按——下一件要等你把上一件的確認框回應掉（是或否都行）才會發起。
-/// </para>
 /// </remarks>
 public sealed unsafe class DiscardList : TcModule
 {

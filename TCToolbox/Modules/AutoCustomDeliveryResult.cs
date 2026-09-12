@@ -12,12 +12,6 @@ namespace TCToolbox.Modules;
 /// 與按下視窗上的確認鈕同一條路徑。零 hook、零特徵碼、不寫記憶體。
 /// </summary>
 /// <remarks>
-/// 📌 <b>這是 DailyRoutines <c>AutoQuestComplete</c> 缺的那一半</b>。DR 那個模組同時處理兩扇視窗：
-/// <list type="bullet">
-/// <item><c>JournalResult</c>（一般任務完成）—— <b>YesAlready 已經有了</b>
-/// （<c>Features/JournalResult.cs</c>，設定在「Bothers → JournalResultComplete」），這裡不重複做。</item>
-/// <item><c>SatisfactionSupplyResult</c>（老主顧交易結果）—— 全艦隊沒有任何外掛在處理，本模組補上。</item>
-/// </list>
 /// ⚠️ ECommons 有一個<b>從未被任何外掛使用</b>的 <c>AddonMaster.SatisfactionSupplyResult</c>，
 /// 它把確認鈕標成元件 id 36。那個值沒有任何實機證據，所以這裡採用 DR 實際出貨的
 /// <c>Callback(true, 1)</c>——那條路徑是有人在跑的。

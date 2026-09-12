@@ -16,33 +16,11 @@ namespace TCToolbox.Modules;
 /// 貨幣上限警示：神典石／票券類貨幣快滿時在伺服器資訊列亮警告，避免溢出浪費。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 🔑 <b>零寫死道具編號。</b>要看的貨幣與它們各自的上限全部在執行期問出來：
-/// <list type="bullet">
-/// <item>神典石 → <c>TomestonesItem</c> 表（<c>Tomestones</c> 欄非 0＝這一版還在用的）。
-/// 台服 7.20 實查為 4 種：詩學(1)／天道(2)／數理(3)／美學(4)，
-/// 其餘 19 列是歷代舊神典石，<c>Tomestones</c> 欄為 0。</item>
-/// <item>特殊貨幣（票據／centurio 印章等）→ <c>CurrencyManager.SpecialItemBucket</c>，
-/// 逐筆用 <c>GetItemIdBySpecialId</c> 還原道具編號。</item>
-/// <item>其他貨幣（部族貨幣／雙色寶石／戰利水晶…）→ <c>CurrencyManager.ItemBucket</c>。</item>
-/// </list>
 /// 上限一律走 <c>CurrencyManager.GetItemMaxCount</c>，<b>不</b>拿 <c>Item.StackSize</c> 當上限
 /// ——兩者對神典石剛好都是 2000，但那是巧合：StackSize 是「一格能疊多少」，
 /// 而貨幣的持有上限是另一套規則，會隨版本調整。用錯的那個平常看不出來，改版時才靜默失準。
-/// </para>
-/// <para>
-/// 🔴 <b>為什麼走 DTR 而不是聊天訊息</b>：「快滿了」是一個<b>持續存在的狀態</b>，
-/// 不是一次性事件——它從超過門檻起一直為真，直到玩家把貨幣花掉為止。
-/// 聊天訊息是事件語意：印一次就捲走，沒看到就沒看到；要它可靠就得反覆印，那就變成洗版
-/// （上游 CBT 掛在換區事件上，正是這個毛病）。
-/// 依艦隊的 UI 判準，「<b>隨時掃視</b>」的資訊放列上、「起疑才查」的放 tooltip，
-/// 所以：資訊列只放「幾種快滿了」，是哪幾種、差多少放 tooltip。
-/// 聊天訊息保留為選項，但改成<b>邊緣觸發</b>（跨過門檻的那一次才印一則），不會重複洗。
-/// </para>
-/// <para>
 /// ⚠️ <b>「不知道」要在列上看得見。</b>讀不到 <c>CurrencyManager</c> 時顯示的是 <c>?</c> 而不是 0——
 /// 把未知畫成 0 等於告訴使用者「沒有任何貨幣快滿」，那是會害人溢出的誤導。
-/// </para>
 /// <para>📌 純顯示模組：不花貨幣、不買東西、不碰任何遊戲狀態。</para>
 /// </remarks>
 public sealed unsafe class CurrencyCapAlert : TcModule
@@ -115,8 +93,6 @@ public sealed unsafe class CurrencyCapAlert : TcModule
     /// ⚠️ <c>SpecialItemBucket</c> 宣告是 <c>StdMap&lt;uint, SpecialCurrencyItem&gt;</c>，
     /// 而值本身又帶一個 <c>SpecialId</c> 欄位，所以「鍵是什麼」從型別上看不出來，
     /// CS 也沒有寫。與其猜一個然後靜默拿到空清單，這裡<b>兩條路都試</b>（見
-    /// <see cref="TryResolveSpecialCurrency"/>），並把實際走通的那條寫進記錄，
-    /// 讓實機 log 直接回答這個問題。
     /// </remarks>
     private bool loggedSpecialBucketShape;
 
@@ -261,7 +237,6 @@ public sealed unsafe class CurrencyCapAlert : TcModule
     /// 🔑 「鍵是特殊編號還是道具編號」CS 沒有寫，所以<b>兩條路都試，並且都要通過驗證</b>：
     /// 只有在 <c>Item</c> 表查得到、而且名稱非空的時候才算數
     /// （Item 表的 row 0 是有效列但名稱為空，所以光判 null 擋不住）。
-    /// 兩條都不通就跳過這一筆——寧可少顯示一種貨幣，也不要拿一個亂數當道具編號去查表。
     /// </remarks>
     private bool TryResolveSpecialCurrency(
         CurrencyManager* currencyManager, uint key, byte specialId, out uint itemId)
@@ -326,11 +301,8 @@ public sealed unsafe class CurrencyCapAlert : TcModule
     /// <remarks>
     /// 📌 這與持有上限是<b>兩回事</b>：持有上限是背包裡最多放幾顆，週上限是這一週還能再賺幾顆。
     /// 兩個都會造成浪費，但原因不同，所以分開顯示。
-    /// 台服 7.20 的週上限是 450（<c>Tomestones</c> 表 row 3 ＝數理神典石）。
-    /// <para>
     /// ⚠️ 週上限回 0 代表這一版沒有設週上限（或讀不到），這時候整個項目不顯示——
     /// 不要把它當成「已達上限」。
-    /// </para>
     /// </remarks>
     private static bool TryGetWeeklyTomestone(out CurrencySnapshot snapshot)
     {

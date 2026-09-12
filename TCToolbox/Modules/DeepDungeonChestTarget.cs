@@ -19,27 +19,10 @@ namespace TCToolbox.Modules;
 /// 深宮寶箱鎖定：一顆熱鍵（或一個指令）把最近的寶箱設成目標；另可選「新寶箱出現就自動鎖定」。
 /// </summary>
 /// <remarks>
-/// 🔴 <b>不寫死中文名。</b>判準有兩軸，兩軸都是資料驅動的：
-/// <list type="number">
-/// <item><see cref="ObjectKind.Treasure"/> —— 深宮的銅寶箱（以及一般副本的寶箱）就是這一類，
-/// 它們的 <c>BaseId</c> 是 <c>Treasure</c> 表的列號。這一軸完全不需要名字。</item>
-/// <item>銀／金寶箱與擬態怪的箱子是 <see cref="ObjectKind.EventObj"/>，
-/// 名字在 <c>EObjName</c> 表裡。這一軸拿 <see cref="ChestIdentity.ReferenceChestEObjNameRow"/> 這一列的
-/// <c>Singular</c> 當<b>參考字串</b>（＝遊戲自己對「寶箱」的用字，繁中客戶端讀出來就是繁中），
-/// 再把整張表裡同名的列收成一個 id 集合。<b>程式碼裡沒有任何中文物件名。</b></item>
-/// </list>
-/// <para>
-/// ⚠️ 第二軸建不起來時（那一列不見了／名字是空的）會退回<b>只用第一軸</b>，
-/// 並在模組列上留一句灰字說明——「只找得到銅寶箱」與「都找得到」是兩件事，不能靜默。
-/// </para>
-/// <para>
 /// 🔴 <b>絕不跨幀保存原生指標。</b>掃描與設定目標在同一幀內完成；自動模式記的是
 /// <c>GameObjectId</c>（受管理的 ulong），每次輪詢重新枚舉。
-/// </para>
-/// <para>
 /// 📌 「在不在深宮」用 <c>EventFramework.GetInstanceContentDeepDungeon()</c> 判，
 /// <b>不是</b>寫死一張 TerritoryType 清單——那種清單每出一座新深宮就會靜默失效。
-/// </para>
 /// </remarks>
 public sealed unsafe class DeepDungeonChestTarget : TcModule
 {

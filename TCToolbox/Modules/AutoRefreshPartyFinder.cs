@@ -16,16 +16,9 @@ namespace TCToolbox.Modules;
 /// 參考 DailyRoutines AutoRefreshPartyFinder 設計重寫（API13、無 OmenTools／KamiToolKit 相依）。
 /// </summary>
 /// <remarks>
-/// <para>與 DR 原版的差異（這個模組會定期向伺服器發請求，所以刻意做得比 DR 保守）：</para>
 /// <list type="bullet">
 /// <item>DR 預設間隔 10 秒、下限 5 秒。這裡預設 <b>30 秒</b>、下限 <b>15 秒</b>——
 /// 遊戲自己的更新鈕本來就有冷卻，沒有理由比它更積極。</item>
-/// <item>DR 用 <c>System.Timers.Timer</c> 另一條執行緒計時再跳回主執行緒；這裡直接掛
-/// <c>Framework.Update</c> 計時，不多開執行緒、也不會有 dispose 後還被回呼的問題。</item>
-/// <item>DR 把倒數與設定畫成原生節點塞進遊戲視窗；這裡沿用本外掛既有作法用 ImGui 疊圖。</item>
-/// <item>停止條件比 DR 多一項：除了招募板本身要開著、詳細視窗不能開著之外，
-/// 招募條件視窗（<c>LookingForGroupCondition</c>）開著時也不刷新——
-/// 你正在填條件的時候被刷掉清單很煩。</item>
 /// </list>
 /// </remarks>
 public sealed unsafe class AutoRefreshPartyFinder : TcModule

@@ -16,11 +16,6 @@ namespace TCToolbox.Modules;
 /// 再 <c>Callback(3, id)</c>。<c>AtkValues</c> 是原生陣列<b>沒有邊界檢查</b>，261 這種裸索引
 /// 只要遊戲改版縮短了值表就是任意記憶體讀取——正是全艦隊踩過好幾次的形狀。
 /// 這裡改用 TextAdvance 已經實機驗過的按鈕 id 44（<c>TextAdvance/Executors/ExecQuestAccept.cs</c>），
-/// 走的是「使用者按下那顆按鈕」同一條路徑。
-/// <para>
-/// ⚠️ 與 TextAdvance 的「自動接受任務」功能重疊。兩邊同時開著不會壞（按鈕按完視窗就關），
-/// 但沒有必要，擇一即可。
-/// </para>
 /// </remarks>
 public sealed unsafe class AutoQuestAccept : TcModule
 {

@@ -20,23 +20,9 @@ namespace TCToolbox.Modules;
 /// 與雙色寶石庫存彙整成一個唯讀視窗，每張圖附「地圖」「傳送」兩顆手動按鈕。
 /// </summary>
 /// <remarks>
-/// <para>
-/// 🔴 <b>進度資料只有按按鈕才向伺服器查，一次一筆、每秒一筆。</b>這幾張圖的完成數是記在
-/// <b>成就進度</b>上的（5.0＝成就 2343–2348、6.0＝3022–3027、7.0＝3559–3564），
-/// 而遊戲只有<b>一組</b>成就進度欄位，一次只能有一筆在途。DR 原版是開著就每 10 秒把 18 筆
-/// 一次全射出去（<c>ExecuteCommand(1000, id)</c>×18），台服對這種查詢的速率限制未知，
-/// 所以本模組比照 <see cref="AchievementProgressTracker"/>：<b>排隊、一次一筆、每秒一筆</b>，
-/// 而且<b>只在開窗與按下重新整理時查</b>，不定時輪詢。
-/// </para>
-/// <para>
 /// 🔴 沒查過的圖一律顯示灰色 <c>?</c>，<b>絕不畫成 0</b>——0 是一個看起來很正常的錯答案。
-/// </para>
-/// <para>
 /// 🔴 <b>純顯示＋手動觸發。</b>「傳送」走遊戲原生 <c>Telepo.Teleport</c>（等同在地圖上點乙太之光傳送，
 /// 戰鬥中／未解鎖會被遊戲自己擋下，那是對的），「地圖」開對應區域地圖。兩者都只在按下那一刻發生。
-/// DR 原版把背景材質丟進 <c>Framework.Run</c> 跨幀持有 texture wrap，本模組<b>不畫那些背景圖</b>
-/// （純文字版面），只用 <see cref="ITextureProvider"/> 即時取雙色寶石圖示（每幀取 wrap、不跨幀保存）。
-/// </para>
 /// </remarks>
 public sealed unsafe class BetterFateProgressUI : TcModule
 {

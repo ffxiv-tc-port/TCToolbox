@@ -48,9 +48,6 @@ public sealed unsafe partial class AutoGardensWork : TcModule
     /// <remarks>
     /// 🔴 <b>這裡必須跟著「自動重跑」那個開關走，不能寫死成 <c>true</c>。</b>
     /// <see cref="TcModule.IsManualTrigger"/> 的判準只有一條：<b>開著但不去按它，遊戲行為完全不變</b>。
-    /// 自動重跑開著的時候這一條就不成立了——模組會自己醒過來動手。
-    /// 繼續聲稱自己是「手動觸發」的失敗形式是靜默的：使用者以為那一頁列的都是
-    /// 「不按就不會動」的東西，而園圃實際上每分鐘都在被動。
     /// </remarks>
     public override bool IsManualTrigger => !Config.AutoLoopEnabled;
 
@@ -709,16 +706,6 @@ public sealed unsafe partial class AutoGardensWork : TcModule
     /// 走位打開時傳 <see cref="SearchRange"/>（走得過去的都算）。
     /// </param>
     /// <remarks>
-    /// 🔴 <b>刻意不複用 <see cref="TryGetGardenPatches"/>。</b>那一支永遠用
-    /// <see cref="SearchRange"/>（30 碼），而走位關著時實際能互動的只有
-    /// <see cref="InteractRange"/>（6 碼）。無人值守的迴圈在那種情況下拿 30 碼當閘門的話，
-    /// 使用者只是路過自家庭院就會觸發一輪，而那一輪的每一格都會在「互動地壟」那一步因為距離
-    /// 而跳過——白跑一輪、還把「跳過 N 格」寫進記錄。
-    /// <para>
-    /// 🔑 反過來說，<b>走位打開之後這道閘門非改不可</b>：不改的話使用者必須先自己站到某一格旁邊
-    /// 迴圈才會醒過來，而「不必先走過去」正是走位這個功能存在的理由——
-    /// 失敗形式是「勾了走位但它從來不動」，而且完全靜默。
-    /// </para>
     /// <para>📌 只問「有沒有」，找到第一個就收工；住宅區以外一律回 <see langword="false"/>。</para>
     /// </remarks>
     private static bool AnyPatchWithinRange(float range)
@@ -841,14 +828,6 @@ public sealed unsafe partial class AutoGardensWork : TcModule
     /// 兩者刻意不同：按按鈕的人正看著這個面板，而快捷列上的一顆巨集是可以在任何情況下被按到的
     /// （副本裡、別的外掛正在帶著角色走、剛按完全艦隊急停）。在那些時候開一連串互動選單
     /// 會把別人的流程打斷，而使用者根本不知道是誰動的手。
-    /// <para>
-    /// 🔑 <b>擋下來一定要說話。</b>指令回傳理由、呼叫端印出來——
-    /// 「按了沒反應」正是這一輪整個任務要修掉的那種失敗。
-    /// </para>
-    /// <para>
-    /// 📌 除了這道閘門之外，指令走的是與按鈕<b>完全同一條</b>路徑（同一個 <see cref="StartAutoBatch"/>／
-    /// <see cref="StartBatch"/>），一個決策都沒有另外寫。
-    /// </para>
     /// </remarks>
     public string RunBatchFromCommand(GardenAction action)
     {

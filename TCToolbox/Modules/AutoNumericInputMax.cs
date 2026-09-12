@@ -20,17 +20,6 @@ namespace TCToolbox.Modules;
 /// 就介入」，於是每次更新（每 250ms）都把值重設成上限——你想輸入比上限小的數字會被一直重設回去，
 /// 所以 DR 必須另外做一個「按住某鍵暫停」的機制才能用。這裡只認「上限還是 99」的框：把上限抬成設定值
 /// 之後，該框上限已不是 99，後續更新一律略過，<b>絕不再跟你的輸入打架</b>，也就不需要暫停鍵。
-/// <para>
-/// 🔴 <b>預設只放寬上限、不自動填值</b>（<see cref="AutoNumericInputMaxConfig.AutoFillToMax"/> 預設
-/// <c>false</c>）：自動把數量填到最大是誤買／誤丟的地雷，要的人再自己打開。
-/// </para>
-/// <para>
-/// 🔴 解不到特徵碼＝停用並記一筆 Information，不讓位址回 0 之後照樣去 hook。
-/// </para>
-/// <para>
-/// 📌 黑名單（售價、搜尋價格、招募條件、倒數設定、系統設定）沿用 DR：這些框的「上限」有其意義，
-/// 不該被放大。addon 內部名稱與伺服器地區無關。
-/// </para>
 /// </remarks>
 public sealed unsafe class AutoNumericInputMax : TcModule
 {
