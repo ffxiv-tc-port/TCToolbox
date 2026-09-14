@@ -220,6 +220,20 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
     private readonly List<PendingVerification> pendingVerifications = [];
 
     /// <summary>
+    /// 排隊等著送出的置物櫃搬移。同一時間只讓一筆在途，其餘排在這裡逐筆送出。
+    /// 🔴 這裡**不存任何原生指標**：agent 與來源格都在送出那一幀重查，
+    /// 排隊期間只保存容器、格號與 itemId。
+    /// </summary>
+    private readonly record struct QueuedChestMove(
+        InventoryType Source, int Slot, uint BaseItemId,
+        string DisplayName, bool Withdrawing, int SendCount);
+
+    private readonly List<QueuedChestMove> chestQueue = [];
+
+    /// <summary>佇列上限。置物櫃一頁 50 格，超過就是點得比搬得快。</summary>
+    private const int ChestQueueMax = 60;
+
+    /// <summary>
     /// 🔴 觀察退回的時間長度。**不是**「等這麼久再看一眼」——是「持續盯到這麼久為止」。
     /// ⚠️ 這跟先前修雇員時踩過的是同一個坑，別再把它調回短窗口。
     /// </summary>
@@ -290,6 +304,7 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
 
         pendingMenu = null;
         pendingVerifications.Clear();
+        chestQueue.Clear();
         lastHandledSource = InventoryType.Invalid;
         lastHandledSlot = -1;
         lastHandledItemId = 0;
@@ -485,7 +500,11 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
             }
         }
 
-        if (pendingVerifications.Count == 0) return;
+        if (pendingVerifications.Count == 0)
+        {
+            DrainChestQueue();
+            return;
+        }
 
         var now = Environment.TickCount64;
         var manager = InventoryManager.Instance();
@@ -571,6 +590,8 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
             if (now >= p.DeadlineTick)
                 pendingVerifications.RemoveAt(i);
         }
+
+        DrainChestQueue();
     }
 
     /// <summary>
@@ -917,12 +938,44 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
             return;
         }
 
-        var chestAgent = ResolveFreeCompanyChestAgent();
-        if (chestAgent == null)
+        if (ResolveFreeCompanyChestAgent() == null)
         {
             Svc.Log.Warning($"[{InternalName}] 置物櫃 agent 未就緒，「{displayName}」未轉移。");
             if (Throttle.Pass("AutoInventoryTransfer-NoChestAgent", 3_000))
                 Svc.Chat.PrintError($"[TC Toolbox] 部隊置物櫃視窗未就緒，「{displayName}」未轉移。");
+            return;
+        }
+
+        // menuAgent 只在這一幀有效，排隊路徑帶不過去（跨幀保存原生指標會靜默換人或懸空），
+        // 所以選單在分派之前就關掉，兩條路徑的收尾因此一致。
+        CloseContextMenu(menuAgent);
+
+        // 一次只讓一筆在途。實機量到同時在途愈多、請求被伺服器丟掉的比例愈高：
+        // 在途 0 時 13 送 13 中，在途 6 筆以上時有 23% 等不到生效。
+        if (CountChestDepartures() > 0)
+        {
+            EnqueueChestMove(source, slot, baseItemId, displayName, withdrawing);
+            return;
+        }
+
+        FireChestMove(source, slot, baseItemId, displayName, withdrawing, 1);
+    }
+
+    /// <summary>
+    /// 真的送出一筆置物櫃搬移。<b>呼叫端要保證此刻沒有其他在途的置物櫃搬移</b>。
+    /// 置物櫃 agent 與來源格都在這一幀重查，不吃呼叫端的快取。
+    /// <paramref name="queuedSendCount"/>＝這筆累積的點擊次數（最小 1），只進診斷。
+    /// </summary>
+    private void FireChestMove(
+        InventoryType source, int slot, uint baseItemId, string displayName,
+        bool withdrawing, int queuedSendCount)
+    {
+        if (moveItemInChest == null) return;
+
+        var chestAgent = ResolveFreeCompanyChestAgent();
+        if (chestAgent == null)
+        {
+            Svc.Log.Warning($"[{InternalName}] 置物櫃 agent 未就緒，「{displayName}」未轉移。");
             return;
         }
 
@@ -989,7 +1042,7 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         // 合併成一筆：起算點留第一次送出（耗時才是真的），期限跟著最新一次送出往後推。
         var now = Environment.TickCount64;
         var startTick = now;
-        var sendCount = 1;
+        var sendCount = queuedSendCount;
         for (var i = pendingVerifications.Count - 1; i >= 0; i--)
         {
             var q = pendingVerifications[i];
@@ -997,7 +1050,7 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
                 q.Source != source || q.Slot != slot || q.BaseItemId != baseItemId) continue;
 
             startTick = q.StartTick;
-            sendCount = q.SendCount + 1;
+            sendCount = q.SendCount + queuedSendCount;
             pendingVerifications.RemoveAt(i);
             break;
         }
@@ -1009,8 +1062,6 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
 
         moveItemInChest((nint)chestAgent, source, (uint)slot, destination, (uint)destinationSlot);
 
-        CloseContextMenu(menuAgent);
-
         // ⚠️ 這裡**故意不印**「已轉移」。MoveItemInChest 是非同步請求，呼叫當下本機什麼都還沒變，
         // 先報成功就是重蹈先前「本機動了就宣告成功」的覆轍。
         // 成功訊息改由 ChestDeparture 觀察器在道具真的離開來源格時才印。
@@ -1019,6 +1070,73 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
             source, slot, destination, destinationSlot, baseItemId, displayName,
             startTick, now + RollbackWatchMs,
             sourceQuantity, sourceFlags, sendCount));
+    }
+
+    /// <summary>
+    /// 把一筆搬移排進佇列。同一格同一件重複點只累加次數，不排第二筆。
+    /// </summary>
+    private void EnqueueChestMove(
+        InventoryType source, int slot, uint baseItemId, string displayName, bool withdrawing)
+    {
+        for (var i = 0; i < chestQueue.Count; i++)
+        {
+            var q = chestQueue[i];
+            if (q.Source != source || q.Slot != slot || q.BaseItemId != baseItemId) continue;
+
+            chestQueue[i] = q with { SendCount = q.SendCount + 1 };
+            Svc.Log.Information(
+                $"[{InternalName}] 置物櫃搬移已在佇列中，累加點擊：{source}#{slot} " +
+                $"itemId={baseItemId} 點擊次數={q.SendCount + 1} 佇列={chestQueue.Count}");
+            return;
+        }
+
+        if (chestQueue.Count >= ChestQueueMax)
+        {
+            if (Throttle.Pass("AutoInventoryTransfer-ChestQueueFull", 3_000))
+                Svc.Chat.PrintError(
+                    $"[TC Toolbox] 置物櫃搬移已排到 {ChestQueueMax} 筆，「{displayName}」沒有排進去，請等前面搬完再試。");
+            return;
+        }
+
+        chestQueue.Add(new QueuedChestMove(source, slot, baseItemId, displayName, withdrawing, 1));
+        Svc.Log.Information(
+            $"[{InternalName}] 置物櫃搬移排隊中：{source}#{slot} itemId={baseItemId}「{displayName}」 " +
+            $"佇列={chestQueue.Count} 在途={CountChestDepartures()}");
+    }
+
+    /// <summary>
+    /// 前一筆確認（或逾時）之後才送下一筆。
+    /// 送出前重讀來源格：排隊期間使用者可能自己動過那一格，itemId 對不上就跳過，
+    /// 免得把後來補進同一格的另一件道具搬走。
+    /// </summary>
+    private void DrainChestQueue()
+    {
+        if (chestQueue.Count == 0 || CountChestDepartures() > 0) return;
+
+        if (ResolveFreeCompanyChestAgent() == null)
+        {
+            Svc.Log.Information($"[{InternalName}] 置物櫃已關閉，取消排隊中的 {chestQueue.Count} 筆搬移。");
+            chestQueue.Clear();
+            return;
+        }
+
+        var next = chestQueue[0];
+        chestQueue.RemoveAt(0);
+
+        var manager = InventoryManager.Instance();
+        if (manager == null ||
+            !TryReadSlot(manager, next.Source, next.Slot, out var curItemId, out _, out _) ||
+            curItemId != next.BaseItemId)
+        {
+            Svc.Log.Information(
+                $"[{InternalName}] 排隊中的搬移已失效，跳過：{next.Source}#{next.Slot} " +
+                $"itemId={next.BaseItemId}「{next.DisplayName}」 現況=" +
+                (manager == null ? "讀不到背包" : DescribeSlot(manager, next.Source, next.Slot)));
+            return;
+        }
+
+        FireChestMove(next.Source, next.Slot, next.BaseItemId, next.DisplayName,
+            next.Withdrawing, next.SendCount);
     }
 
     /// <summary>道具名稱一律走 Lumina Item 表（台服自帶繁中），不讀 addon 上的文字。</summary>
