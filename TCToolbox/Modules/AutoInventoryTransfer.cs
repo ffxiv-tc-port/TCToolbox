@@ -1022,6 +1022,11 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
 
     private static bool IsItemAt(InventoryManager* manager, InventoryType type, int slot, uint baseItemId)
     {
+        // 🔴 Items 為 null 而 Size > 0 時，GetInventorySlot 回的是非 null 的假指標（理由同本檔上一處）。
+        // 刻意不連 IsLoaded 一起擋：它為 false 時 Items 仍可能有效，擋掉會把既有判斷改成「讀不到」。
+        var container = manager->GetInventoryContainer(type);
+        if (container == null || container->Items == null) return false;
+
         var item = manager->GetInventorySlot(type, slot);
         return item != null && item->GetBaseItemId() == baseItemId;
     }
@@ -1034,6 +1039,10 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         baseItemId = 0;
         quantity = 0;
         flags = 0;
+
+        // 🔴 假指標防線與 IsItemAt 同一條，理由見那裡。
+        var container = manager->GetInventoryContainer(type);
+        if (container == null || container->Items == null) return false;
 
         var item = manager->GetInventorySlot(type, slot);
         if (item == null || item->ItemId == 0) return false;
