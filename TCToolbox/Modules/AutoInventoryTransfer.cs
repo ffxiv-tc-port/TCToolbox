@@ -205,11 +205,17 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
     /// 等伺服器確認的轉移。雇員／部隊置物櫃／鞍袋這三個容器伺服器有可能拒絕
     /// （另一名玩家正在用置物櫃、雇員 session 狀態…），所以本機狀態不等於最終狀態。
     /// </summary>
+    /// <remarks>
+    /// <c>SourceQuantity</c>／<c>SourceFlags</c> 是<b>送出那一刻</b>來源格的內容，
+    /// 只有 <see cref="VerificationKind.ChestDeparture"/> 會拿它們比對。
+    /// <c>SendCount</c>＝合併進這一筆的送出次數（同一格同一件重複點會累加，最小 1）。
+    /// </remarks>
     private readonly record struct PendingVerification(
         VerificationKind Kind,
         InventoryType Source, int Slot,
         InventoryType Destination, int DestinationSlot,
-        uint BaseItemId, string DisplayName, long StartTick, long DeadlineTick);
+        uint BaseItemId, string DisplayName, long StartTick, long DeadlineTick,
+        int SourceQuantity, uint SourceFlags, int SendCount);
 
     private readonly List<PendingVerification> pendingVerifications = [];
 
@@ -497,7 +503,13 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
             //    看到「已生效」＝夠了；看到「逾時未生效」＝不夠，那時才需要重新評估 op-lock。
             if (p.Kind == VerificationKind.ChestDeparture)
             {
-                if (!IsItemAt(manager, p.Source, p.Slot, p.BaseItemId))
+                // 只比 itemId 分不出「真的沒搬走」跟「搬走一部分」／「同款另一疊回填進來」：
+                // 數量要用「沒有少掉」而不是「不相等」，否則背包格被塞進新東西會被誤判成已生效。
+                var stillAtSource =
+                    TryReadSlot(manager, p.Source, p.Slot, out var curItemId, out var curQty, out var curFlags)
+                    && curItemId == p.BaseItemId && curFlags == p.SourceFlags && curQty >= p.SourceQuantity;
+
+                if (!stillAtSource)
                 {
                     pendingVerifications.RemoveAt(i);
 
@@ -509,7 +521,8 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
 
                     Svc.Log.Information(
                         $"[{InternalName}] 置物櫃搬移已生效：{p.Source}#{p.Slot} → {where} " +
-                        $"itemId={p.BaseItemId} 耗時={elapsed}ms");
+                        $"itemId={p.BaseItemId} 耗時={elapsed}ms 送出次數={p.SendCount} " +
+                        $"來源格現況={DescribeSlot(manager, p.Source, p.Slot)}（送出時 {p.BaseItemId}×{p.SourceQuantity}）");
 
                     if (Config.NotifyOnTransfer)
                         Svc.Chat.Print($"[TC Toolbox] 已轉移「{p.DisplayName}」。");
@@ -521,7 +534,9 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
                 pendingVerifications.RemoveAt(i);
                 Svc.Log.Warning(
                     $"[{InternalName}] 置物櫃搬移逾時未生效：{p.Source}#{p.Slot} itemId={p.BaseItemId} " +
-                    $"——{RollbackWatchMs}ms 後道具仍在來源格，MoveItemInChest 沒有被伺服器受理。");
+                    $"送出次數={p.SendCount} 在途={CountChestDepartures()} " +
+                    $"來源格現況={DescribeSlot(manager, p.Source, p.Slot)}（送出時 {p.BaseItemId}×{p.SourceQuantity}） " +
+                    $"——{RollbackWatchMs}ms 後來源格內容沒變，MoveItemInChest 沒有被伺服器受理。");
 
                 if (Throttle.Pass("AutoInventoryTransfer-ChestTimeout", 3_000))
                     Svc.Chat.PrintError(
@@ -865,7 +880,8 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
             pendingVerifications.Add(new PendingVerification(
                 VerificationKind.MoveItemSlotRollback,
                 source, slot, destination, destinationSlot, baseItemId, displayName,
-                startTick, startTick + RollbackWatchMs));
+                startTick, startTick + RollbackWatchMs,
+                0, 0, 1));
         }
     }
 
@@ -947,9 +963,35 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
             return;
         }
 
+        var sourceManager = InventoryManager.Instance();
+        if (sourceManager == null ||
+            !TryReadSlot(sourceManager, source, slot, out _, out var sourceQuantity, out var sourceFlags))
+        {
+            Svc.Log.Warning($"[{InternalName}] 來源格 {source}#{slot} 已經讀不到內容，「{displayName}」未轉移。");
+            return;
+        }
+
+        // 同一格同一件重複點：兩筆觀察記錄盯的是**同一個條件**，分不出來也沒意義。
+        // 合併成一筆：起算點留第一次送出（耗時才是真的），期限跟著最新一次送出往後推。
+        var now = Environment.TickCount64;
+        var startTick = now;
+        var sendCount = 1;
+        for (var i = pendingVerifications.Count - 1; i >= 0; i--)
+        {
+            var q = pendingVerifications[i];
+            if (q.Kind != VerificationKind.ChestDeparture ||
+                q.Source != source || q.Slot != slot || q.BaseItemId != baseItemId) continue;
+
+            startTick = q.StartTick;
+            sendCount = q.SendCount + 1;
+            pendingVerifications.RemoveAt(i);
+            break;
+        }
+
         Svc.Log.Information(
             $"[{InternalName}] 置物櫃搬移送出（{(withdrawing ? "取出" : "存入")}）：{source}#{slot} → " +
-            $"{(withdrawing ? "（落點由遊戲決定）" : $"{destination}#{destinationSlot}")} itemId={baseItemId}");
+            $"{(withdrawing ? "（落點由遊戲決定）" : $"{destination}#{destinationSlot}")} itemId={baseItemId}×{sourceQuantity} " +
+            $"送出次數={sendCount} 在途={CountChestDepartures() + 1}");
 
         moveItemInChest((nint)chestAgent, source, (uint)slot, destination, (uint)destinationSlot);
 
@@ -958,11 +1000,11 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         // ⚠️ 這裡**故意不印**「已轉移」。MoveItemInChest 是非同步請求，呼叫當下本機什麼都還沒變，
         // 先報成功就是重蹈先前「本機動了就宣告成功」的覆轍。
         // 成功訊息改由 ChestDeparture 觀察器在道具真的離開來源格時才印。
-        var now = Environment.TickCount64;
         pendingVerifications.Add(new PendingVerification(
             VerificationKind.ChestDeparture,
             source, slot, destination, destinationSlot, baseItemId, displayName,
-            now, now + RollbackWatchMs));
+            startTick, now + RollbackWatchMs,
+            sourceQuantity, sourceFlags, sendCount));
     }
 
     /// <summary>道具名稱一律走 Lumina Item 表（台服自帶繁中），不讀 addon 上的文字。</summary>
@@ -982,6 +1024,39 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
     {
         var item = manager->GetInventorySlot(type, slot);
         return item != null && item->GetBaseItemId() == baseItemId;
+    }
+
+    /// <summary>讀出一格的內容。空格（itemId 0）一律回 <c>false</c>。</summary>
+    private static bool TryReadSlot(
+        InventoryManager* manager, InventoryType type, int slot,
+        out uint baseItemId, out int quantity, out uint flags)
+    {
+        baseItemId = 0;
+        quantity = 0;
+        flags = 0;
+
+        var item = manager->GetInventorySlot(type, slot);
+        if (item == null || item->ItemId == 0) return false;
+
+        baseItemId = item->GetBaseItemId();
+        quantity = item->Quantity;
+        flags = (uint)item->Flags;
+        return true;
+    }
+
+    /// <summary>診斷用：把一格的現況寫成一段可讀的字串。</summary>
+    private static string DescribeSlot(InventoryManager* manager, InventoryType type, int slot)
+        => TryReadSlot(manager, type, slot, out var id, out var qty, out var flags)
+            ? $"{id}×{qty}(flags={flags})"
+            : "空格";
+
+    /// <summary>目前還在等置物櫃回應的筆數（診斷用，不影響判斷）。</summary>
+    private int CountChestDepartures()
+    {
+        var n = 0;
+        foreach (var p in pendingVerifications)
+            if (p.Kind == VerificationKind.ChestDeparture) n++;
+        return n;
     }
 
     /// <summary>依來源容器與目前開著的視窗決定目的地候選（依序嘗試）。</summary>
