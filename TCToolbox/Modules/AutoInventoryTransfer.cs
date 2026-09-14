@@ -749,7 +749,7 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         //「hook 沒被呼叫」還是「讀不到那一格」。右鍵才會觸發，不會洗版。
         if (item == null || item->ItemId == 0)
         {
-            Svc.Log.Debug($"[{InternalName}] 讀不到來源格：{source}#{slot}（item={(item == null ? "null" : "ItemId=0")}）");
+            Svc.Log.Information($"[{InternalName}] 讀不到來源格，不動作：{source}#{slot}（item={(item == null ? "null" : "ItemId=0")}）");
             return;
         }
 
@@ -945,8 +945,22 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
 
             var manager = InventoryManager.Instance();
             var sourceItem = manager == null ? null : manager->GetInventorySlot(source, slot);
-            if (manager == null || sourceItem == null ||
-                !TryFindTargetSlot(manager, candidates, sourceItem, out destination, out destinationSlot))
+
+            // 讀不到來源格與「置物櫃沒有位子」是兩種原因，訊息不能共用：
+            // 合在一起時使用者看到的一律是「沒有空位」，真正發生的事反而看不見。
+            if (manager == null || sourceItem == null)
+            {
+                Svc.Log.Information(
+                    $"[{InternalName}] 讀不到來源格，無法挑目的地：{source}#{slot} " +
+                    $"itemId={baseItemId}「{displayName}」（manager={(manager == null ? "null" : "ok")}）");
+
+                if (Throttle.Pass("AutoInventoryTransfer-NoSourceItem", 3_000))
+                    Svc.Chat.PrintError(
+                        $"[TC Toolbox] 讀不到「{displayName}」所在的格位（{source} 第 {slot} 格），未轉移。");
+                return;
+            }
+
+            if (!TryFindTargetSlot(manager, candidates, sourceItem, out destination, out destinationSlot))
             {
                 if (Throttle.Pass("AutoInventoryTransfer-Full", 3_000))
                     Svc.Chat.PrintError($"[TC Toolbox] 部隊置物櫃沒有空位也沒有可疊的同款道具，「{displayName}」未轉移。");
