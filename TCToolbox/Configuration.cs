@@ -786,6 +786,22 @@ public sealed class PalacePalOnMappyConfig
 
     /// <summary>埋藏寶藏的圖示 id。0＝用內建預設值。</summary>
     public uint HoardIconId { get; set; }
+
+    /// <summary>「可能有」陷阱的圖示 id。0＝用內建預設值。</summary>
+    public uint TrapUnconfirmedIconId { get; set; }
+
+    /// <summary>「可能有」埋藏寶藏的圖示 id。0＝用內建預設值。</summary>
+    public uint HoardUnconfirmedIconId { get; set; }
+
+    /// <summary>把「現在真的看得到」的銀／金寶箱也畫到地圖上。</summary>
+    /// <remarks>📌 預設關閉＝沿用本模組原本只畫陷阱／寶藏的行為。</remarks>
+    public bool ShowVisibleCoffers { get; set; }
+
+    /// <summary>銀寶箱的圖示 id。0＝用內建預設值。</summary>
+    public uint SilverCofferIconId { get; set; }
+
+    /// <summary>金寶箱的圖示 id。0＝用內建預設值。</summary>
+    public uint GoldCofferIconId { get; set; }
 }
 
 /// <summary>狩獵列車顯示到 Mappy。</summary>
