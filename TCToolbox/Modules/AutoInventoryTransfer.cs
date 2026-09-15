@@ -763,14 +763,19 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         var manager = InventoryManager.Instance();
         if (manager == null) return;
 
-        var item = manager->GetInventorySlot(source, slot);
+        // 🔴 Items 為 null 而 Size > 0 時，GetInventorySlot 回的是非 null 的假指標（理由同本檔上一處）。
+        var container = manager->GetInventoryContainer(source);
+        var containerReady = container != null && container->Items != null;
+        var item = containerReady ? manager->GetInventorySlot(source, slot) : null;
 
         // 部隊置物櫃「取出」完全沒有任何輸出（存入正常），代表在這之前就 return 了，
         // 不是搬移失敗。這行把遊戲實際傳進來的容器與格號記下來，才能分辨是
         //「hook 沒被呼叫」還是「讀不到那一格」。右鍵才會觸發，不會洗版。
         if (item == null || item->ItemId == 0)
         {
-            Svc.Log.Information($"[{InternalName}] 讀不到來源格，不動作：{source}#{slot}（item={(item == null ? "null" : "ItemId=0")}）");
+            Svc.Log.Information(
+                $"[{InternalName}] 讀不到來源格，不動作：{source}#{slot}" +
+                $"（item={(item == null ? "null" : "ItemId=0")}、格位陣列={(containerReady ? "ok" : "未配置")}）");
             return;
         }
 
@@ -997,7 +1002,10 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
             }
 
             var manager = InventoryManager.Instance();
-            var sourceItem = manager == null ? null : manager->GetInventorySlot(source, slot);
+            // 🔴 Items 為 null 而 Size > 0 時，GetInventorySlot 回的是非 null 的假指標（理由同本檔上一處）。
+            var container = manager == null ? null : manager->GetInventoryContainer(source);
+            var containerReady = container != null && container->Items != null;
+            var sourceItem = containerReady ? manager->GetInventorySlot(source, slot) : null;
 
             // 讀不到來源格與「置物櫃沒有位子」是兩種原因，訊息不能共用：
             // 合在一起時使用者看到的一律是「沒有空位」，真正發生的事反而看不見。
@@ -1005,7 +1013,8 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
             {
                 Svc.Log.Information(
                     $"[{InternalName}] 讀不到來源格，無法挑目的地：{source}#{slot} " +
-                    $"itemId={baseItemId}「{displayName}」（manager={(manager == null ? "null" : "ok")}）");
+                    $"itemId={baseItemId}「{displayName}」（manager={(manager == null ? "null" : "ok")}" +
+                    $"、格位陣列={(manager == null ? "未查" : containerReady ? "ok" : "未配置")}）");
 
                 if (Throttle.Pass("AutoInventoryTransfer-NoSourceItem", 3_000))
                     Svc.Chat.PrintError(
