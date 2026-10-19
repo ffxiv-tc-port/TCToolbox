@@ -1,0 +1,914 @@
+using System.Collections.Generic;
+using System.Globalization;
+using System.Numerics;
+using System.Text;
+using Dalamud.Bindings.ImGui;
+using Dalamud.Game.ClientState.Conditions;
+using Dalamud.Interface.Utility.Raii;
+using Dalamud.Plugin.Services;
+using FFXIVClientStructs.FFXIV.Client.Game;
+using FFXIVClientStructs.FFXIV.Client.UI.Agent;
+using Lumina.Excel.Sheets;
+using TCToolbox.Core;
+
+namespace TCToolbox.Modules;
+
+/// <summary>
+/// 老主顧交易總覽：唯讀顯示各老主顧的滿意度等級、當前等級進度與本週交易次數，
+/// 並支援右鍵「導航過去」——傳送到該區乙太之光（Lifestream IPC）後接 vnavmesh IPC
+/// 直接走到 NPC 座標；兩者缺一律優雅退化（見 <see cref="DrawNavigationContextMenu"/>）。
+/// ⚠️ DR 的 FastCustomDeliveriesInfo 描述寫「顯示本週報酬增加的老主顧」但根本沒實作，
+/// 本模組不承接那個承諾——範圍就是誠實的狀態總覽（外加手動觸發的導航捷徑）。
+/// </summary>
+public sealed class CustomDeliveriesOverview : TcModule
+{
+    public override string InternalName => "CustomDeliveriesOverview";
+    public override string DisplayName => "老主顧交易總覽";
+    public override string Description =>
+        "唯讀總覽視窗：列出各老主顧的滿意度等級、當前等級進度、本週已交易次數與全體共用的週上限。" +
+        "裝了 Mappy 的話還會把「本週還交得了」的老主顧畫到地圖上，提示文字直接寫出上面那幾個數字（可關）。" +
+        "資料只讀不寫，零 hook。";
+
+    public override ModuleCategory Category => ModuleCategory.Company;
+
+    public override bool HasConfigUI => true;
+
+    /// <summary>
+    /// 每週全體老主顧共用的交易上限。這是 ClientStructs
+    /// <c>SatisfactionSupplyManager.GetRemainingAllowances()</c> 原始碼裡的常數（12 - 已用），
+    /// 直接取常數自己加總，避免呼叫原生函式。
+    /// </summary>
+    private const int WeeklyTotalCap = 12;
+
+    /// <summary>滿意度等級上限（遊戲 UI 的五顆心）。</summary>
+    private const int MaxRank = 5;
+
+    /// <summary>
+    /// 放到 Mappy 的標記來源名稱。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>不要改。</b>Mappy 端拿這個字串當鍵記住「這個來源要不要顯示」，
+    /// 改了之後使用者原本關掉的來源會變成孤兒，而新來源會以「開」的狀態冒出來。
+    /// </remarks>
+    public const string MarkerSource = "TCToolbox.CustomDeliveries";
+
+    /// <summary>
+    /// 老主顧在 Mappy 上的圖示。
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ 仍然做成可設定的：圖示的「存在」與「長什麼樣子」是兩件事，後者離線證不了。
+    /// </remarks>
+    public const uint DefaultMappyIconId = 60927;
+
+    /// <summary>向 Mappy 重新同步的間隔（毫秒）。</summary>
+    private const int MappySyncIntervalMs = 5_000;
+
+    /// <summary>無條件全量重推的間隔（毫秒）。理由見 <see cref="MappyMarkerPublisher"/>。</summary>
+    private const int MappyForceResyncIntervalMs = 60_000;
+
+    /// <summary>偵測到 Mappy 不在時，下一次重探之前先退避多久（毫秒）。</summary>
+    /// <remarks>
+    /// ⚠️ Dalamud 的 IPC 在對方沒註冊時是<b>擲例外</b>，不是回 null。沒裝 Mappy 的人本來就佔多數，
+    /// 讓他們每 5 秒付一次「擲＋接」的代價沒有意義（而且永遠不會停）。
+    /// 🔴 退避要用 <see cref="Throttle.Block"/> 不能用 <see cref="Throttle.Pass"/>——
+    /// <c>Pass</c> 在鍵還在冷卻中時根本不寫入，而那正是我們想設退避的那一刻。
+    /// </remarks>
+    private const int MappyMissingBackoffMs = 60_000;
+
+    /// <summary>
+    /// NPC 在世界中的落點：座標＋所在區域／地圖直接讀自 Lumina <c>Level</c> 表
+    /// （零轉換，SetFlagMapMarker／vnavmesh 都吃世界座標），<c>AetheryteId</c> 是同一
+    /// 個區域裡離 NPC 最近的「主乙太之光」（<c>IsAetheryte==true</c>，能用 Teleport
+    /// 動作長途傳送的那種，不是只能就近走網路的乙太之光網路點）；0＝該區域找不到。
+    /// </summary>
+    private readonly record struct NpcLocation(ushort TerritoryType, uint Map, Vector3 WorldPosition, uint AetheryteId);
+
+    /// <summary>從 Lumina 表快取下來的靜態資料（動態狀態每幀重讀，不快取）。</summary>
+    private sealed record NpcStaticInfo(
+        int Index,              // SatisfactionSupplyManager 各陣列的索引（= SatisfactionNpc RowId - 1）
+        string Name,            // ENpcResident.Singular（台服繁中）
+        byte LevelUnlock,
+        byte DeliveriesPerWeek,
+        string QuestName,       // 解鎖任務名（可能為空字串）
+        ushort[] RankThresholds, // SatisfactionNpcParams[rank].SatisfactionRequired，索引＝滿意度等級
+        NpcLocation? Location    // 查不到座標（Level 表沒有對應列）就是 null
+    );
+
+    /// <summary>Level 表單一列的落點資訊（世界座標＋所屬區域／地圖）。</summary>
+    private readonly record struct LevelPlacement(Vector3 Position, ushort Territory, uint Map);
+
+    /// <summary>使用者在等待中的導航被判定為手動移動而取消的位移門檻（碼）。</summary>
+    private const float ManualMoveCancelDistance = 2f;
+
+    private readonly List<NpcStaticInfo> npcs = [];
+    private readonly TaskQueue navQueue = new();
+    private bool windowOpen;
+
+    // ── Mappy 標記（增量同步）─────────────────────────────────────────────
+    private readonly MappyMarkerPublisher mappy = new(MarkerSource);
+
+    /// <summary>重複使用的緩衝區，免得每次同步都配一個新的 List。</summary>
+    private readonly List<MappyMarkerPublisher.Marker> mappyPending = [];
+
+    /// <summary>上一次成功推給 Mappy 的內容簽章；空字串＝還沒推過或已被作廢。</summary>
+    private string lastMappySignature = string.Empty;
+
+    private bool mappyWasAvailable;
+    private bool mappyHasMarkers;
+    private MappyState mappyState = MappyState.Unknown;
+    private int lastMappyPlaced;
+    private int lastMappyRejected;
+    private int lastMappySkippedNoCoords;
+
+    private CustomDeliveriesOverviewConfig Config => Plugin.Instance.Config.CustomDeliveriesOverview;
+
+    /// <summary>Mappy 橋接的狀態。<b>「不知道」是零值</b>。</summary>
+    private enum MappyState
+    {
+        /// <summary>還沒探測過。</summary>
+        Unknown = 0,
+
+        /// <summary>使用者把「也顯示到 Mappy」關掉了。</summary>
+        Disabled,
+
+        /// <summary>Mappy 沒裝或還沒載入。</summary>
+        Missing,
+
+        /// <summary>Mappy 回報的 IPC 版本比本模組寫的時候還舊。</summary>
+        VersionTooOld,
+
+        /// <summary>一切正常。</summary>
+        Ok,
+    }
+
+    protected override void OnEnable()
+    {
+        npcs.Clear();
+
+        BuildLevelPlacements(out var npcPlacements, out var aetherytePlacements);
+        var mainAetherytesByTerritory = BuildMainAetherytesByTerritory(aetherytePlacements);
+
+        foreach (var row in Svc.Data.GetExcelSheet<SatisfactionNpc>())
+        {
+            if (row.RowId == 0) continue; // 佔位列
+
+            // ⚠️ 台服 EXD 對未開放內容「有列但名稱是空字串」——名稱取不到就整列跳過，
+            // 不顯示空白列。
+            var name = row.Npc.ValueNullable?.Singular.ExtractText();
+            if (string.IsNullOrWhiteSpace(name)) continue;
+
+            var thresholds = new ushort[row.SatisfactionNpcParams.Count];
+            for (var i = 0; i < thresholds.Length; i++)
+                thresholds[i] = row.SatisfactionNpcParams[i].SatisfactionRequired;
+
+            NpcLocation? location = null;
+            if (npcPlacements.TryGetValue(row.Npc.RowId, out var placement))
+            {
+                var aetheryteId = 0u;
+                if (mainAetherytesByTerritory.TryGetValue(placement.Territory, out var candidates))
+                    aetheryteId = PickNearestAetheryte(candidates, placement.Position);
+                location = new NpcLocation(placement.Territory, placement.Map, placement.Position, aetheryteId);
+            }
+
+            npcs.Add(new NpcStaticInfo(
+                (int)row.RowId - 1,
+                name,
+                row.LevelUnlock,
+                row.DeliveriesPerWeek,
+                row.QuestRequired.ValueNullable?.Name.ExtractText() ?? string.Empty,
+                thresholds,
+                location));
+        }
+
+        navQueue.OnTimeout = step => Svc.Chat.Print($"[TC Toolbox] 導航逾時，已取消：{step}");
+
+        // 會發起 vnavmesh 移動 ⇒ 借用共用停止設施（/tcstop 與補送停止的看門狗）。
+        NavStop.Acquire();
+
+        Svc.PluginInterface.UiBuilder.Draw += DrawWindow;
+        Svc.Framework.Update += OnFrameworkUpdate;
+
+        // 啟用後立刻同步一次，不要讓使用者等一個節流週期。
+        Throttle.Reset(MappySyncThrottleKey);
+        Throttle.Reset(MappyForceResyncThrottleKey);
+        lastMappySignature = string.Empty;
+        mappyWasAvailable = false;
+        mappy.Forget();
+    }
+
+    public override string? StopForFleetEmergency()
+    {
+        if (!navQueue.IsBusy) return null;
+
+        var step = navQueue.CurrentStep;
+        navQueue.Abort();
+        return $"{DisplayName}（中止於「{step}」）";
+    }
+
+    protected override void OnDisable()
+    {
+        Svc.Framework.Update -= OnFrameworkUpdate;
+        Svc.PluginInterface.UiBuilder.Draw -= DrawWindow;
+        navQueue.Abort();
+        NavStop.Release();
+
+        // 🔴 停用（含外掛卸載）時一定要把標記收乾淨，否則 Mappy 會一直畫著一組沒有人再更新的舊標記。
+        mappy.Clear();
+        mappyHasMarkers = false;
+        mappyWasAvailable = false;
+        mappyState = MappyState.Unknown;
+        lastMappySignature = string.Empty;
+        lastMappyPlaced = 0;
+        lastMappyRejected = 0;
+        lastMappySkippedNoCoords = 0;
+
+        npcs.Clear();
+        windowOpen = false;
+    }
+
+    private string MappySyncThrottleKey => $"TCToolbox.{InternalName}.MappySync";
+
+    private string MappyForceResyncThrottleKey => $"TCToolbox.{InternalName}.MappyForce";
+
+    private void OnFrameworkUpdate(IFramework framework)
+    {
+        navQueue.Tick();
+        SyncMappy();
+    }
+
+    // ───────────────────────── Mappy 標記 ─────────────────────────
+
+    /// <summary>
+    /// 把已解鎖的老主顧同步成 Mappy 地圖上的標記。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>未解鎖的一律不畫</b>，兩種設定下都一樣：那不是「今天還沒去」，是根本還去不了。
+    /// 🔴 <b>不解參考可疑指標。</b>索引超出遊戲端陣列（未來改版陣列縮短）時整筆跳過，
+    /// 與 <see cref="DrawContent"/> 的處理一致。
+    /// </remarks>
+    private unsafe void SyncMappy()
+    {
+        if (!Throttle.Pass(MappySyncThrottleKey, MappySyncIntervalMs)) return;
+
+        if (!Config.ShowOnMappy)
+        {
+            if (mappyHasMarkers)
+            {
+                mappy.Clear();
+                mappyHasMarkers = false;
+                lastMappySignature = string.Empty;
+                lastMappyPlaced = 0;
+            }
+
+            mappyState = MappyState.Disabled;
+            return;
+        }
+
+        // 未登入時讀不到老主顧狀態；已放上去的標記留著不動。
+        if (!Svc.ClientState.IsLoggedIn) return;
+
+        if (!MappyMarkerIpc.TryGetVersion(out var version))
+        {
+            if (mappyWasAvailable || mappyState != MappyState.Missing)
+            {
+                // 🔴 手上的 handle 全部失效了，留著會讓下一次同步以為「已經放上去了」。
+                mappy.Forget();
+                lastMappySignature = string.Empty;
+            }
+
+            mappyWasAvailable = false;
+            mappyHasMarkers = false;
+            mappyState = MappyState.Missing;
+
+            // 沒裝 Mappy 是常態，退避到一分鐘一次（理由見 MappyMissingBackoffMs）。
+            Throttle.Block(MappySyncThrottleKey, MappyMissingBackoffMs);
+            return;
+        }
+
+        if (version < MappyMarkerIpc.SupportedVersion)
+        {
+            mappyState = MappyState.VersionTooOld;
+            return;
+        }
+
+        if (!mappyWasAvailable)
+        {
+            mappy.Forget();
+            lastMappySignature = string.Empty;
+            mappyWasAvailable = true;
+        }
+
+        var mgr = SatisfactionSupplyManager.Instance();
+        if (mgr == null) return;
+
+        // 三個固定陣列都是唯讀欄位；span 只在本次呼叫內使用、不跨幀保存。
+        var ranks = mgr->SatisfactionRanks;
+        var used = mgr->UsedAllowances;
+
+        var totalUsed = 0;
+        foreach (var u in used) totalUsed += u;
+        var remaining = WeeklyTotalCap - totalUsed;
+        if (remaining < 0) remaining = 0;
+
+        var iconId = Config.MappyIconId is 0 ? DefaultMappyIconId : Config.MappyIconId;
+
+        mappyPending.Clear();
+        var skippedNoCoords = 0;
+
+        var signature = new StringBuilder();
+        signature.Append(iconId).Append('|')
+                 .Append(Config.OnlyWithRemainingDeliveries ? '1' : '0').Append('|')
+                 .Append(remaining).Append('|');
+
+        foreach (var npc in npcs)
+        {
+            if (npc.Location is not { } loc) continue;
+
+            var idx = npc.Index;
+            if (idx < 0 || idx >= ranks.Length || idx >= used.Length) continue;
+
+            var rank = ranks[idx];
+            if (rank == 0) continue; // 未解鎖
+
+            var usedN = used[idx];
+            var perWeekDone = npc.DeliveriesPerWeek > 0 && usedN >= npc.DeliveriesPerWeek;
+            var done = perWeekDone || remaining == 0;
+
+            if (done && Config.OnlyWithRemainingDeliveries) continue;
+
+            if (!MapCoords.TryWorldToMap(loc.Map, loc.WorldPosition, out var coords))
+            {
+                skippedNoCoords++;
+                continue;
+            }
+
+            mappyPending.Add(new MappyMarkerPublisher.Marker(
+                idx.ToString(CultureInfo.InvariantCulture),
+                loc.Map,
+                coords,
+                iconId,
+                BuildMappyTooltip(npc, rank, usedN, remaining, done)));
+
+            signature.Append(idx).Append(':').Append(rank).Append(':').Append(usedN).Append(',');
+        }
+
+        var newSignature = signature.ToString();
+
+        var forceFull = Throttle.Pass(MappyForceResyncThrottleKey, MappyForceResyncIntervalMs);
+        var contentChanged = newSignature != lastMappySignature;
+
+        if (!forceFull && !contentChanged && mappyState == MappyState.Ok)
+        {
+            mappyPending.Clear();
+            return;
+        }
+
+        mappy.Publish(mappyPending, forceFull);
+        mappyPending.Clear();
+
+        lastMappyPlaced = mappy.Placed;
+        lastMappyRejected = mappy.LastRejected;
+        lastMappySkippedNoCoords = skippedNoCoords;
+        lastMappySignature = newSignature;
+        mappyHasMarkers = mappy.Placed > 0;
+        mappyState = MappyState.Ok;
+
+        if (!contentChanged) return;
+
+        // 要使用者回報的診斷。
+        Svc.Log.Information(
+            $"[{InternalName}] 同步老主顧到 Mappy：放上 {lastMappyPlaced} 個"
+            + $"（本次異動 {mappy.LastIpcCalls} 次、圖示 {iconId}、共用額度剩 {remaining}／{WeeklyTotalCap}）"
+            + (skippedNoCoords > 0 ? $"、座標換算不出來 {skippedNoCoords} 個" : string.Empty)
+            + (lastMappyRejected > 0 ? $"、被 Mappy 拒絕 {lastMappyRejected} 個" : string.Empty));
+    }
+
+    private static string BuildMappyTooltip(NpcStaticInfo npc, byte rank, byte usedN, int remaining, bool done)
+    {
+        var sb = new StringBuilder();
+        sb.Append("老主顧：").Append(npc.Name);
+        sb.Append('\n').Append("滿意度：").Append(rank).Append('／').Append(MaxRank);
+        sb.Append('\n').Append("本週交易：").Append(usedN).Append('／').Append(npc.DeliveriesPerWeek);
+        sb.Append('\n').Append("共用額度剩餘：").Append(remaining).Append('／').Append(WeeklyTotalCap);
+
+        if (done) sb.Append('\n').Append("本週已經交不了了。");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// 掃一次 Level 表，把 NPC（Type 8，Object 連到 ENpcBase）與乙太之光（Type 12，
+    /// Object 連到 Aetheryte）的世界座標各自建成查找表。只在模組啟用時跑一次。
+    /// </summary>
+    private static void BuildLevelPlacements(
+        out Dictionary<uint, LevelPlacement> npcPlacements,
+        out Dictionary<uint, LevelPlacement> aetherytePlacements)
+    {
+        npcPlacements = [];
+        aetherytePlacements = [];
+
+        foreach (var level in Svc.Data.GetExcelSheet<Level>())
+        {
+            Dictionary<uint, LevelPlacement>? target = level.Type switch
+            {
+                8 => npcPlacements,        // ENpcBase
+                12 => aetherytePlacements, // Aetheryte
+                _ => null,
+            };
+            if (target == null) continue;
+
+            // 同一 NPC／乙太之光可能有多筆 Level 列（重複佈景），只取第一筆命中的。
+            target.TryAdd(level.Object.RowId,
+                new LevelPlacement(new Vector3(level.X, level.Y, level.Z), (ushort)level.Territory.RowId, level.Map.RowId));
+        }
+    }
+
+    /// <summary>
+    /// 只挑 <c>IsAetheryte==true</c> 的主水晶（能用長途 Teleport 動作傳送的那種，
+    /// 不含只能就近走的乙太之光網路點），依區域分組，供「最近的乙太之光」比對用。
+    /// </summary>
+    private static Dictionary<ushort, List<(uint Id, Vector3? Pos)>> BuildMainAetherytesByTerritory(
+        Dictionary<uint, LevelPlacement> aetherytePlacements)
+    {
+        Dictionary<ushort, List<(uint Id, Vector3? Pos)>> result = [];
+
+        foreach (var ae in Svc.Data.GetExcelSheet<Aetheryte>())
+        {
+            if (!ae.IsAetheryte) continue;
+            if (!ae.Territory.IsValid) continue;
+
+            var territory = (ushort)ae.Territory.RowId;
+            var pos = aetherytePlacements.TryGetValue(ae.RowId, out var placement) ? placement.Position : (Vector3?)null;
+
+            if (!result.TryGetValue(territory, out var list))
+                result[territory] = list = [];
+            list.Add((ae.RowId, pos));
+        }
+
+        return result;
+    }
+
+    /// <summary>同一區域可能不只一顆主水晶（少數大型開放區域），依 X/Z 平面距離挑最近的。</summary>
+    private static uint PickNearestAetheryte(List<(uint Id, Vector3? Pos)> candidates, Vector3 npcPos)
+    {
+        if (candidates.Count == 0) return 0;
+
+        var best = candidates[0].Id;
+        var bestDistSq = float.MaxValue;
+        foreach (var (id, pos) in candidates)
+        {
+            var distSq = pos is { } p
+                ? Vector2.DistanceSquared(new Vector2(p.X, p.Z), new Vector2(npcPos.X, npcPos.Z))
+                : float.MaxValue; // 座標查不到的候選排最後，仍給個保底值
+            if (distSq < bestDistSq)
+            {
+                bestDistSq = distSq;
+                best = id;
+            }
+        }
+
+        return best;
+    }
+
+    public override void DrawConfig()
+    {
+        if (ImGui.Button(windowOpen ? "關閉總覽視窗" : "開啟總覽視窗"))
+            windowOpen = !windowOpen;
+        ImGui.TextDisabled("純唯讀顯示；額度與滿意度由伺服器每週重置，本模組不做任何操作。");
+
+        ImGui.Spacing();
+        DrawMappyConfig();
+    }
+
+    /// <summary>設定畫面上的 Mappy 區塊。</summary>
+    /// <remarks>
+    /// 📌 模組沒啟用時 <see cref="SyncMappy"/> 沒在跑，<see cref="mappyState"/> 是死的——
+    /// 這裡自己（節流地）探一次，讓使用者在還沒啟用之前就看得出來「Mappy 在不在」。
+    /// </remarks>
+    private void DrawMappyConfig()
+    {
+        var onMappy = Config.ShowOnMappy;
+        if (ImGui.Checkbox("也顯示到 Mappy 地圖", ref onMappy))
+        {
+            Config.ShowOnMappy = onMappy;
+            Plugin.Instance.Config.Save();
+            lastMappySignature = string.Empty;
+            Throttle.Reset(MappySyncThrottleKey);
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "把老主顧畫到 Mappy 的地圖上，提示文字直接寫滿意度、本週交過幾次、共用額度剩幾次。\n" +
+                "未解鎖的老主顧不畫。沒裝 Mappy 就靜靜地什麼都不做，不會有錯誤訊息。");
+        }
+
+        if (!Config.ShowOnMappy) return;
+
+        using var indent = ImRaii.PushIndent();
+
+        var onlyRemaining = Config.OnlyWithRemainingDeliveries;
+        if (ImGui.Checkbox("只畫本週還交得了的", ref onlyRemaining))
+        {
+            Config.OnlyWithRemainingDeliveries = onlyRemaining;
+            Plugin.Instance.Config.Save();
+            lastMappySignature = string.Empty;
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "本週已經交滿的老主顧、或全體共用額度已經用完時，就不畫在地圖上（走過去也沒用）。\n" +
+                "取消這格的話會全部畫出來，交不了的在提示文字裡會註明。");
+        }
+
+        if (!IsEnabled && Throttle.Pass($"TCToolbox.{InternalName}.MappyUiProbe", 2_000))
+            mappyState = MappyMarkerIpc.TryGetVersion(out _) ? MappyState.Unknown : MappyState.Missing;
+
+        switch (mappyState)
+        {
+            case MappyState.Missing:
+                ImGui.TextDisabled("Mappy 未載入——標記沒有地方可以放。");
+                break;
+
+            case MappyState.VersionTooOld:
+                ImGui.TextDisabled("Mappy 回報的 IPC 版本過舊，同步已停下來。");
+                break;
+
+            case MappyState.Ok:
+                ImGui.TextDisabled($"目前放上 {lastMappyPlaced} 個老主顧。");
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip(
+                        $"座標換算不出來：{lastMappySkippedNoCoords} 個\n" +
+                        $"被 Mappy 拒絕：{lastMappyRejected} 個\n" +
+                        $"標記來源：{MarkerSource}（可在 Mappy 的設定裡單獨關掉）");
+                }
+
+                break;
+
+            default:
+                ImGui.TextDisabled(IsEnabled ? "尚未完成第一次同步。" : "Mappy 在，啟用模組後開始同步。");
+                break;
+        }
+
+        DrawMappyIconSetting();
+    }
+
+    /// <summary>
+    /// 圖示編號設定。
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ 做成可設定的理由：圖示的<b>存在</b>可以離線驗證，<b>長什麼樣子</b>不行。
+    /// </remarks>
+    private void DrawMappyIconSetting()
+    {
+        var current = Config.MappyIconId is 0 ? DefaultMappyIconId : Config.MappyIconId;
+
+        var wrap = GameIcons.TryGet(current);
+        if (wrap != null)
+        {
+            ImGui.Image(wrap.Handle, new Vector2(24f, 24f));
+            ImGui.SameLine();
+        }
+
+        ImGui.SetNextItemWidth(120f);
+        var value = (int)current;
+        if (ImGui.InputInt("地圖圖示編號", ref value))
+        {
+            // 🔴 清空／輸入 0 一律寫回哨兵 0（理由同 AetherCurrentTracker：寫具體常數＝烙死編號）。
+            Config.MappyIconId = value <= 0 ? 0u : (uint)value;
+            Plugin.Instance.Config.Save();
+            lastMappySignature = string.Empty;
+        }
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton($"預設（目前 {DefaultMappyIconId}）"))
+        {
+            Config.MappyIconId = 0;
+            Plugin.Instance.Config.Save();
+            lastMappySignature = string.Empty;
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                $"寫回「跟隨內建預設值」（目前是 {DefaultMappyIconId}"
+                + "＝遊戲 MapSymbol 表裡「老主顧交易」那一列的圖示）。\n"
+                + "跟隨的意思是：日後內建預設值若有修正，你會自動吃到。");
+        }
+    }
+
+    private void DrawWindow()
+    {
+        if (!windowOpen) return;
+
+        ImGui.SetNextWindowSize(new Vector2(560, 380), ImGuiCond.FirstUseEver);
+        // 標題引用 DisplayName；### 之後的 ID 保持原字面值，視窗位置／大小的存檔才不會被重置。
+        if (ImGui.Begin($"{DisplayName}###TCToolboxCustomDeliveries", ref windowOpen))
+            DrawContent();
+        ImGui.End();
+    }
+
+    private unsafe void DrawContent()
+    {
+        if (!Svc.ClientState.IsLoggedIn)
+        {
+            ImGui.TextDisabled("尚未登入，無法讀取老主顧狀態。");
+            return;
+        }
+
+        var mgr = SatisfactionSupplyManager.Instance();
+        if (mgr == null)
+        {
+            // 讀不到就顯示占位，絕不解參考可疑指標。
+            ImGui.TextDisabled("目前讀不到老主顧狀態（遊戲尚未初始化）。");
+            return;
+        }
+
+        // 三個固定陣列都是唯讀欄位；span 只在本幀使用、不跨幀保存。
+        var satisfaction = mgr->Satisfaction;
+        var ranks = mgr->SatisfactionRanks;
+        var used = mgr->UsedAllowances;
+
+        var totalUsed = 0;
+        foreach (var u in used)
+            totalUsed += u;
+        var remaining = WeeklyTotalCap - totalUsed;
+        if (remaining < 0) remaining = 0;
+
+        ImGui.TextUnformatted($"本週共用額度：已用 {totalUsed}／{WeeklyTotalCap}");
+        ImGui.SameLine();
+        if (remaining == 0)
+            ImGui.TextColored(new Vector4(1f, 0.5f, 0.4f, 1f), "（已用完）");
+        else
+            ImGui.TextDisabled($"（剩餘 {remaining} 次）");
+        ImGui.TextDisabled("額度每週重置；各老主顧另有單獨的每週上限。");
+        ImGui.Separator();
+
+        if (!ImGui.BeginTable("##customDeliveries", 4,
+                ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.ScrollY))
+            return;
+
+        ImGui.TableSetupScrollFreeze(0, 1);
+        ImGui.TableSetupColumn("老主顧", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableSetupColumn("滿意度", ImGuiTableColumnFlags.WidthFixed, 64f);
+        ImGui.TableSetupColumn("等級進度", ImGuiTableColumnFlags.WidthFixed, 130f);
+        ImGui.TableSetupColumn("本週交易", ImGuiTableColumnFlags.WidthFixed, 72f);
+        ImGui.TableHeadersRow();
+
+        foreach (var npc in npcs)
+        {
+            ImGui.TableNextRow();
+
+            // 索引超出遊戲端陣列（例如未來改版陣列縮短）就整列顯示占位，不解參考。
+            var idx = npc.Index;
+            var inBounds = idx >= 0 && idx < ranks.Length && idx < satisfaction.Length && idx < used.Length;
+            var rank = inBounds ? ranks[idx] : (byte)0;
+            var unlocked = inBounds && rank > 0;
+
+            ImGui.TableNextColumn();
+            if (unlocked)
+                ImGui.TextUnformatted(npc.Name);
+            else
+                ImGui.TextDisabled(npc.Name);
+            if (ImGui.IsItemHovered())
+            {
+                var quest = string.IsNullOrEmpty(npc.QuestName) ? string.Empty : $"，完成任務「{npc.QuestName}」";
+                ImGui.SetTooltip(unlocked
+                                     ? $"解鎖條件：等級 {npc.LevelUnlock}{quest}"
+                                     : $"未解鎖。解鎖條件：等級 {npc.LevelUnlock}{quest}");
+            }
+            DrawNavigationContextMenu(npc);
+
+            ImGui.TableNextColumn();
+            if (unlocked)
+                ImGui.TextUnformatted($"{rank}／{MaxRank}");
+            else
+                ImGui.TextDisabled("－");
+
+            ImGui.TableNextColumn();
+            if (!unlocked)
+            {
+                ImGui.TextDisabled("－");
+            }
+            else
+            {
+                // 當前等級的進度門檻：SatisfactionNpcParams[等級].SatisfactionRequired。
+                // 已滿級（或表裡沒有下一級門檻）就顯示 MAX。
+                var threshold = rank < npc.RankThresholds.Length ? npc.RankThresholds[rank] : (ushort)0;
+                if (rank >= MaxRank || threshold == 0)
+                {
+                    ImGui.TextDisabled("已達最高等級");
+                }
+                else
+                {
+                    var cur = satisfaction[idx];
+                    var frac = cur >= threshold ? 1f : (float)cur / threshold;
+                    ImGui.ProgressBar(frac, new Vector2(-1f, 0f), $"{cur}／{threshold}");
+                }
+            }
+
+            ImGui.TableNextColumn();
+            if (!unlocked)
+            {
+                ImGui.TextDisabled("－");
+            }
+            else
+            {
+                var usedN = used[idx];
+                if (npc.DeliveriesPerWeek > 0 && usedN >= npc.DeliveriesPerWeek)
+                    ImGui.TextColored(new Vector4(1f, 0.5f, 0.4f, 1f), $"{usedN}／{npc.DeliveriesPerWeek}");
+                else
+                    ImGui.TextUnformatted($"{usedN}／{npc.DeliveriesPerWeek}");
+            }
+        }
+
+        ImGui.EndTable();
+    }
+
+    /// <summary>
+    /// 右鍵導航選單（<c>BeginPopupContextItem</c> 慣例，掛在 NPC 名稱那格上）。
+    /// 主選項「導航過去」依 Lifestream／vnavmesh 的即時可用狀態自動決定實際行為與
+    /// 顯示文字；查不到座標的 NPC 兩個選項都灰化顯示「位置未知」。
+    /// </summary>
+    private void DrawNavigationContextMenu(NpcStaticInfo npc)
+    {
+        if (!ImGui.BeginPopupContextItem($"##navctx{npc.Index}"))
+            return;
+
+        if (npc.Location is not { } loc)
+        {
+            ImGui.BeginDisabled();
+            ImGui.MenuItem("位置未知");
+            ImGui.EndDisabled();
+            ImGui.EndPopup();
+            return;
+        }
+
+        var sameZone = Svc.ClientState.TerritoryType == loc.TerritoryType;
+        var vnavReady = ExternalNav.IsVnavmeshReady();
+
+        string label;
+        bool enabled;
+
+        if (sameZone)
+        {
+            // 已在同一張圖：不需要傳送，vnavmesh 可用就走過去，不可用就退化成標旗。
+            label = vnavReady ? "導航過去" : "導航過去（未偵測到 vnavmesh，改為地圖標旗）";
+            enabled = true;
+        }
+        else if (!ExternalNav.IsLifestreamAvailable())
+        {
+            label = "導航過去（未偵測到 Lifestream，無法傳送）";
+            enabled = false;
+        }
+        else if (loc.AetheryteId == 0)
+        {
+            label = "導航過去（該區找不到可傳送的乙太之光）";
+            enabled = false;
+        }
+        else if (!IsAetheryteUnlocked(loc.AetheryteId, out _))
+        {
+            label = "導航過去（尚未解鎖該區乙太之光）";
+            enabled = false;
+        }
+        else
+        {
+            label = vnavReady ? "導航過去" : "傳送並標旗（未偵測到 vnavmesh，不會自動走過去）";
+            enabled = true;
+        }
+
+        if (enabled)
+        {
+            if (ImGui.MenuItem(label))
+                StartNavigation(npc, loc, sameZone);
+        }
+        else
+        {
+            ImGui.BeginDisabled();
+            ImGui.MenuItem(label);
+            ImGui.EndDisabled();
+        }
+
+        if (ImGui.MenuItem("僅地圖標旗（不傳送、不自動走路）"))
+            SetMapFlagAndOpenMap(npc, loc);
+
+        ImGui.EndPopup();
+    }
+
+    /// <summary>
+    /// 啟動門到門導航：跨區就先傳送再等進圖，同圖就直接下達 vnavmesh 指令；
+    /// 三態（等待傳送完成／等待進入區域／下達導航指令）走 <see cref="TaskQueue"/>。
+    /// 呼叫本身即取消前一趟還在跑的導航（涵蓋「再右鍵別人」的取消需求）。
+    /// </summary>
+    private void StartNavigation(NpcStaticInfo npc, NpcLocation loc, bool sameZone)
+    {
+        navQueue.Abort();
+
+        if (sameZone)
+        {
+            navQueue.Enqueue("下達導航指令", () => IssueWalkOrFallback(npc, loc));
+            return;
+        }
+
+        if (!IsAetheryteUnlocked(loc.AetheryteId, out var subIndex))
+        {
+            Svc.Chat.Print("[TC Toolbox] 尚未解鎖該區的乙太之光，無法傳送。");
+            return;
+        }
+
+        var navStartPos = Svc.Objects.LocalPlayer?.Position ?? Vector3.Zero;
+        var targetTerritory = loc.TerritoryType;
+        var aetheryteId = loc.AetheryteId;
+        var teleportIssued = false;
+
+        navQueue.Enqueue("等待傳送完成", () =>
+        {
+            if (!teleportIssued)
+            {
+                teleportIssued = true;
+                if (!ExternalNav.TryTeleport(aetheryteId, subIndex, out var accepted) || !accepted)
+                {
+                    Svc.Chat.Print("[TC Toolbox] Lifestream 傳送請求失敗（可能忙碌中或傳送動作被鎖定），已取消導航。");
+                    return (bool?)null;
+                }
+            }
+
+            if (HasCancelledByManualMove(navStartPos))
+                return (bool?)null;
+
+            // 「傳送完成」＝畫面開始載入，或（極端情況）已經人在目的地。
+            return Svc.Condition[ConditionFlag.BetweenAreas]
+                   || Svc.Condition[ConditionFlag.BetweenAreas51]
+                   || Svc.ClientState.TerritoryType == targetTerritory;
+        }, timeoutMs: 15_000);
+
+        navQueue.Enqueue("等待進入區域", () =>
+        {
+            if (Svc.ClientState.TerritoryType == targetTerritory
+                && !Svc.Condition[ConditionFlag.BetweenAreas]
+                && !Svc.Condition[ConditionFlag.BetweenAreas51])
+                return true;
+
+            if (HasCancelledByManualMove(navStartPos))
+                return (bool?)null;
+
+            return false;
+        }, timeoutMs: 20_000);
+
+        navQueue.Enqueue("下達導航指令", () => IssueWalkOrFallback(npc, loc));
+    }
+
+    /// <summary>下達 vnavmesh 導航指令；沒開始移動就退化成標旗＋開地圖。</summary>
+    /// <remarks>
+    /// ⚠️ <c>started</c> 恆為 true，所以「路徑算不出來」仍然不會走到這條退路。
+    /// 📌 這一步是佇列的<b>最後一步</b>（兩條分支皆然），後面沒有任何步驟預設「已經走到了」。
+    /// </remarks>
+    private static void IssueWalkOrFallback(NpcStaticInfo npc, NpcLocation loc)
+    {
+        if (ExternalNav.TryMoveTo(loc.WorldPosition, false, out var started) && started)
+            return;
+
+        Svc.Chat.Print($"[TC Toolbox] 無法透過 vnavmesh 自動走到「{npc.Name}」，已改為地圖標旗，請自行前往。");
+        SetMapFlagAndOpenMap(npc, loc);
+    }
+
+    /// <summary>原生 SetFlagMapMarker／OpenMap；不依賴任何外掛，永遠可用。</summary>
+    private static unsafe void SetMapFlagAndOpenMap(NpcStaticInfo npc, NpcLocation loc)
+    {
+        var agent = AgentMap.Instance();
+        if (agent == null) return;
+        agent->SetFlagMapMarker(loc.TerritoryType, loc.Map, loc.WorldPosition);
+        agent->OpenMap(loc.Map, loc.TerritoryType, npc.Name);
+    }
+
+    /// <summary>
+    /// 等待期間玩家是否手動移動離開了原地——視為使用者自行取消。載入畫面期間
+    /// （BetweenAreas）座標本來就不可靠，不判斷，一律視為未取消。
+    /// </summary>
+    private static bool HasCancelledByManualMove(Vector3 navStartPos)
+    {
+        if (Svc.Condition[ConditionFlag.BetweenAreas] || Svc.Condition[ConditionFlag.BetweenAreas51])
+            return false;
+
+        var current = Svc.Objects.LocalPlayer?.Position;
+        return current is { } pos && Vector3.Distance(pos, navStartPos) > ManualMoveCancelDistance;
+    }
+
+    /// <summary>該乙太之光是否已解鎖（在玩家的傳送清單裡），順便回傳其 SubIndex。</summary>
+    private static bool IsAetheryteUnlocked(uint aetheryteId, out byte subIndex)
+    {
+        foreach (var entry in Svc.AetheryteList)
+        {
+            if (entry.AetheryteId == aetheryteId)
+            {
+                subIndex = entry.SubIndex;
+                return true;
+            }
+        }
+
+        subIndex = 0;
+        return false;
+    }
+}

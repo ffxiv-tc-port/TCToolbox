@@ -1,0 +1,726 @@
+using System;
+using System.Collections.Generic;
+using Dalamud.Bindings.ImGui;
+using Dalamud.Game.Addon.Lifecycle;
+using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
+using Dalamud.Interface.Utility.Raii;
+using Dalamud.Memory;
+using Dalamud.Utility;
+using FFXIVClientStructs.FFXIV.Client.Game;
+using FFXIVClientStructs.FFXIV.Client.Game.Event;
+using FFXIVClientStructs.FFXIV.Client.Game.UI;
+using FFXIVClientStructs.FFXIV.Client.UI;
+using FFXIVClientStructs.FFXIV.Client.UI.Agent;
+using FFXIVClientStructs.FFXIV.Component.GUI;
+using Lumina.Excel.Sheets;
+using TCToolbox.Core;
+
+namespace TCToolbox.Modules;
+
+/// <summary>
+/// 交易視窗（<c>Request</c>）自動繳交道具：自動把要求的道具填進格子，填滿後自動按下「交出」。
+/// 機制：<c>AddonLifecycle</c> ＋ 對 <c>AgentNpcTrade</c> 送合成事件，
+/// 交出鈕走既有的 <see cref="UiHelper.TryClickButton"/>。零 hook、零特徵碼、不寫記憶體。
+/// </summary>
+/// <remarks>
+/// 🔴 <b>只在「確定是任務交付」時才動作</b>（見 <see cref="IsQuestTurnIn"/>）。
+/// <c>Request</c> 這扇視窗被遊戲重複使用在任務交付、理符繳交、公會合建交納、
+/// 以物易物……等好幾種情境上，而視窗本身看不出自己是誰開的。
+/// 因此判準改成白名單：認得出是任務交付才接手，認不出就完全不動作。
+/// </remarks>
+public sealed unsafe class AutoRequestItemSubmit : TcModule
+{
+    public override string InternalName => "AutoRequestItemSubmit";
+    public override string DisplayName => "自動繳交道具";
+
+    public override string Description =>
+        "任務交付視窗開啟時，自動把要求的道具填進格子並按下交出（含優質道具的確認框）。" +
+        "🔴 只在確認得出是「任務交付」時才動作：理符繳交、以物易物、代幣／收藏品兌換、" +
+        "公會合建交納一律不碰（那些按下去可能換掉不該換的東西）。判斷不出來時也不動作。" +
+        "TextAdvance 的交納自動填格或自動交出開著時，一律讓給它處理。";
+
+    public override ModuleCategory Category => ModuleCategory.Company;
+
+    public override bool HasConfigUI => true;
+
+    private const string AddonName = "Request";
+
+    /// <summary>填格時遊戲開出的「選哪一份」道具選單；只拿來當守衛的錨。</summary>
+    private const string ContextIconMenuAddon = "ContextIconMenu";
+
+    /// <summary>
+    /// 判定「這個 SelectYesno 是不是優質道具確認框」用的 <c>Addon</c> 列。
+    /// 🔑 用列號查客戶端自己的字串，所以跟語言無關，也不會因為台服用全形「？」而失效
+    /// （台服 102434 實際是「確定要交易優質道具嗎<b>？</b>」，全形問號——這正是不該寫死字串的理由）。
+    /// </summary>
+    private static readonly uint[] HighQualityPromptRows = [5450, 11514, 102434];
+
+    /// <summary>
+    /// 品質偏好下拉選單的標籤。⚠️ 順序必須對齊 <see cref="HandInQualityPreference"/> 的列舉值
+    /// （索引直接當列舉值用）。
+    /// </summary>
+    private static readonly string[] QualityPreferenceLabels =
+        ["無偏好（交遊戲列的第一個）", "偏好優質品（HQ）", "偏好普通品（NQ）"];
+
+    /// <summary>解析好的確認框字串。<see cref="OnEnable"/> 時建一次，空字串（台服未開放的列）不收。</summary>
+    private readonly HashSet<string> highQualityPrompts = new(StringComparer.Ordinal);
+
+    /// <summary>優質道具確認框的讓位憑據：填格（會叫出確認框）之前續約，按之前問 <see cref="YesAlreadyBotherLease.IsExclusive"/>。</summary>
+    private readonly YesAlreadyBotherLease hqConfirmLease = new("SelectYesno");
+
+    /// <summary>交出鈕按下之後，這一扇交納視窗最久封鎖多久（毫秒）。到期＝判定「那一按沒生效」。</summary>
+    /// <remarks>
+    /// 與 <c>AddonPressGuard</c> 的終結逃生口（90 幀）同一個理由：
+    /// 「正在關閉」只有幾幀（60fps 下數十毫秒），撐到 2 秒還在的視窗依定義是「還開著」。
+    /// 🔴 <b>不做成永久閂</b>：交出鈕按下後視窗沒關的情況是存在的
+    /// （例如跳出優質道具確認框而使用者選了「否」），永久閂會把崩潰換成靜默卡死。
+    /// </remarks>
+    private const int HandOverLatchMs = 2_000;
+
+    /// <summary>已經按下交出鈕的那一扇交納視窗實例。<b>位址只做等值比較，永不解參考。</b></summary>
+    private nint handedOverAddress;
+
+    /// <summary>按下交出鈕的時刻（<see cref="HandOverLatchMs"/> 的起算點）。</summary>
+    private DateTime handedOverAt;
+
+    private AutoRequestItemSubmitConfig Config => Plugin.Instance.Config.RequestItemSubmit;
+
+    protected override void OnEnable()
+    {
+        highQualityPrompts.Clear();
+        foreach (var row in HighQualityPromptRows)
+        {
+            var text = Svc.Data.GetExcelSheet<Addon>().GetRowOrDefault(row)?.Text.ExtractText().Trim();
+            if (!string.IsNullOrWhiteSpace(text)) highQualityPrompts.Add(text);
+        }
+
+        Svc.Log.Information(
+            $"[{InternalName}] 優質道具確認框判準 {highQualityPrompts.Count}/{HighQualityPromptRows.Length} 條：" +
+            $"{string.Join(" | ", highQualityPrompts)}");
+
+        // PostSetup 有可能在視窗還沒真的可以互動時就送出，PostDraw 當重試——
+        // 兩者共用同一個節流器，所以最多每 DelayMs 動一步，不會變成每幀灌事件。
+        Svc.AddonLifecycle.RegisterListener(AddonEvent.PostSetup, AddonName, OnRequest);
+        Svc.AddonLifecycle.RegisterListener(AddonEvent.PostDraw, AddonName, OnRequest);
+
+        // ⚠️ 這兩條刻意常駐註冊（DR 是在 Request 開關時動態註冊／解除）。
+        // 常駐比較不會留下懸空的監聽器，安全性改由處理常式裡的「Request 必須開著」前置條件保證，
+        // 那個條件比 DR 的註冊時機更嚴格（DR 只保證「Request 曾經開過」）。
+        // PostDraw 是必要的重試：PostSetup 那一刻確認框不一定已經可以互動，
+        // 而只掛 PostSetup 的話錯過就沒有第二次機會。
+        Svc.AddonLifecycle.RegisterListener(AddonEvent.PostSetup, "SelectYesno", OnSelectYesno);
+        Svc.AddonLifecycle.RegisterListener(AddonEvent.PostDraw, "SelectYesno", OnSelectYesno);
+    }
+
+    protected override void OnDisable()
+    {
+        Svc.AddonLifecycle.UnregisterListener(OnRequest);
+        Svc.AddonLifecycle.UnregisterListener(OnSelectYesno);
+        highQualityPrompts.Clear();
+        handedOverAddress = nint.Zero;
+        hqConfirmLease.Reset();
+    }
+
+    /// <summary>
+    /// 優質道具確認框。三個條件全部成立才按「是」：
+    /// 模組設定允許、<c>Request</c> 視窗正開著、提示文字命中 <see cref="HighQualityPromptRows"/>。
+    /// 任何一條不成立就完全不動作（fail-closed）。
+    /// </summary>
+    private void OnSelectYesno(AddonEvent type, AddonArgs args)
+    {
+        if (!Config.ConfirmHighQuality) return;
+
+        // PostDraw 每幀都會進來，所以節流放最前面——後面每一步都要取 addon、讀字串。
+        if (!Throttle.Pass("AutoRequestItemSubmit-Yesno", Math.Max(200, Config.DelayMs))) return;
+
+        // 🔴 沒有這個前置條件的話，任何長得像的確認框都會被按掉。
+        if (!UiHelper.IsAddonReady(AddonName)) return;
+
+        // 🔴 確認框也吃同一張白名單：不是任務交付就完全不碰。
+        // 只做一半（不填格卻幫忙按確認）會把別人的流程按到錯的地方，比完全不動作更糟。
+        if (!IsQuestTurnIn()) return;
+        if (ShouldYieldToTextAdvance()) return;
+
+        var addon = (AddonSelectYesno*)args.Addon.Address;
+        if (!UiHelper.IsReady((AtkUnitBase*)addon)) return;
+        if (addon->PromptText == null) return;
+
+        // 用 MemoryHelper 解 SeString 再取 TextValue：兩邊（這裡與 Addon 表的 ExtractText）
+        // 都是「拿掉 payload 之後的純文字」，比對基準才一致。
+        var prompt = MemoryHelper.ReadSeString(&addon->PromptText->NodeText).TextValue.Trim();
+        if (string.IsNullOrEmpty(prompt)) return;
+
+        // 🔴 讀出替換字元＝視窗的記憶體正在變動（多半是正在關閉），這一幀什麼都不要碰，下一幀重讀。
+        if (AddonPrompt.LooksMidUpdate(prompt)) return;
+
+        if (!highQualityPrompts.Contains(prompt))
+        {
+            // ⚠️ 這行是「完全比對」這個假設失效時唯一的徵兆（否則只會表現成「確認框不會自己按」）。
+            if (Throttle.Pass("AutoRequestItemSubmit-PromptMiss", 10_000))
+                Svc.Log.Information(
+                    $"[{InternalName}] 交易中出現未認得的確認框，不動作：「{prompt}」" +
+                    $"（目前判準：{string.Join(" | ", highQualityPrompts)}）");
+            return;
+        }
+
+        // YesAlready 也會按確認框：沒確認它已讓開就留給使用者自己按。
+        if (!hqConfirmLease.IsExclusive)
+        {
+            if (Throttle.Pass("AutoRequestItemSubmit-YesnoNotExclusive", 10_000))
+                Svc.Log.Information(
+                    $"[{InternalName}] 確認不了 YesAlready 已讓開確認框（{hqConfirmLease.Last}），優質道具確認框留給你自己按。");
+            return;
+        }
+
+        // 🔴 最後一道：按過的那個實例在觀察到它收掉之前不再按（見 AddonPressGuard 的說明）。
+        //    PostDraw 每幀都會進來，而「按下之後正在關閉」的那幾幀 IsReady 三關照樣全過。
+        //    守衛在 UiHelper.TryFireCallback 裡：回 false ＝這一幀沒送。
+        if (!UiHelper.TryFireCallback((AtkUnitBase*)addon, true, 0)) return;
+
+        Svc.Log.Information($"[{InternalName}] 已確認優質道具交易：「{prompt}」");
+    }
+
+    private void OnRequest(AddonEvent type, AddonArgs args)
+    {
+        try
+        {
+            // 🔴🔴 交出鈕按下之後，這一扇交納視窗接下來幾幀是「正在關閉」——
+            //    GetAddonByName／IsVisible／UldManager 三關照樣全過，PostDraw 也照樣進來。
+            //    🔑 必須是「整支 OnRequest 都不做」而不是只擋交出鈕：交出成功之後 HandIn 暫存容器被清空，
+            //    AreAllRequestedItemsHandedIn() 回 false ⇒ 落到 FillNextSlot()，而那次填格的守衛登記早已逾時 ⇒ 對關閉中的視窗再送一次。
+            //    ⚠️ 這一段刻意排在節流之前：節流吃掉的那些幀也必須擋。
+            var address = args.Addon.Address;
+
+            // 同一個位址上有新的一扇被建立起來（含位址重用）⇒ 我們按過的那扇已經不是它了。
+            if (type == AddonEvent.PostSetup && address != nint.Zero && address == handedOverAddress)
+                handedOverAddress = nint.Zero;
+
+            if (address != nint.Zero && address == handedOverAddress)
+            {
+                var heldMs = (DateTime.UtcNow - handedOverAt).TotalMilliseconds;
+                if (heldMs < HandOverLatchMs)
+                {
+                    if (Throttle.Pass("AutoRequestItemSubmit-HandedOver", 1_000))
+                        Svc.Log.Information(
+                            $"[{InternalName}] 交出鈕已按下，這一扇交納視窗（實例 0x{address:X}）" +
+                            "在收掉之前完全不碰——對關閉中的視窗送事件是攔不到的存取違規。");
+
+                    return;
+                }
+
+                Svc.Log.Information(
+                    $"[{InternalName}] 交出鈕按下後 {heldMs:F0} 毫秒，交納視窗（實例 0x{address:X}）" +
+                    "既沒關掉也沒重建，判定為「那一按沒生效」而不是「正在關閉」，解除封鎖重試。");
+                handedOverAddress = nint.Zero;
+            }
+
+            if (!Throttle.Pass("AutoRequestItemSubmit-Step", Math.Max(200, Config.DelayMs))) return;
+            if (ShouldYieldToFcwsDeliver()) return;
+
+            // 🔴 白名單必須排在按鈕之前 —— 這扇視窗的交出鈕在一格都沒填時就是可按的，
+            // 慢一步判定等於已經把別人的交易按下去了。
+            if (!IsQuestTurnIn()) return;
+            if (ShouldYieldToTextAdvance()) return;
+
+            var addon = (AddonRequest*)args.Addon.Address;
+            if (!UiHelper.IsReady((AtkUnitBase*)addon)) return;
+
+            // 🔴 先確認「真的填滿了」再按。「按得動 ⇒ 填完了」這個假設是錯的：視窗開啟後約 2 幀交出鈕就按得動，
+            // 而當時一格都還沒填，空手交出被遊戲當成取消，FillNextSlot() 永遠輪不到。
+            if (!AreAllRequestedItemsHandedIn()) { FillNextSlotExclusive((AtkUnitBase*)addon); return; }
+
+            // 🔴 判斷「能不能按」一律交給 UiHelper.TryClickButton，**不要自己先讀 IsEnabled**：
+            // CS 的 AtkComponentButton.IsEnabled 對 OwnerNode **沒有任何 null 檢查**，先讀它等於自己開一個存取違規的口子
+            // （AVE 外面那圈 try/catch 攔不到）。TryClickButton 內部依序驗 addon／button／OwnerNode／IsEnabled／可見性／事件非 null，
+            // 全部通過才送事件，Unavailable 就代表「現在按不動」——正好是我們要的分支條件。
+            switch (UiHelper.TryClickButton((AtkUnitBase*)addon, addon->HandOverButton))
+            {
+                case UiHelper.ButtonPressResult.Pressed:
+                    // 上閂：這一扇從現在起完全不碰（含 FillNextSlot），直到它被銷毀／重建或逾時。
+                    handedOverAddress = (nint)addon;
+                    handedOverAt = DateTime.UtcNow;
+                    Svc.Log.Information($"[{InternalName}] 已按下交出鈕（欄位數 {addon->EntryCount}）。");
+                    return;
+                case UiHelper.ButtonPressResult.Guarded:
+                    // 🔴 交出鈕剛按過、這扇交納視窗正在關閉：這一輪什麼都不做。
+                    //    絕不能落到 FillNextSlot——那會對關閉中的交納視窗送 agent 事件。
+                    return;
+            }
+
+            FillNextSlotExclusive((AtkUnitBase*)addon);
+        }
+        catch (Exception ex)
+        {
+            Svc.Log.Error(ex, $"[{InternalName}] 處理交易視窗時發生例外");
+        }
+    }
+
+    /// <summary>
+    /// 交易視窗要求的每一項，是不是都已經真的躺在 <c>HandIn</c> 暫存容器裡（含數量）。
+    /// 這是按下交出鈕的<b>前置條件</b>。
+    /// </summary>
+    /// <remarks>
+    /// 🔑 <b>這道守衛對「現在會成功的路徑」是 no-op</b>：交出成功的那一刻，
+    /// 依定義每一格都已經填好了，所以這裡必然全部通過、必然照按。
+    /// 它唯一擋掉的是「還沒填完就按」——也就是現在唯一會失敗的那條路徑。
+    /// </remarks>
+    private bool AreAllRequestedItemsHandedIn()
+    {
+        var manager = InventoryManager.Instance();
+        if (manager == null) return false;
+
+        // HandIn 是交易視窗自己的暫存容器：已經填進格子的道具會出現在這裡。
+        var container = manager->GetInventoryContainer(InventoryType.HandIn);
+        // 🔴 判的是 Items 不是 GetInventorySlot 的回傳值：Items 為 null 而 Size > 0 時，
+        //    GetInventorySlot 回的是「null + 偏移」這種非 null 的假指標，下面的判空一定通過，
+        //    解參考就是攔不到的 AVE（corrupted-state exception，try/catch 無效）。
+        //    樣板同 DiscardList.ScanMatches／TriadCardRecycle 的背包掃描。
+        if (container == null || container->Items == null) return false;
+
+        var uiState = UIState.Instance();
+        if (uiState == null) return false;
+
+        var requests = uiState->NpcTrade.Requests;
+
+        // 🔴 與 FillNextSlot 同一組收斂：Count 是遊戲填的 byte，Items 是固定 5 格的內嵌陣列，
+        // Count 若大於 5 就會讀到 ItemRequests 結構後面的記憶體，所以取兩者較小的當上界。
+        var count = Math.Min((int)requests.Count, requests.Items.Length);
+
+        // 要求清單還沒讀到 ⇒ 無從確認填滿了沒 ⇒ 不按。
+        if (count <= 0)
+        {
+            if (Throttle.Pass("AutoRequestItemSubmit-NotFilled", 10_000))
+                Svc.Log.Information(
+                    $"[{InternalName}] 交易要求清單還讀不到（Count={requests.Count}），先不按交出鈕。");
+            return false;
+        }
+
+        for (var i = 0; i < count; i++)
+        {
+            var wanted = requests.Items[i];
+
+            // 容器大小同樣是遊戲說了算，不能假設它一定 ≥ count。
+            if (i >= container->Size)
+            {
+                if (Throttle.Pass("AutoRequestItemSubmit-NotFilled", 10_000))
+                    Svc.Log.Information(
+                        $"[{InternalName}] 第 {i + 1} 項（道具 {wanted.ItemId}）超出暫存容器大小 " +
+                        $"{container->Size}，先不按交出鈕。");
+                return false;
+            }
+
+            var slot = container->GetInventorySlot(i);
+            if (slot == null || slot->ItemId != wanted.ItemId)
+            {
+                if (Throttle.Pass("AutoRequestItemSubmit-NotFilled", 10_000))
+                    Svc.Log.Information(
+                        $"[{InternalName}] 第 {i + 1} 項還沒填：要的是道具 {wanted.ItemId}，" +
+                        $"格子裡是 {(slot == null ? "空的" : slot->ItemId.ToString())}，先不按交出鈕。");
+                return false;
+            }
+
+            if (slot->Quantity < wanted.RequiredQuantity)
+            {
+                if (Throttle.Pass("AutoRequestItemSubmit-NotFilled", 10_000))
+                    Svc.Log.Information(
+                        $"[{InternalName}] 第 {i + 1} 項（道具 {wanted.ItemId}）數量不足：" +
+                        $"已放 {slot->Quantity}／需要 {wanted.RequiredQuantity}，" +
+                        $"還差 {wanted.RequiredQuantity - slot->Quantity}，先不按交出鈕。");
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// 把還沒填的第一格填上。一次只處理一格：送出事件之後遊戲要開
+    /// <c>ContextIconMenu</c> 讓人選同款道具的哪一份（NQ／HQ），選完才輪得到下一格。
+    /// </summary>
+    /// <param name="request">正開著的交納視窗（呼叫端已驗 <see cref="UiHelper.IsReady"/>），只拿來當守衛的錨，不解參考。</param>
+    private void FillNextSlot(AtkUnitBase* request)
+    {
+        var agent = AgentNpcTrade.Instance();
+        if (agent == null) return;
+
+        var manager = InventoryManager.Instance();
+        if (manager == null) return;
+
+        // HandIn 是交易視窗自己的暫存容器：已經填進格子的道具會出現在這裡。
+        var container = manager->GetInventoryContainer(InventoryType.HandIn);
+        // 🔴 Items 為 null 而 Size > 0 時，GetInventorySlot 回的是非 null 的假指標（理由見 AreAllRequestedItemsHandedIn）。
+        if (container == null || container->Items == null) return;
+
+        var uiState = UIState.Instance();
+        if (uiState == null) return;
+
+        var requests = uiState->NpcTrade.Requests;
+
+        // 🔴 Count 是遊戲填的 byte，不能直接拿來當迴圈上界：Items 是固定 5 格的內嵌陣列，
+        // Count 若大於 5 就會讀到 ItemRequests 結構後面的記憶體，所以取兩者較小的當上界。
+        var count = Math.Min((int)requests.Count, requests.Items.Length);
+        if (count <= 0) return;
+
+        for (var i = 0; i < count; i++)
+        {
+            // 容器大小同樣是遊戲說了算，不能假設它一定 ≥ count。
+            if (i >= container->Size) break;
+
+            var slot = container->GetInventorySlot(i);
+            var wanted = requests.Items[i];
+
+            // 這一格已經填好了 → 換下一格
+            if (slot != null && slot->ItemId == wanted.ItemId) continue;
+
+            // 道具選單還沒開 → 請遊戲替第 i 格開出可選道具清單
+            var menu = UiHelper.GetAddon(ContextIconMenuAddon);
+            if (!UiHelper.IsReady(menu))
+            {
+                // 錨在交納視窗上：同一扇視窗、同一格，在它走完生命週期前只請一次（2 秒逾時兜底）。
+                //    PostDraw 對關閉中的交納視窗照樣進來，沒有錨的話會對它一直重送。
+                UiHelper.TrySendAgentEvent(AddonName, request, AgentId.NpcTrade, 0, 2, i, 0, 0);
+                return;
+            }
+
+            // 選單開著 → 從候選裡挑一份（遊戲已經照要求篩過，含 HQ／收藏品條件）
+            var itemId = PickTurnInItemId(agent);
+            if (itemId == 0) return;
+
+            // 錨在道具選單上：選完它就關，關閉中那幾幀 IsReady 照過——同一實例只選一次
+            // （ContextIconMenu 在守衛裡是併鍵的單答窗）。
+            UiHelper.TrySendAgentEvent(ContextIconMenuAddon, menu, AgentId.NpcTrade, 1, 0, 0, itemId, 0u, 0);
+            return;
+        }
+    }
+
+    /// <summary>
+    /// 候選道具可能待在哪些自有容器裡。<see cref="IsLiveInventorySlot"/> 用它來確認一個候選指標
+    /// 真的指向現在活著的道具格。
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ 這份清單<b>寧可多列不要少列</b>：漏列一個容器只會讓品質偏好對那種道具不生效
+    /// （退回既有行為，而且 log 會留下一行），多列一個容器則完全沒有壞處。
+    /// </remarks>
+    private static readonly InventoryType[] CandidateSourceContainers =
+    [
+        InventoryType.Inventory1, InventoryType.Inventory2,
+        InventoryType.Inventory3, InventoryType.Inventory4,
+        InventoryType.Crystals, InventoryType.KeyItems,
+        InventoryType.EquippedItems,
+        InventoryType.ArmoryMainHand, InventoryType.ArmoryOffHand,
+        InventoryType.ArmoryHead, InventoryType.ArmoryBody, InventoryType.ArmoryHands,
+        InventoryType.ArmoryWaist, InventoryType.ArmoryLegs, InventoryType.ArmoryFeets,
+        InventoryType.ArmoryEar, InventoryType.ArmoryNeck, InventoryType.ArmoryWrist,
+        InventoryType.ArmoryRings, InventoryType.ArmorySoulCrystal,
+    ];
+
+    /// <summary>
+    /// 這個候選指標是不是「現在活著的自有道具格」。
+    /// <b>只比對指標值，完全不解參考 <paramref name="candidate"/>。</b>
+    /// </summary>
+    /// <remarks>
+    /// 🔑 這裡<b>反過來問</b>：不去相信清單長度，而是拿候選指標比對
+    /// 「遊戲現在自己承認的每一個道具格位址」。比對只用指標值、不碰它指到的記憶體，
+    /// 所以指標再爛都不會出事；比不中就當那一格不存在。
+    /// </remarks>
+    private static bool IsLiveInventorySlot(InventoryItem* candidate)
+    {
+        if (candidate == null) return false;
+
+        var manager = InventoryManager.Instance();
+        if (manager == null) return false;
+
+        foreach (var type in CandidateSourceContainers)
+        {
+            var container = manager->GetInventoryContainer(type);
+            // 🔴 Items 為 null 而 Size > 0 時，GetInventorySlot 回的是非 null 的假指標（理由見 AreAllRequestedItemsHandedIn）。
+            if (container == null || container->Items == null) continue;
+
+            // 容器大小同樣是遊戲說了算；上界另外夾一次，免得壞掉的 Size 讓迴圈跑到天荒地老。
+            var size = container->Size;
+            if (size <= 0 || size > 1_000) continue;
+
+            for (var i = 0; i < size; i++)
+                if (container->GetInventorySlot(i) == candidate) return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// 從遊戲給的候選清單裡挑一份要交出去的道具，回傳可直接送進事件的「帶旗標道具 ID」（0＝挑不到）。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>這是偏好不是限定</b>：偏好的那一種挑不到時退回第一個候選，不會卡住不交。
+    /// ⚠️ 候選上界 ≤ 1 或偏好為「無」（預設）時完全不進走訪迴圈，直接取第 0 格。
+    /// </remarks>
+    private uint PickTurnInItemId(AgentNpcTrade* agent)
+    {
+        var options = agent->SelectedTurnInSlotItemOptionValues;
+        var preference = Config.QualityPreference;
+
+        // 🔑 品質判定與要送出去的值同源：GetItemId() 回的是「帶旗標」的 ID，
+        // HQ ＝本體 ID + 1000000（Dalamud 的 ItemUtil.IsHighQuality 就是這個判準），
+        // 所以不必另外去讀 InventoryItem 的旗標欄位，也不會兩邊對不起來。
+        static uint IdOf(InventoryItem* item) =>
+            item == null || item->ItemId == 0 ? 0u : item->GetItemId();
+
+        // 第 0 格：沒有偏好時的取法，也是偏好挑不到時的退路。
+        var first = IdOf(options[0].Value);
+
+        // ⚠️ 這個欄位只當上界用；它是不是真的「候選數」不影響安全性（見 IsLiveInventorySlot）。
+        var count = Math.Clamp((int)agent->SelectedTurnInSlotItemOptions, 0, options.Length);
+        if (count <= 1 || preference == HandInQualityPreference.None) return first;
+
+        var wantHighQuality = preference == HandInQualityPreference.PreferHighQuality;
+        if (first != 0 && ItemUtil.IsHighQuality(first) == wantHighQuality) return first;
+
+        var rejected = 0;
+        for (var i = 1; i < count; i++)
+        {
+            var candidate = options[i].Value;
+
+            // 🔴 沒通過驗證就完全不碰它——連它的 ItemId 都不讀。
+            if (!IsLiveInventorySlot(candidate)) { rejected++; continue; }
+
+            var rawId = IdOf(candidate);
+            if (rawId == 0) continue;
+
+            if (ItemUtil.IsHighQuality(rawId) == wantHighQuality)
+            {
+                if (Throttle.Pass("AutoRequestItemSubmit-Quality", 10_000))
+                    Svc.Log.Information(
+                        $"[{InternalName}] 候選上界 {count}，偏好{(wantHighQuality ? "優質" : "普通")}品；" +
+                        $"挑中第 {i} 個候選（道具 ID {rawId}）。");
+                return rawId;
+            }
+        }
+
+        // ⚠️ rejected 是「這個欄位到底是不是候選數」在實機上唯一的證據來源：
+        // 它若長期是 0，代表上界與實際候選一致；若總是很大，代表那個欄位不是候選數
+        // （而且因為有 IsLiveInventorySlot 擋著，這件事只會表現成偏好失效，不會是崩潰）。
+        if (Throttle.Pass("AutoRequestItemSubmit-Quality", 10_000))
+            Svc.Log.Information(
+                $"[{InternalName}] 候選上界 {count}（其中 {rejected} 個不是現存的道具格，已略過），" +
+                $"沒有偏好的{(wantHighQuality ? "優質" : "普通")}品；" +
+                $"退回第一個候選（道具 ID {first}）照樣交出。");
+
+        return first;
+    }
+
+    /// <summary>
+    /// TextAdvance 的自動填格／自動交出會處理同一扇視窗：它開著（或問不到）就整扇讓給它，兩邊不同時按。
+    /// </summary>
+    private bool ShouldYieldToTextAdvance()
+    {
+        var handling = TextAdvanceIpc.QueryRequestHandling(out var detail);
+        if (handling is TextAdvanceIpc.RequestHandling.NotLoaded or TextAdvanceIpc.RequestHandling.Idle) return false;
+
+        if (Throttle.Pass("AutoRequestItemSubmit-YieldTextAdvance", 10_000))
+            Svc.Log.Information(
+                $"[{InternalName}] 任務交付視窗交給 TextAdvance 處理（{detail}），本模組不動作。" +
+                (handling == TextAdvanceIpc.RequestHandling.Unknown ? "問不到它會不會動手，為了不兩邊各按一次而讓開。" : string.Empty));
+        return true;
+    }
+
+    /// <summary>填下一格；有開「確認優質道具」時，先請 YesAlready 讓開確認框，確認不了就不填（填了會叫出確認框）。</summary>
+    private void FillNextSlotExclusive(AtkUnitBase* request)
+    {
+        if (Config.ConfirmHighQuality && !hqConfirmLease.Renew())
+        {
+            if (Throttle.Pass("AutoRequestItemSubmit-LeaseFailed", 10_000))
+                Svc.Log.Information(
+                    $"[{InternalName}] 確認不了 YesAlready 會不會同時按優質道具確認框，這一格先不填（{hqConfirmLease.Last}）。");
+            return;
+        }
+
+        FillNextSlot(request);
+    }
+
+    /// <summary>
+    /// 公會合建的交納視窗也是 <c>Request</c>，而 <see cref="AutoFCWSDeliver"/> 有自己的一整套
+    /// 填格＋交出流程。兩個模組同時驅動同一扇視窗沒有好處，所以合建視窗開著、
+    /// 而且那個模組是啟用狀態時，這裡讓路。
+    /// <para>⚠️ 只在「那個模組真的開著」時讓路——否則合建視窗就變成完全沒人處理。</para>
+    /// </summary>
+    private bool ShouldYieldToFcwsDeliver()
+    {
+        if (!UiHelper.IsAddonReady("SubmarinePartsMenu")) return false;
+
+        foreach (var module in Plugin.Instance.Modules)
+        {
+            if (module is not AutoFCWSDeliver) continue;
+            if (!module.IsEnabled) return false;
+
+            if (Throttle.Pass("AutoRequestItemSubmit-YieldFcws", 10_000))
+                Svc.Log.Information($"[{InternalName}] 合建交納視窗開著，交由「合建素材一鍵全交」處理，本模組不動作。");
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// 已知會共用 <c>Request</c> 視窗、而且「按下去就回不來」的視窗。開著就一律不動作。
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ 這只是<b>保險</b>，不是主判準 —— 主判準是 <see cref="IsQuestTurnIn"/> 的白名單。
+    /// 黑名單永遠列不完（理符、以物易物，之後還會有別的），而每漏一個的代價都是使用者的道具，
+    /// 所以真正擋住風險的是「非任務交付就不動作」，這張表只負責在白名單萬一誤判時再擋一層。
+    /// </remarks>
+    private static readonly string[] NeverActWhileOpen =
+    [
+        "ShopExchangeItem",   // 以物易物（潛水艇零件等）：按下的是【交換】，換錯不可逆
+        "ShopExchangeCoin",   // 代幣兌換
+        "InclusionShop",      // 道具交易（羅薇娜商會等）
+        "CollectablesShop",   // 收藏品交易
+    ];
+
+    /// <summary>
+    /// 🔴 <b>白名單：只有「確定是任務（Quest）交付」時才接手，其餘一律不動作。</b>
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>失敗形式一律是「不動作」</b>：任何一個環節取不到資料、或事件對不上已接的任務，
+    /// 都回 <c>false</c>。少做一次自動化的代價是多按一下；做錯一次的代價是道具沒了。
+    /// ⚠️ <b>刻意不處理</b>：理符繳交、公會合建交納、以物易物、代幣／收藏品兌換
+    /// （那些不該由本模組接手）。
+    /// </remarks>
+    private bool IsQuestTurnIn()
+    {
+        // 保險：已知不可逆的視窗開著就直接放棄，連白名單都不必看。
+        foreach (var addonName in NeverActWhileOpen)
+        {
+            if (!UiHelper.IsAddonReady(addonName)) continue;
+
+            if (Throttle.Pass("AutoRequestItemSubmit-NeverAct", 10_000))
+                Svc.Log.Information(
+                    $"[{InternalName}] 偵測到「{addonName}」開著（按下去不可逆），本模組不動作。");
+            return false;
+        }
+
+        var questManager = QuestManager.Instance();
+        var framework = EventFramework.Instance();
+        if (questManager == null || framework == null)
+        {
+            if (Throttle.Pass("AutoRequestItemSubmit-NotQuest", 30_000))
+                Svc.Log.Information($"[{InternalName}] 取不到任務／事件狀態，無法確認是任務交付，本模組不動作。");
+            return false;
+        }
+
+        var event1 = framework->EventState1.EventId;
+        var event2 = framework->EventState2.EventId;
+
+        if (TryMatchAcceptedQuest(questManager, event1, out var questId) ||
+            TryMatchAcceptedQuest(questManager, event2, out questId))
+        {
+            if (Throttle.Pass("AutoRequestItemSubmit-Quest", 30_000))
+                Svc.Log.Information(
+                    $"[{InternalName}] 判定為任務交付（任務編號 {questId}；" +
+                    $"事件 1={Describe(event1)}、事件 2={Describe(event2)}），接手處理。");
+            return true;
+        }
+
+        // 📌 這行是「白名單到底認不認得出任務交付」在實機上唯一的證據來源。
+        // 它若在真的交任務時還是印出來，代表 EventState 的語意跟這裡的假設不同，
+        // 到時候照著印出來的事件值改判準即可（而在那之前，模組是「不動作」而不是「亂動作」）。
+        if (Throttle.Pass("AutoRequestItemSubmit-NotQuest", 30_000))
+            Svc.Log.Information(
+                $"[{InternalName}] 交易視窗不是任務交付，本模組不動作。" +
+                $"（事件 1={Describe(event1)}、事件 2={Describe(event2)}；" +
+                $"目前接著 {questManager->NumAcceptedQuests} 個任務）");
+
+        return false;
+    }
+
+    /// <summary>
+    /// 這個事件是不是「玩家現在接著的某個任務」。<c>ContentId</c> 與
+    /// <c>EntryId</c> 兩段都要吻合才算。
+    /// </summary>
+    private static bool TryMatchAcceptedQuest(QuestManager* questManager, EventId eventId, out ushort questId)
+    {
+        questId = 0;
+        if (eventId.ContentId != EventHandlerContent.Quest) return false;
+
+        var entryId = eventId.EntryId;
+        if (entryId == 0) return false;
+
+        // 🔴 逐格比對 NormalQuests，不呼叫 QuestManager.IsQuestAccepted ——
+        // 後者是特徵碼定位的遊戲函式，台服的特徵碼一律先假設會失效，而且失效是靜默的。
+        // 這裡只讀欄位，沒有任何特徵碼相依。
+        var quests = questManager->NormalQuests;
+        for (var i = 0; i < quests.Length; i++)
+        {
+            if (quests[i].QuestId != entryId) continue;
+            questId = entryId;
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>把事件 ID 印成人看得懂的樣子（診斷用）。</summary>
+    private static string Describe(EventId eventId) =>
+        $"{eventId.ContentId}#{eventId.EntryId}(0x{eventId.Id:X})";
+
+    public override void DrawConfig()
+    {
+        ImGui.SetNextItemWidth(180f);
+        var delay = Config.DelayMs;
+        if (ImGui.SliderInt("動作間隔（毫秒）", ref delay, 200, 3_000))
+        {
+            Config.DelayMs = delay;
+            Plugin.Instance.Config.Save();
+        }
+
+        using (ImRaii.PushIndent())
+            ImGui.TextDisabled("每填一格／按一次鈕之間的最短間隔，同時也是最短反應時間。");
+
+        ImGui.SetNextItemWidth(240f);
+        var preferenceIndex = (int)Config.QualityPreference;
+        if (ImGui.Combo("品質偏好", ref preferenceIndex, QualityPreferenceLabels, QualityPreferenceLabels.Length))
+        {
+            Config.QualityPreference = (HandInQualityPreference)preferenceIndex;
+            Plugin.Instance.Config.Save();
+        }
+
+        using (ImRaii.PushIndent())
+        {
+            ImGui.TextDisabled(Config.QualityPreference switch
+            {
+                HandInQualityPreference.PreferHighQuality =>
+                    "同一款道具有普通品與優質品都能交時，優先交出優質品。",
+                HandInQualityPreference.PreferNormalQuality =>
+                    "同一款道具有普通品與優質品都能交時，優先交出普通品（把優質品留著）。",
+                _ => "不挑，交出遊戲列在最前面的那一份——可能是普通品也可能是優質品。",
+            });
+            ImGui.TextDisabled("這是偏好不是限定：偏好的那一種沒有時會退回另一種照樣交出，不會卡住。");
+            ImGui.TextDisabled("繳交本身就要求優質品時，遊戲只會列出優質品，此設定無從發揮。");
+        }
+
+        var confirmHq = Config.ConfirmHighQuality;
+        if (ImGui.Checkbox("自動確認優質道具的交易確認框", ref confirmHq))
+        {
+            Config.ConfirmHighQuality = confirmHq;
+            Plugin.Instance.Config.Save();
+        }
+
+        using (ImRaii.PushIndent())
+        {
+            ImGui.TextDisabled("關閉時交易照樣自動填格與交出，只有「確定要交易優質道具嗎？」");
+            ImGui.TextDisabled("這扇確認框留給你自己按。判準取自遊戲介面用語，不是寫死的字串。");
+            ImGui.TextDisabled(highQualityPrompts.Count == 0
+                ? "⚠️ 目前一條判準都沒解析到，確認框不會自動按。"
+                : $"目前判準（{highQualityPrompts.Count} 條）：{string.Join(" / ", highQualityPrompts)}");
+        }
+
+        ImGui.Separator();
+        ImGui.TextDisabled("只在確認得出是「任務交付」時才動作，判斷不出來就完全不動作。");
+        using (ImRaii.PushIndent())
+        {
+            ImGui.TextDisabled("同一扇交易視窗，遊戲也拿來做理符繳交、以物易物、代幣兌換與");
+            ImGui.TextDisabled("公會合建交納，而視窗本身看不出自己是誰開的。那些情境按錯的代價");
+            ImGui.TextDisabled("是換掉不該換的道具且無法還原，所以認不出來時一律讓你自己按。");
+            ImGui.TextDisabled("每次沒有接手時都會在記錄裡寫明原因（Information 等級）。");
+        }
+    }
+}

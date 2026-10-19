@@ -1,0 +1,114 @@
+using System;
+
+namespace TCToolbox.Core;
+
+/// <summary>模組列上那句提示的語氣（決定顏色）。</summary>
+public enum ModuleNoticeLevel
+{
+    /// <summary>「不知道」——灰字。零值刻意給這個：預設狀態是無知，不是沒事。</summary>
+    Unknown = 0,
+
+    /// <summary>「有事」——橘字。</summary>
+    Warning = 1,
+}
+
+/// <summary>
+/// 模組列上直接顯示的一句提示。
+/// </summary>
+/// <param name="Level">語氣／顏色。</param>
+/// <param name="Text">
+/// 列上看得到的短句。🔑 判準是「隨時掃視」的放列上、「起疑才查」的放 tooltip——
+/// 但<b>「不知道」本身要在列上看得見</b>，tooltip 藏的是為什麼，不是有沒有問題。
+/// </param>
+/// <param name="Tooltip">滑鼠移上才顯示的完整說明（可為空字串）。</param>
+public readonly record struct ModuleNotice(ModuleNoticeLevel Level, string Text, string Tooltip);
+
+/// <summary>功能模組基底：獨立開關、獨立生命週期，預設全部關閉。</summary>
+public abstract class TcModule
+{
+    /// <summary>存檔用內部識別名（勿改，改了使用者的開關設定會遺失）。</summary>
+    public abstract string InternalName { get; }
+
+    public abstract string DisplayName { get; }
+
+    public abstract string Description { get; }
+
+    public bool IsEnabled { get; private set; }
+
+    /// <summary>模組在主視窗上歸屬的分頁分類。</summary>
+    /// <remarks>
+    /// 📌 <b>新增模組時請顯式寫出這個 override</b>，即使結論就是 <see cref="ModuleCategory.Misc"/>。
+    /// 大家新增模組都是複製一個既有模組改的，顯式寫著才會被一起帶上；
+    /// 靠預設值的話，新模組會默默掉進「介面 · 雜項」頁而沒有人發現。
+    /// </remarks>
+    public virtual ModuleCategory Category => ModuleCategory.Misc;
+
+    /// <summary>
+    /// 這個模組的核心行為是不是「<b>使用者按了才動一次</b>」。
+    /// </summary>
+    /// <remarks>
+    /// 判準只有一條：<b>開著但不去按它，遊戲行為完全不變</b>＝<c>true</c>；
+    /// 開著就會自己介入（掛 hook 接手、盯著視窗自動點、每隔一段時間自己做事）＝<c>false</c>。
+    /// </remarks>
+    public virtual bool IsManualTrigger => false;
+
+    public virtual bool HasConfigUI => false;
+
+    /// <summary>
+    /// 模組列上要顯示的提示（<c>null</c>＝沒有話要說）。<b>唯讀顯示</b>，與模組開關無關，
+    /// 模組關著時也照樣顯示。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 這個屬性是在 ImGui 的 Draw 路徑上被讀的，<b>實作不得擲例外</b>
+    /// （主視窗有 try 兜底、失敗就不顯示提示；沒兜到的話整扇視窗的內容會換成 Dalamud 的錯誤面板）。
+    /// </remarks>
+    public virtual ModuleNotice? RowNotice => null;
+
+    public void Enable()
+    {
+        if (IsEnabled) return;
+        try
+        {
+            OnEnable();
+            IsEnabled = true;
+        }
+        catch (Exception ex)
+        {
+            Svc.Log.Error(ex, $"[{InternalName}] 啟用失敗");
+        }
+    }
+
+    public void Disable()
+    {
+        if (!IsEnabled) return;
+        try
+        {
+            OnDisable();
+        }
+        catch (Exception ex)
+        {
+            Svc.Log.Error(ex, $"[{InternalName}] 停用時發生例外");
+        }
+        finally
+        {
+            IsEnabled = false;
+        }
+    }
+
+    /// <summary>全艦隊急停時叫停本模組正在跑的自動流程（主執行緒）。</summary>
+    /// <returns>有東西被叫停就回一句給急停結果看的描述；沒在跑回 <see langword="null"/>。</returns>
+    /// <remarks>不改使用者的模組開關。會自己操作遊戲（佇列、排好的傳送、導航）的模組都要覆寫。</remarks>
+    public virtual string? StopForFleetEmergency() => null;
+
+    protected abstract void OnEnable();
+
+    protected abstract void OnDisable();
+
+    /// <summary>模組設定 UI（在主視窗中展開繪製）。</summary>
+    /// <remarks>
+    /// 🔴 與 <see cref="RowNotice"/> 同一份契約：這是 ImGui 的 Draw 路徑，<b>實作不得擲例外</b>。
+    /// </remarks>
+    public virtual void DrawConfig()
+    {
+    }
+}
