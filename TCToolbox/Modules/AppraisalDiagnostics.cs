@@ -59,7 +59,7 @@ public sealed unsafe class AppraisalDiagnostics : TcModule
     private const int RawAgentStart = 0x28;
     private const int RawAgentEnd = 0xA0;
 
-    private readonly Dictionary<string, string> lastRefresh = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (string Content, int Id)> lastRefresh = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> suppressedRefresh = new(StringComparer.Ordinal);
     private bool rawAgentAllowed;
     private int sequence;
@@ -94,31 +94,33 @@ public sealed unsafe class AppraisalDiagnostics : TcModule
             var name = args.AddonName;
             if (type == AddonEvent.PreFinalize)
             {
-                lastRefresh.Remove(name);
                 Svc.Log.Information($"{Tag} #{++sequence} {name} 關閉{TakeSuppressed(name)} | {DescribeAgents()}");
                 return;
             }
 
-            var values = DumpValues(args, out var count);
+            var values = DumpValues(args, out var count, out var undefined);
             var lines = new List<string>(values) { $"agent：{DescribeAgents()}" };
             lines.AddRange(DescribeRawAgents());
 
+            // 比對對象跨開關保留：同一個視窗再開一次、內容一字不差時只印標頭。
+            var content = string.Join("\n", lines);
+            var same = lastRefresh.TryGetValue(name, out var previous) && previous.Content == content;
+
             if (type == AddonEvent.PostSetup)
             {
-                lastRefresh.Remove(name);
-                Emit(name, "開啟", count, lines, withTarget: true);
+                var id = Emit(name, "開啟" + TakeSuppressed(name), count, undefined,
+                    same ? [$"內容與 #{previous.Id} 相同，不重印"] : lines, withTarget: true);
+                if (!same) lastRefresh[name] = (content, id);
                 return;
             }
 
-            var content = string.Join("\n", lines);
-            if (lastRefresh.TryGetValue(name, out var previous) && previous == content)
+            if (same)
             {
                 suppressedRefresh[name] = suppressedRefresh.GetValueOrDefault(name) + 1;
                 return;
             }
 
-            lastRefresh[name] = content;
-            Emit(name, "更新" + TakeSuppressed(name), count, lines, withTarget: false);
+            lastRefresh[name] = (content, Emit(name, "更新" + TakeSuppressed(name), count, undefined, lines, withTarget: false));
         }
         catch (Exception ex)
         {
@@ -133,9 +135,9 @@ public sealed unsafe class AppraisalDiagnostics : TcModule
             // 先用目標名稱／鑑定代理物件判斷再讀 AtkValues：其他時候的選單一個字都不讀。
             if (!AnyAppraisalAgentOpen() && !TargetNameHasKeyword()) return;
 
-            var values = DumpValues(args, out var count);
+            var values = DumpValues(args, out var count, out var undefined);
             var lines = new List<string>(values) { $"agent：{DescribeAgents()}" };
-            Emit(args.AddonName, "開啟（鑑定相關選單）", count, lines, withTarget: true);
+            Emit(args.AddonName, "開啟（鑑定相關選單）", count, undefined, lines, withTarget: true);
         }
         catch (Exception ex)
         {
@@ -143,13 +145,15 @@ public sealed unsafe class AppraisalDiagnostics : TcModule
         }
     }
 
-    private void Emit(string addon, string what, int count, List<string> lines, bool withTarget)
+    private int Emit(string addon, string what, int count, int undefined, List<string> lines, bool withTarget)
     {
         var id = ++sequence;
         var target = withTarget ? $" | 目標：{DescribeTarget()}" : string.Empty;
-        Svc.Log.Information($"{Tag} #{id} {addon} {what}，AtkValues {count} 個{target}");
+        var skipped = undefined > 0 ? $"（{undefined} 個 Undefined 不列，沒列出的索引都是 Undefined）" : string.Empty;
+        Svc.Log.Information($"{Tag} #{id} {addon} {what}，AtkValues {count} 個{skipped}{target}");
         foreach (var line in lines)
             Svc.Log.Information($"{Tag} #{id} {addon} {line}");
+        return id;
     }
 
     private string TakeSuppressed(string addon)
@@ -158,9 +162,13 @@ public sealed unsafe class AppraisalDiagnostics : TcModule
         return $"（之前略過 {n} 次相同內容的更新）";
     }
 
-    /// <summary>把 PostSetup／PostRefresh 帶進來的 AtkValues 每 <see cref="ValuesPerLine"/> 個排成一行。</summary>
-    private static List<string> DumpValues(AddonArgs args, out int count)
+    /// <summary>
+    /// 把 PostSetup／PostRefresh 帶進來的 AtkValues 每 <see cref="ValuesPerLine"/> 個排成一行，索引照原樣標在每格前。
+    /// 型別恰好是 Undefined（不帶旗標）的格不列、只數在 <paramref name="undefined"/>；其他型別（含 Null）一律照列。
+    /// </summary>
+    private static List<string> DumpValues(AddonArgs args, out int count, out int undefined)
     {
+        undefined = 0;
         var (pointer, declared) = args switch
         {
             AddonSetupArgs s => (s.AtkValues, s.AtkValueCount),
@@ -180,15 +188,25 @@ public sealed unsafe class AppraisalDiagnostics : TcModule
         var shown = Math.Min(count, MaxValues);
         var values = (AtkValue*)pointer;
         var sb = new StringBuilder();
-        for (var start = 0; start < shown; start += ValuesPerLine)
+        int inLine = 0, first = 0, last = 0;
+        for (var i = 0; i < shown; i++)
         {
+            if (values[i].Type == ValueType.Undefined)
+            {
+                undefined++;
+                continue;
+            }
+
+            if (inLine == 0) first = i;
+            last = i;
+            sb.Append($" [{i}]{FormatValue(values + i)}");
+            if (++inLine < ValuesPerLine) continue;
+            lines.Add($"值[{first}-{last}]{sb}");
             sb.Clear();
-            var end = Math.Min(start + ValuesPerLine, shown);
-            sb.Append($"值[{start}-{end - 1}]");
-            for (var i = start; i < end; i++)
-                sb.Append($" [{i}]{FormatValue(values + i)}");
-            lines.Add(sb.ToString());
+            inLine = 0;
         }
+
+        if (inLine > 0) lines.Add($"值[{first}-{last}]{sb}");
 
         if (shown < count) lines.Add($"（只列前 {shown} 個，共 {count} 個）");
         return lines;
