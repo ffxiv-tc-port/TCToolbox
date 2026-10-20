@@ -44,12 +44,37 @@ public sealed class AutoCountPlayers : TcModule
     /// 單次輪詢取下來的玩家快照。
     /// <para><c>Job</c> 是職業全名（台服 ClassJob 表自帶繁中），不是縮寫。</para>
     /// <para><c>OnlineStatusId</c> 是 <c>OnlineStatus</c> 的列號（0＝無狀態）。</para>
+    /// <para>實例由 <see cref="playerPool"/> 每輪重填，只在填它的那一輪有效；只放純量與字串。</para>
     /// </summary>
-    private sealed record PlayerInfo(
-        uint EntityId, string Name, string World, uint JobIconId, string Job, float Distance,
-        uint OnlineStatusId, string CompanyTag);
+    private sealed record PlayerInfo
+    {
+        public uint EntityId { get; private set; }
+        public string Name { get; private set; } = string.Empty;
+        public string World { get; private set; } = string.Empty;
+        public uint JobIconId { get; private set; }
+        public string Job { get; private set; } = string.Empty;
+        public float Distance { get; private set; }
+        public uint OnlineStatusId { get; private set; }
+        public string CompanyTag { get; private set; } = string.Empty;
+
+        public void Set(uint entityId, string name, string world, uint jobIconId, string job, float distance,
+                        uint onlineStatusId, string companyTag)
+        {
+            EntityId = entityId;
+            Name = name;
+            World = world;
+            JobIconId = jobIconId;
+            Job = job;
+            Distance = distance;
+            OnlineStatusId = onlineStatusId;
+            CompanyTag = companyTag;
+        }
+    }
 
     private readonly List<PlayerInfo> players = [];
+
+    /// <summary>重用的 <see cref="PlayerInfo"/>；長度＝同時在場人數的歷史最大值，停用時清空。</summary>
+    private readonly List<PlayerInfo> playerPool = [];
     private IDtrBarEntry? dtrEntry;
 
     /// <summary>一位玩家的名稱與公會簡稱，連同解析當下那兩個欄位的原始位元組。</summary>
@@ -60,6 +85,22 @@ public sealed class AutoCountPlayers : TcModule
         public byte[] TagBytes = [];
         public string CompanyTag = string.Empty;
         public uint Poll;
+
+        private string? keyName, keyWorld;
+        private string key = string.Empty;
+
+        /// <summary>「名稱@伺服器」；只在兩個字串跟上次是同一個實例時沿用。</summary>
+        public string NameAtWorld(string name, string world)
+        {
+            if (!ReferenceEquals(name, keyName) || !ReferenceEquals(world, keyWorld))
+            {
+                key = $"{name}@{world}";
+                keyName = name;
+                keyWorld = world;
+            }
+
+            return key;
+        }
     }
 
     /// <summary>
@@ -126,6 +167,8 @@ public sealed class AutoCountPlayers : TcModule
     /// <summary>條件命中集合的暫存容器（每次輪詢重用，避免每 500ms 配置新集合）。</summary>
     private readonly HashSet<(PlayerWatchRule Rule, string Player)> stillMatching = [];
     private readonly HashSet<PlayerWatchRule> evaluatedRules = [];
+    private readonly HashSet<string> presentKeys = [];
+    private Predicate<(PlayerWatchRule Rule, string Player)>? isReleasedTrigger;
 
     /// <summary>
     /// <c>OnlineStatus</c> 的（列號, 名稱）清單，第一次用到才建。
@@ -166,6 +209,7 @@ public sealed class AutoCountPlayers : TcModule
         dtrEntry?.Remove();
         dtrEntry = null;
         players.Clear();
+        playerPool.Clear();
         playerTexts.Clear();
         jobNames.Clear();
         worldNames.Clear();
@@ -176,6 +220,7 @@ public sealed class AutoCountPlayers : TcModule
         activeTriggered.Clear();
         patternChangedAt.Clear();
         matchedEntityIds.Clear();
+        presentKeys.Clear();
         pendingCommands.Clear();
     }
 
@@ -199,6 +244,7 @@ public sealed class AutoCountPlayers : TcModule
         players.Clear();
         pollSerial++;
         var textsSeen = 0;
+        var pooled = 0;
         foreach (var obj in Svc.Objects)
         {
             if (obj is not IPlayerCharacter pc) continue;
@@ -208,7 +254,9 @@ public sealed class AutoCountPlayers : TcModule
             var jobRow = classJob?.RowId ?? 0;
             ReadPlayerText(pc, out var name, out var companyTag, ref textsSeen);
 
-            players.Add(new PlayerInfo(
+            if (pooled == playerPool.Count) playerPool.Add(new PlayerInfo());
+            var info = playerPool[pooled++];
+            info.Set(
                 pc.EntityId,
                 name,
                 WorldName(pc.HomeWorld),
@@ -217,7 +265,8 @@ public sealed class AutoCountPlayers : TcModule
                 Vector3.Distance(localPlayer.Position, pc.Position),
                 // 只取列號，不在這裡查表——查表要用到 Lumina，留給 UI 端做就好。
                 pc.OnlineStatus.RowId,
-                companyTag));
+                companyTag);
+            players.Add(info);
         }
 
         if (playerTexts.Count != textsSeen) DropStalePlayerTexts();
@@ -310,6 +359,10 @@ public sealed class AutoCountPlayers : TcModule
         companyTag = text.CompanyTag;
     }
 
+    /// <summary>「名稱@伺服器」；有這位玩家的文字快取就沿用快取裡組好的那份。</summary>
+    private string NameAtWorld(PlayerInfo p) =>
+        playerTexts.TryGetValue(p.EntityId, out var text) ? text.NameAtWorld(p.Name, p.World) : $"{p.Name}@{p.World}";
+
     private void DropStalePlayerTexts()
     {
         stalePlayerTexts.Clear();
@@ -391,7 +444,7 @@ public sealed class AutoCountPlayers : TcModule
         }
 
         var now = Environment.TickCount64;
-        var present = new HashSet<string>();
+        presentKeys.Clear();
 
         stillMatching.Clear();
         evaluatedRules.Clear();
@@ -403,8 +456,8 @@ public sealed class AutoCountPlayers : TcModule
 
         foreach (var p in players)
         {
-            var key = $"{p.Name}@{p.World}";
-            present.Add(key);
+            var key = NameAtWorld(p);
+            presentKeys.Add(key);
 
             foreach (var rule in rules)
             {
@@ -431,23 +484,29 @@ public sealed class AutoCountPlayers : TcModule
             }
         }
 
-        activeTriggered.RemoveWhere(tk =>
-            !present.Contains(tk.Player) ||
-            (evaluatedRules.Contains(tk.Rule) && !stillMatching.Contains(tk)));
+        activeTriggered.RemoveWhere(isReleasedTrigger ??= IsReleasedTrigger);
 
         // 定期清掉過期的觸發紀錄與已刪除規則的殘留
         if (Throttle.Pass("AutoCountPlayers-PruneTriggers", 60_000))
-        {
-            foreach (var entry in lastTrigger.Where(kv =>
-                         !rules.Contains(kv.Key.Rule) ||
-                         now - kv.Value > Math.Max(3_600_000, kv.Key.Rule.CooldownSeconds * 2000L)).ToArray())
-                lastTrigger.Remove(entry.Key);
-            foreach (var rule in patternChangedAt.Keys.Where(r => !rules.Contains(r)).ToArray())
-                patternChangedAt.Remove(rule);
+            PruneTriggers(rules, now);
+    }
 
-            // 快取的鍵是樣式字串，只會隨著使用者打字累積；上限純粹是止血。
-            if (regexCache.Count > 128) regexCache.Clear();
-        }
+    private bool IsReleasedTrigger((PlayerWatchRule Rule, string Player) tk) =>
+        !presentKeys.Contains(tk.Player) ||
+        (evaluatedRules.Contains(tk.Rule) && !stillMatching.Contains(tk));
+
+    /// <summary>lambda 放在自己的方法裡：留在 <see cref="EvaluateWatchRules"/> 時閉包每輪都會配置。</summary>
+    private void PruneTriggers(List<PlayerWatchRule> rules, long now)
+    {
+        foreach (var entry in lastTrigger.Where(kv =>
+                     !rules.Contains(kv.Key.Rule) ||
+                     now - kv.Value > Math.Max(3_600_000, kv.Key.Rule.CooldownSeconds * 2000L)).ToArray())
+            lastTrigger.Remove(entry.Key);
+        foreach (var rule in patternChangedAt.Keys.Where(r => !rules.Contains(r)).ToArray())
+            patternChangedAt.Remove(rule);
+
+        // 快取的鍵是樣式字串，只會隨著使用者打字累積；上限純粹是止血。
+        if (regexCache.Count > 128) regexCache.Clear();
     }
 
     /// <summary>
@@ -475,7 +534,7 @@ public sealed class AutoCountPlayers : TcModule
         if (rule.MatchName && !string.IsNullOrWhiteSpace(rule.Pattern))
         {
             var hit = MatchesText(rule.Pattern, rule.UseRegex,
-                                  rule.MatchWithWorld ? $"{p.Name}@{p.World}" : p.Name);
+                                  rule.MatchWithWorld ? NameAtWorld(p) : p.Name);
             active++;
             anyHit |= hit;
             allHit &= hit;
