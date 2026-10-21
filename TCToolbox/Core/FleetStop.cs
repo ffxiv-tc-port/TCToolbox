@@ -76,7 +76,7 @@ internal static class FleetStop
     private static readonly Lazy<ICallGateSubscriber<string, object>> VislandStopAll =
         new(() => Svc.PluginInterface.GetIpcSubscriber<string, object>("visland.StopAll"));
 
-    // 以下七支都是 "<內部名>.StopAll"，與 BOCCHI／HoardFarm 同形（Action<string>，參數是呼叫端署名）。
+    // 以下八支都是 "<內部名>.StopAll"，與 BOCCHI／HoardFarm 同形（Action<string>，參數是呼叫端署名）。
     // 呼叫前先看 HasAction：沒裝或舊版沒有這個端點 ⇒ 歸「未安裝」、不呼叫。
     private static readonly StopAllEndpoint ChilledLevesStopAll = new("ChilledLeves");
     private static readonly StopAllEndpoint ExplorersIceboxStopAll = new("ExplorersIcebox");
@@ -85,6 +85,7 @@ internal static class FleetStop
     private static readonly StopAllEndpoint LatihasChocoboStopAll = new("LatihasChocobo");
     private static readonly StopAllEndpoint LazyLootStopAll = new("LazyLoot");
     private static readonly StopAllEndpoint LogogramHelperStopAll = new("LogogramHelper");
+    private static readonly StopAllEndpoint MarketbuddyStopAll = new("Marketbuddy");
 
     // BossmodReborn/BossMod/Framework/IPCProvider.cs Register("AI.SetEnabled", (bool)=>bool)
     // 🔴 前綴是 "BossMod" 不是 "BossmodReborn"，而且它是 Func<bool,bool>（回傳關掉之後的實際狀態）。
@@ -178,6 +179,8 @@ internal static class FleetStop
 
         // ② 自動化本體。
         results.Add(StopWrathCombo());
+        results.Add(InvokeStopAll("Marketbuddy 市場", MarketbuddyStopAll,
+            "重掛、下架、上架、賣商店、僱員與多角色巡迴、價格巡檢全部停下；開著的上架視窗交給你"));
         results.Add(Invoke("AutoRetainer", () =>
         {
             ArAbortAllTasks.Value.InvokeAction();

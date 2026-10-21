@@ -34,7 +34,7 @@ public sealed class FleetEmergencyStop : TcModule
     public override string Description =>
         "一個動作把所有會自己動的插件同時叫停：先停會讓角色移動的（vnavmesh／Lifestream／AutoDuty／" +
         "Questionable／BOCCHI 新月島自動化／HoardFarm 天之御柱刷寶／DailyDuty 帶我去／visland／Chilled Leves／Explorer's Icebox／" +
-        "Eureka Helper／Saucy／LatihasChocobo／BossmodReborn AI），再停自動化本體（WrathCombo／AutoRetainer／Artisan／" +
+        "Eureka Helper／Saucy／LatihasChocobo／BossmodReborn AI），再停自動化本體（WrathCombo／Marketbuddy／AutoRetainer／Artisan／" +
         "GatherBuddy Reborn／AutoHook／ICE／SomethingNeedDoing／LazyLoot／Logogram Helper）。" +
         $"指令 {Command}（別名 {CommandAlias}），也可以綁一顆熱鍵。每個對象的結果分成成功／失敗／未安裝三態。";
 
