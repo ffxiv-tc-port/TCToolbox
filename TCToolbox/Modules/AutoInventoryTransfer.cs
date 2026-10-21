@@ -73,6 +73,29 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         ((int)VirtualKey.MENU, "ALT"),
     ];
 
+    private static readonly VirtualKey[] ModifierGroups = [VirtualKey.SHIFT, VirtualKey.CONTROL, VirtualKey.MENU];
+
+    /// <summary>Shift／Ctrl／Alt（含左右鍵）歸到通用鍵碼；其他鍵回 0。</summary>
+    private static int ModifierGroup(int vk) => vk switch
+    {
+        0x10 or 0xA0 or 0xA1 => 0x10,
+        0x11 or 0xA2 or 0xA3 => 0x11,
+        0x12 or 0xA4 or 0xA5 => 0x12,
+        _ => 0,
+    };
+
+    /// <summary>Shift／Ctrl／Alt 中，<paramref name="ownKeyCode"/> 那一組以外的有沒有按著。</summary>
+    private static bool OtherModifierHeld(int ownKeyCode)
+    {
+        var own = ModifierGroup(ownKeyCode);
+        foreach (var group in ModifierGroups)
+        {
+            if ((int)group != own && Svc.Keys[group]) return true;
+        }
+
+        return false;
+    }
+
     private delegate void OpenForItemSlotDelegate(
         AgentInventoryContext* agent, InventoryType inventoryType, int slot, int a4, uint addonId);
 
@@ -778,6 +801,15 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
 
         try
         {
+            // 原函式開頭的「封鎖格」檢查成立時直接返回、不重建選單，detour 照樣被呼叫 ⇒ 選單是上一次的，不動作。
+            if (agent->TargetInventoryId != inventoryType || agent->TargetInventorySlotId != slot)
+            {
+                Svc.Log.Debug(
+                    $"[{InternalName}] 這次右鍵原生端沒有重建選單（目標 {inventoryType}#{slot}，" +
+                    $"選單是 {agent->TargetInventoryId}#{agent->TargetInventorySlotId}），不動作。");
+                return;
+            }
+
             HandleContextMenu(agent, new PendingMenu(
                 inventoryType, slot, IsChestHover: false, HoverBaseItemId: 0, HoverHighQuality: false));
         }
@@ -793,7 +825,8 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         var slot = menu.Slot;
 
         if (Config.ModifierKeyCode == 0) return;
-        if (CSFramework.Instance()->WindowInactive) return;
+        var csFramework = CSFramework.Instance();
+        if (csFramework == null || csFramework->WindowInactive) return;
 
         // 這裡記在修飾鍵檢查與下面那道「略過重複觸發」去重**之前**：分辨「hook 根本沒被呼叫」與「修飾鍵沒按到」。
         // 有按才逐筆寫 Debug；沒按的只計數，每 10 分鐘彙總一行（見 FlushUnmodifiedMenuSummary），
@@ -805,6 +838,14 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
             unmodifiedMenuCount++;
 
         if (!modifierHeld) return;
+
+        // AutoRetainer 快捷出售與 Marketbuddy 快速上架也在同一支開選單函式上、用修飾鍵觸發；兩邊同時選會打在關閉中的選單上。
+        // ⇒ 同時還按著 Shift／Ctrl／Alt 中其他的（不算自己那一組）就不動作。
+        if (OtherModifierHeld(Config.ModifierKeyCode))
+        {
+            Svc.Log.Debug($"[{InternalName}] 修飾鍵有按，但同時按著其他修飾鍵，不動作：{source}#{slot}");
+            return;
+        }
 
         // 🔴 置物櫃「取出」方向：右鍵選單給不了格號，所以在動任何東西之前先做 (A)(B) 交叉驗證。
         // 兩邊算出來的道具不一致就整段放棄 —— 寧可不動作，也不要搬錯道具。
@@ -1461,7 +1502,8 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
 
         ImGui.TextColored(new System.Numerics.Vector4(1f, 0.8f, 0.35f, 1f),
                           "⚠ 觸發鍵請避開 Marketbuddy 的「快速上架」與 AutoRetainer 的「快速販賣」鍵：\n" +
-                          "三者都掛在同一個右鍵事件上，設成同一顆鍵會同時動作。");
+                          "三者都掛在同一個右鍵事件上，設成同一顆鍵會同時動作。\n" +
+                          "右鍵時除了觸發鍵還按著別的 Shift／Ctrl／Alt，就不會轉移。");
 
         ImGui.TextDisabled("兵裝庫只支援「兵裝庫→背包」方向；反向請照常用裝備／整理流程。");
     }
