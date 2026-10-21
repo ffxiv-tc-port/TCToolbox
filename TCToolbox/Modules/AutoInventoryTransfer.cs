@@ -1023,7 +1023,8 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         CloseContextMenu(menuAgent);
 
         // 一次只讓一筆在途：實機量到同時在途愈多、請求被伺服器丟掉的比例愈高。
-        if (CountChestDepartures() > 0 || MustSettleBefore(withdrawing))
+        // 佇列不空時一律排隊（佇列是唯一出口），否則不必等的取出會插到等待中的存入前面。
+        if (chestQueue.Count > 0 || CountChestDepartures() > 0 || MustSettleBefore(withdrawing))
         {
             EnqueueChestMove(source, slot, baseItemId, displayName, withdrawing);
             return;
