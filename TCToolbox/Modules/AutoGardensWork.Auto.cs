@@ -62,11 +62,17 @@ public sealed unsafe partial class AutoGardensWork
     /// <summary>角色位置停住多久之後，無人值守重跑才可以開始（毫秒）。</summary>
     private const int ManualMoveQuietMs = 1_500;
 
-    /// <summary>每幀移動超過這麼多（碼）就算「角色在動」；擋掉站著不動時的浮點抖動。</summary>
-    private const float ManualMoveEpsilon = 0.05f;
+    /// <summary>算一次速度至少要隔這麼久（毫秒）；按時間算才不會跟著幀率變。</summary>
+    private const long ManualMoveWindowMs = 300;
 
-    /// <summary>上一幀（佇列閒著時）的角色位置；<c>null</c>＝沒有基準。</summary>
+    /// <summary>水平速度達到這麼多（米／秒）就算「角色在動」：走路模式約 2.4、跑步約 6，站著的浮點抖動遠低於此。</summary>
+    private const float ManualMoveSpeedMin = 1.5f;
+
+    /// <summary>速度基準點的角色位置（佇列閒著時）；<c>null</c>＝沒有基準。</summary>
     private Vector3? idleLastPosition;
+
+    /// <summary><see cref="idleLastPosition"/> 記下的時刻（<see cref="Environment.TickCount64"/>）。</summary>
+    private long idleLastPositionTick;
 
     /// <summary>佇列閒著時最後一次看到角色在動的時刻（<see cref="Environment.TickCount64"/>）。</summary>
     private long idleLastMovedTick;
@@ -524,7 +530,10 @@ public sealed unsafe partial class AutoGardensWork
         StartAutoBatch(startedByLoop: true);
     }
 
-    /// <summary>佇列閒著時每幀記一次角色位置；位置有變就更新最後移動時刻（不分是誰讓它動的）。</summary>
+    /// <summary>
+    /// 佇列閒著時每幀呼叫：每隔至少 <see cref="ManualMoveWindowMs"/> 用水平位移除以經過時間算一次速度，
+    /// 達到 <see cref="ManualMoveSpeedMin"/> 就更新最後移動時刻（不分是誰讓它動的）。
+    /// </summary>
     private void TrackIdleMovement()
     {
         var position = Svc.Objects.LocalPlayer?.Position;
@@ -534,10 +543,24 @@ public sealed unsafe partial class AutoGardensWork
             return;
         }
 
-        if (idleLastPosition is { } last && Vector3.DistanceSquared(now, last) > ManualMoveEpsilon * ManualMoveEpsilon)
-            idleLastMovedTick = Environment.TickCount64;
+        var tick = Environment.TickCount64;
+        if (idleLastPosition is not { } last)
+        {
+            idleLastPosition = now;
+            idleLastPositionTick = tick;
+            return;
+        }
+
+        var elapsedMs = tick - idleLastPositionTick;
+        if (elapsedMs < ManualMoveWindowMs) return;
+
+        var dx = now.X - last.X;
+        var dz = now.Z - last.Z;
+        if (MathF.Sqrt(dx * dx + dz * dz) * 1000f / elapsedMs >= ManualMoveSpeedMin)
+            idleLastMovedTick = tick;
 
         idleLastPosition = now;
+        idleLastPositionTick = tick;
     }
 
     // ── 缺材料的偵測與呈現 ─────────────────────────────────────────────────
