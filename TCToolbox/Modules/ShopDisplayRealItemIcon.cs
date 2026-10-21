@@ -257,16 +257,17 @@ public sealed unsafe class ShopDisplayRealItemIcon : TcModule
                 return;
             }
 
-            var list = new System.Collections.Generic.List<(uint IconId, string Name)>();
+            var list = new System.Collections.Generic.List<(uint IconId, string[] Names)>();
             for (var i = 0; i < count; i++)
             {
                 var raw = ReadUInt(addon, 34 + 11 * i) % 500_000;
                 if (raw == 0) continue;
                 var row = Svc.Data.GetExcelSheet<Item>().GetRowOrDefault(raw);
                 if (!row.HasValue) continue;
-                var name = row.Value.Name.ExtractText();
-                if (string.IsNullOrEmpty(name)) continue;
-                list.Add((row.Value.Icon, name));
+                var names = ShopItemNameMatch.Candidates(
+                    row.Value.Singular.ExtractText(), row.Value.Name.ExtractText());
+                if (names.Length == 0) continue;
+                list.Add((row.Value.Icon, names));
             }
 
             collectablesCache = list;
@@ -306,7 +307,7 @@ public sealed unsafe class ShopDisplayRealItemIcon : TcModule
             var textNode = (AtkTextNode*)nameNode;
             if (!textNode->NodeText.StringPtr.HasValue) continue;
 
-            var shownName = SanitizeName(ReadNodeText(textNode));
+            var shownName = ShopItemNameMatch.Normalize(ReadNodeText(textNode));
             if (shownName.Length == 0) continue;
 
             var icon = FindIconByName(shownName);
@@ -372,16 +373,16 @@ public sealed unsafe class ShopDisplayRealItemIcon : TcModule
 
     private static bool collectablesLayoutReported;
 
-    private static System.Collections.Generic.List<(uint IconId, string Name)> collectablesCache = [];
+    private static System.Collections.Generic.List<(uint IconId, string[] Names)> collectablesCache = [];
 
+    /// <summary>
+    /// 認不出或有兩個以上道具都可能時回 0（不換圖、維持遊戲原樣）。
+    /// 刻意不取第一個包含的：「黃水晶」會被排在前面的「黃水晶禦敵項環」搶走。
+    /// </summary>
     private static uint FindIconByName(string shownName)
     {
-        foreach (var (iconId, name) in collectablesCache)
-        {
-            if (name.Contains(shownName, System.StringComparison.OrdinalIgnoreCase)) return iconId;
-        }
-
-        return 0;
+        var index = ShopItemNameMatch.Find(collectablesCache, shownName);
+        return index >= 0 ? collectablesCache[index].IconId : 0;
     }
 
     /// <summary>讀節點上顯示的文字，剝掉 SeString payload 之後只留看得見的字。</summary>
@@ -393,22 +394,4 @@ public sealed unsafe class ShopDisplayRealItemIcon : TcModule
     /// </remarks>
     private static string ReadNodeText(AtkTextNode* textNode) =>
         MemoryHelper.ReadSeString(&textNode->NodeText).TextValue;
-
-    /// <summary>
-    /// 剝完 payload 之後的收尾：去掉殘留的控制字元與前後空白。
-    /// </summary>
-    /// <remarks>
-    /// 剝 payload 是 <see cref="ReadNodeText"/> 的責任，這裡只是最後一道保險——
-    /// 換行之類的控制字元不影響顯示，但會讓字串比對落空。
-    /// </remarks>
-    private static string SanitizeName(string raw)
-    {
-        var sb = new System.Text.StringBuilder(raw.Length);
-        foreach (var ch in raw)
-        {
-            if (ch >= ' ') sb.Append(ch);
-        }
-
-        return sb.ToString().Trim();
-    }
 }
