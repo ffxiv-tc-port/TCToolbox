@@ -67,6 +67,9 @@ public sealed unsafe class CurrencyCapAlert : TcModule
     /// <summary>最近一次掃描抓到的<b>全部</b>貨幣（含沒超過門檻的），只給設定畫面看。</summary>
     private readonly List<CurrencySnapshot> allCurrencies = [];
 
+    /// <summary>這一輪監看中、但數背包時容器還沒載入而讀不到持有量的道具；資訊列要顯示「?」，不可當成沒快滿。</summary>
+    private readonly List<uint> heldUnreadable = [];
+
     /// <summary>
     /// 已經為了「跨過門檻」印過聊天訊息的貨幣。
     /// </summary>
@@ -145,12 +148,14 @@ public sealed unsafe class CurrencyCapAlert : TcModule
     /// <summary>資訊列上的文字是照哪一份輸入組的；<see cref="DtrContent.Stale"/>＝下次一定重組。</summary>
     private DtrContent dtrContent;
     private readonly List<CurrencySnapshot> dtrNearCap = [];
+    private readonly List<uint> dtrHeldUnreadable = [];
     private int dtrOthersNear;
 
     protected override void OnEnable()
     {
         nearCap.Clear();
         allCurrencies.Clear();
+        heldUnreadable.Clear();
         announced.Clear();
         dataReadable = false;
         loggedSpecialBucketShape = false;
@@ -178,6 +183,7 @@ public sealed unsafe class CurrencyCapAlert : TcModule
 
         nearCap.Clear();
         allCurrencies.Clear();
+        heldUnreadable.Clear();
         announced.Clear();
         dataReadable = false;
         ResetOtherSeals();
@@ -205,6 +211,7 @@ public sealed unsafe class CurrencyCapAlert : TcModule
             dtrEntry.Shown = false;
             nearCap.Clear();
             allCurrencies.Clear();
+            heldUnreadable.Clear();
             announced.Clear();
             dataReadable = false;
             InvalidateDtr();
@@ -338,6 +345,7 @@ public sealed unsafe class CurrencyCapAlert : TcModule
     {
         allCurrencies.Clear();
         nearCap.Clear();
+        heldUnreadable.Clear();
 
         var currencyManager = CurrencyManager.Instance();
         if (currencyManager == null)
@@ -427,7 +435,12 @@ public sealed unsafe class CurrencyCapAlert : TcModule
             return;
         }
 
-        if (!TryCountHeld(itemId, out var count, out var maxCount)) return;
+        if (!TryCountHeld(itemId, out var count, out var maxCount))
+        {
+            // 上限 ≤1＝不是有上限的貨幣，不算讀不到；其餘失敗都是容器還沒載入。
+            if (maxCount > 1 && !Config.IgnoredItemIds.Contains(itemId)) heldUnreadable.Add(itemId);
+            return;
+        }
 
         if (loggedHeldPath.Add(itemId))
             Svc.Log.Information($"[{InternalName}] 道具 {itemId} CurrencyManager 回上限 0，改數貨幣欄＋背包：{count}/{maxCount}");
@@ -596,6 +609,7 @@ public sealed unsafe class CurrencyCapAlert : TcModule
     {
         dtrContent = DtrContent.Stale;
         dtrNearCap.Clear();
+        dtrHeldUnreadable.Clear();
     }
 
     /// <summary>資訊列現有的文字是不是就是照這份輸入組的（是＝不必重組）。</summary>
@@ -603,10 +617,15 @@ public sealed unsafe class CurrencyCapAlert : TcModule
     private bool DtrIsCurrent(DtrContent content, int othersNear)
     {
         if (Config.ShowOtherCharacterSeals || dtrContent != content || dtrOthersNear != othersNear) return false;
-        if (dtrNearCap.Count != nearCap.Count) return false;
+        if (dtrNearCap.Count != nearCap.Count || dtrHeldUnreadable.Count != heldUnreadable.Count) return false;
         for (var i = 0; i < nearCap.Count; i++)
         {
             if (dtrNearCap[i] != nearCap[i]) return false;
+        }
+
+        for (var i = 0; i < heldUnreadable.Count; i++)
+        {
+            if (dtrHeldUnreadable[i] != heldUnreadable[i]) return false;
         }
 
         return true;
@@ -618,6 +637,8 @@ public sealed unsafe class CurrencyCapAlert : TcModule
         dtrOthersNear = othersNear;
         dtrNearCap.Clear();
         dtrNearCap.AddRange(nearCap);
+        dtrHeldUnreadable.Clear();
+        dtrHeldUnreadable.AddRange(heldUnreadable);
     }
 
     private void UpdateDtr()
@@ -641,7 +662,8 @@ public sealed unsafe class CurrencyCapAlert : TcModule
             return;
         }
 
-        if (nearCap.Count == 0 && othersNear == 0)
+        var nothingNear = nearCap.Count == 0 && othersNear == 0;
+        if (nothingNear && heldUnreadable.Count == 0)
         {
             // 這是「已知沒事」，不是「不知道」——可以安心藏起來，不占資訊列版面。
             dtrEntry.Shown = false;
@@ -652,13 +674,14 @@ public sealed unsafe class CurrencyCapAlert : TcModule
         dtrEntry.Shown = true;
         if (DtrIsCurrent(DtrContent.List, othersNear)) return;
         var label = othersNear == 0 ? nearCap.Count.ToString() : $"{nearCap.Count}+{othersNear}";
+        if (heldUnreadable.Count > 0) label = nothingNear ? "?" : label + "+?";
         dtrEntry.Text = new SeString(new IconPayload(DtrIcon), new TextPayload(label));
 
         var sb = new StringBuilder();
-        sb.Append("TC Toolbox — 貨幣快接近上限\n");
+        sb.Append(nothingNear ? "TC Toolbox — 貨幣上限警示\n" : "TC Toolbox — 貨幣快接近上限\n");
 
         if (nearCap.Count == 0)
-            sb.Append("\n目前角色沒有快滿的貨幣。");
+            sb.Append(heldUnreadable.Count > 0 ? "\n目前角色讀得到的貨幣沒有快滿的。" : "\n目前角色沒有快滿的貨幣。");
 
         var shown = Math.Min(nearCap.Count, TooltipPreviewCount);
         for (var i = 0; i < shown; i++)
@@ -670,6 +693,13 @@ public sealed unsafe class CurrencyCapAlert : TcModule
 
         if (nearCap.Count > shown)
             sb.Append($"\n…等共 {nearCap.Count} 種");
+
+        if (heldUnreadable.Count > 0)
+        {
+            sb.Append("\n暫時讀不到持有量（背包還沒載入），無法判斷有沒有快滿：");
+            for (var i = 0; i < heldUnreadable.Count; i++)
+                sb.Append(i == 0 ? "" : "、").Append(ResolveItemName(heldUnreadable[i]));
+        }
 
         sb.Append(BuildOtherSealsTooltip());
         sb.Append("\n\n左鍵／右鍵：開啟／關閉 TC Toolbox 設定");
@@ -691,6 +721,8 @@ public sealed unsafe class CurrencyCapAlert : TcModule
         var current = nearCapIdsScratch;
         current.Clear();
         foreach (var c in nearCap) current.Add(c.ItemId);
+        // 暫時讀不到的不算掉回門檻以下，否則讀回來時會重複提醒。
+        foreach (var id in heldUnreadable) current.Add(id);
 
         foreach (var c in nearCap)
         {
@@ -769,6 +801,9 @@ public sealed unsafe class CurrencyCapAlert : TcModule
                 "目前讀不到貨幣資料（未登入或遊戲尚未就緒）。");
             return;
         }
+
+        if (heldUnreadable.Count > 0)
+            ImGui.TextDisabled($"另有 {heldUnreadable.Count} 種貨幣暫時讀不到持有量（背包還沒載入）。");
 
         if (allCurrencies.Count == 0)
         {
