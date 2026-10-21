@@ -37,6 +37,8 @@ internal static class GatherBuddyMapIpc
 
     public const int MapNotLoggedIn = 7;
 
+    public const int MapListDisabled = 8;
+
     private const string Prefix = "GatherBuddyReborn";
 
     private const int ErrorLogIntervalMs = 60_000;
@@ -149,6 +151,7 @@ internal static class GatherBuddyMapIpc
         MapAlreadyHeld => "背包裡已經有這張地圖了（同一種地圖只能持有一張）",
         MapLevelTooLow => "採礦工／園藝工的等級還不夠採這張地圖",
         MapNotLoggedIn => "還沒登入",
+        MapListDisabled => "GatherBuddy 的「來自其他插件」清單或這張地圖已停用，請到 GatherBuddy 自動採集分頁勾回",
         _ => $"不認得的回傳值 {code}",
     };
 
