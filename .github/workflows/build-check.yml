@@ -57,3 +57,4 @@ jobs:
 
       - name: Build Project
         run: dotnet build --configuration Release TCToolbox/TCToolbox.csproj -p:DalamudLibPath="$env:RUNNER_TEMP\dalamud-pinned\"
+# workflow re-registration trigger 2026-10-26T18:48:45Z
