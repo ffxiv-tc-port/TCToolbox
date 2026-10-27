@@ -142,6 +142,11 @@ public static class HotkeyConflictProbe
             ["InventoryTransfer", "ModifierKeyCode"],
             "背包快速搬運", Trigger: HotkeyTrigger.WithAction,
             InMemory: () => Plugin.Instance?.Config.InventoryTransfer.ModifierKeyCode),
+
+        new("TC Toolbox", string.Empty,
+            ["QuickTrade", "ModifierKeyCode"],
+            "快速交易", Trigger: HotkeyTrigger.WithAction,
+            InMemory: () => Plugin.Instance?.Config.QuickTrade.ModifierKeyCode),
     ];
 
     /// <summary>

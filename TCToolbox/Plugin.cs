@@ -67,6 +67,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new ShopDisplayRealItemIcon());
         Modules.Add(new AutoShopPurchase());
         Modules.Add(new QuickSplitStacks());
+        Modules.Add(new QuickTrade());
         Modules.Add(new CopyItemNameContextMenu());
         Modules.Add(new HuijiWikiContextMenu());
         Modules.Add(new GlamourSetRetrieve());

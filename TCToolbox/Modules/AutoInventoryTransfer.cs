@@ -4,6 +4,7 @@ using Dalamud.Memory;
 using System.Runtime.InteropServices;
 using System.Collections.Generic;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Keys;
 using Dalamud.Game.Gui.ContextMenu;
 using Dalamud.Game.Text;
@@ -95,11 +96,6 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
 
         return false;
     }
-
-    private delegate void OpenForItemSlotDelegate(
-        AgentInventoryContext* agent, InventoryType inventoryType, int slot, int a4, uint addonId);
-
-    private Hook<OpenForItemSlotDelegate>? openForItemSlotHook;
 
     /// <summary>
     /// 🔴 僱員存取走遊戲自己的道具命令：這條路徑是實機來回驗證過會動的，
@@ -327,9 +323,7 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
 
     protected override void OnEnable()
     {
-        openForItemSlotHook = Svc.Hooks.HookFromAddress<OpenForItemSlotDelegate>(
-            AgentInventoryContext.Addresses.OpenForItemSlot.Value, OpenForItemSlotDetour);
-        openForItemSlotHook.Enable();
+        InventoryContextHook.Subscribe(OpenForItemSlotDetour);
 
         // 解析不到就讓 retainerItemCommand 留 null，僱員轉移會明確告知而不是靜默走錯路徑。
         if (Svc.SigScanner.TryScanText(RetainerItemCommandSig, out var retainerCmdAddr))
@@ -372,8 +366,7 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
     {
         Svc.Framework.Update -= OnUpdate;
         Svc.ContextMenu.OnMenuOpened -= OnMenuOpened;
-        openForItemSlotHook?.Dispose();
-        openForItemSlotHook = null;
+        InventoryContextHook.Unsubscribe(OpenForItemSlotDetour);
         moveItemInChest = null;
 
         pendingMenu = null;
@@ -785,20 +778,7 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
     private void OpenForItemSlotDetour(
         AgentInventoryContext* agent, InventoryType inventoryType, int slot, int a4, uint addonId)
     {
-        // 🔴 OnDisable() 會把 hook 欄位設回 null，而 detour 可能還在執行中（in-flight 呼叫）。
-        //    `!.` 只是叫編譯器閉嘴，執行期照樣是裸解參考 —— 欄位一為 null 就把
-        //    NullReferenceException 擲回原生呼叫端，而且原始函式完全沒被呼叫。
-        //    快照一次到區域變數，之後只用區域變數，不要對欄位做第二次讀取。
-        var hook = openForItemSlotHook;
-        if (hook == null)
-        {
-            Svc.Log.Information(
-                $"[{InternalName}] 右鍵選單 hook 已在呼叫途中被卸載，略過本次原始呼叫。");
-            return;
-        }
-
-        hook.OriginalDisposeSafe(agent, inventoryType, slot, a4, addonId);
-
+        // 原函式已由 InventoryContextHook 先跑完。
         try
         {
             // 原函式開頭的「封鎖格」檢查成立時直接返回、不重建選單，detour 照樣被呼叫 ⇒ 選單是上一次的，不動作。
@@ -825,6 +805,10 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         var slot = menu.Slot;
 
         if (Config.ModifierKeyCode == 0) return;
+
+        // 交易視窗開著時右鍵屬於「快速交易」，同一顆鍵不兩邊都接。
+        if (Svc.Condition[ConditionFlag.TradeOpen]) return;
+
         var csFramework = CSFramework.Instance();
         if (csFramework == null || csFramework->WindowInactive) return;
 

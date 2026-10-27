@@ -102,6 +102,7 @@ public sealed class Configuration : IPluginConfiguration
     public RetainerBatchRenameConfig RetainerBatchRename { get; set; } = new();
     public AutoCrafterGathererManualConfig CrafterGathererManual { get; set; } = new();
     public QuickSplitStacksConfig QuickSplitStacks { get; set; } = new();
+    public QuickTradeConfig QuickTrade { get; set; } = new();
     public CabinetStoreAllConfig CabinetStoreAll { get; set; } = new();
     public InventoryDeclutterConfig Declutter { get; set; } = new();
     public AetherCurrentTrackerConfig AetherCurrentTracker { get; set; } = new();
