@@ -14,7 +14,7 @@ using ValueType = FFXIVClientStructs.FFXIV.Component.GUI.ValueType;
 namespace TCToolbox.Modules;
 
 /// <summary>
-/// 寶藏鑑定紀錄：鑑定相關視窗開啟／更新／關閉時，把視窗資料寫進 Dalamud 記錄檔（Information，前綴 <c>[AppraisalDiag]</c>）。
+/// 寶藏鑑定紀錄：鑑定相關視窗開啟／更新／關閉時，把視窗資料寫進 Dalamud 記錄檔（Debug 等級，前綴 <c>[AppraisalDiag]</c>）。
 /// 只讀不按：不送 callback、不點按鈕、不寫記憶體。用來取得之後「一鍵鑑定」需要的視窗名稱與參數。
 /// </summary>
 /// <remarks>
@@ -31,7 +31,7 @@ public sealed unsafe class AppraisalDiagnostics : TcModule
 
     public override string Description =>
         "只記錄、不操作：深層迷宮寶藏（死者宮殿／天之御柱／正統優雷卡）等鑑定相關的視窗出現時，" +
-        "把視窗內容寫進 Dalamud 記錄檔（搜尋 [AppraisalDiag]），之後用來做「一鍵鑑定」。" +
+        "把視窗內容以 Debug 等級寫進 Dalamud 記錄檔（搜尋 [AppraisalDiag]），之後用來做「一鍵鑑定」。" +
         "不按任何按鈕、不送任何指令、不寫遊戲記憶體；沒在鑑定時不會寫記錄。";
 
     public override ModuleCategory Category => ModuleCategory.Combat;
@@ -71,7 +71,7 @@ public sealed unsafe class AppraisalDiagnostics : TcModule
 
         var version = ReadGameVersion();
         rawAgentAllowed = version == RawAgentVerifiedVersion;
-        Svc.Log.Information(rawAgentAllowed
+        Svc.Log.Debug(rawAgentAllowed
             ? $"{Tag} 已啟用（遊戲版本 {version}，會附 agent 原始欄位）。"
             : $"{Tag} 已啟用（遊戲版本 {version ?? "讀不到"} 沒有離線驗過 agent 配置大小，略過 agent 原始欄位）。");
 
@@ -94,7 +94,7 @@ public sealed unsafe class AppraisalDiagnostics : TcModule
             var name = args.AddonName;
             if (type == AddonEvent.PreFinalize)
             {
-                Svc.Log.Information($"{Tag} #{++sequence} {name} 關閉{TakeSuppressed(name)} | {DescribeAgents()}");
+                Svc.Log.Debug($"{Tag} #{++sequence} {name} 關閉{TakeSuppressed(name)} | {DescribeAgents()}");
                 return;
             }
 
@@ -150,9 +150,9 @@ public sealed unsafe class AppraisalDiagnostics : TcModule
         var id = ++sequence;
         var target = withTarget ? $" | 目標：{DescribeTarget()}" : string.Empty;
         var skipped = undefined > 0 ? $"（{undefined} 個 Undefined 不列，沒列出的索引都是 Undefined）" : string.Empty;
-        Svc.Log.Information($"{Tag} #{id} {addon} {what}，AtkValues {count} 個{skipped}{target}");
+        Svc.Log.Debug($"{Tag} #{id} {addon} {what}，AtkValues {count} 個{skipped}{target}");
         foreach (var line in lines)
-            Svc.Log.Information($"{Tag} #{id} {addon} {line}");
+            Svc.Log.Debug($"{Tag} #{id} {addon} {line}");
         return id;
     }
 
