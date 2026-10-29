@@ -139,6 +139,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoAntiAfk());
         Modules.Add(new AutoIgnoreLoginLock());
         Modules.Add(new AutoCountPlayers());
+        Modules.Add(new NearbyInteractables());
         Modules.Add(new ClickToMove());
         Modules.Add(new FlagCommands());
         Modules.Add(new AchievementProgressTracker());

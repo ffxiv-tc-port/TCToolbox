@@ -135,6 +135,7 @@ public sealed class Configuration : IPluginConfiguration
     public DailyDutyTodoConfig DailyDutyTodo { get; set; } = new();
     public AutoFCWSDeliverConfig FcwsDeliver { get; set; } = new();
     public FcActionAutoUseConfig FcActionAutoUse { get; set; } = new();
+    public NearbyInteractablesConfig NearbyInteractables { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
 
