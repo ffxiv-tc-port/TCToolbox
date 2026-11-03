@@ -63,7 +63,7 @@ public abstract unsafe class NearbyObjectListModule : TcModule
     public override bool IsManualTrigger => true;
 
     private const int DtrPreviewCount = 5;
-    private const int MaxCachedTenths = 2000;
+    private const int MaxCachedTenths = (int)(MaxDistanceCap * 10f);
     private const int MaxCachedInt = 999;
     private const int MaxLoggedMisses = 64;
 
@@ -190,7 +190,9 @@ public abstract unsafe class NearbyObjectListModule : TcModule
 
     protected IReadOnlyList<NearbyRow> Rows => rows;
 
-    protected float MaxDistance => Math.Clamp(MaxDistanceField, 5f, 200f);
+    public const float MaxDistanceCap = 500f;
+
+    protected float MaxDistance => Math.Clamp(MaxDistanceField, 5f, MaxDistanceCap);
 
     /// <summary>設定改了之後讓下一幀就重新輪詢。</summary>
     protected void RequestRepoll() => Throttle.Reset(PollKey);
@@ -590,9 +592,9 @@ public abstract unsafe class NearbyObjectListModule : TcModule
 
         ImGui.SetNextItemWidth(200f * ImGuiHelpers.GlobalScale);
         ref var distance = ref MaxDistanceField;
-        if (ImGui.SliderFloat("半徑（米）", ref distance, 5f, 200f, "%.0f"))
+        if (ImGui.SliderFloat("半徑（米）", ref distance, 5f, MaxDistanceCap, "%.0f"))
         {
-            distance = Math.Clamp(distance, 5f, 200f);
+            distance = Math.Clamp(distance, 5f, MaxDistanceCap);
             RequestRepoll();
         }
 
@@ -606,7 +608,7 @@ public abstract unsafe class NearbyObjectListModule : TcModule
 
     #region 數字文字快取
 
-    /// <summary>「12.3m」；0～200 米每 0.1 米只建一次字串。</summary>
+    /// <summary>「12.3m」；0～<see cref="MaxDistanceCap"/> 米每 0.1 米只建一次字串。</summary>
     protected static string DistanceText(float meters)
     {
         var tenths = (int)MathF.Round(meters * 10f);

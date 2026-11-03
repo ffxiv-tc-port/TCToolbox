@@ -163,7 +163,7 @@ public sealed unsafe class NearbyOnMinimap : TcModule
     private static int EffectiveRefreshMs => Math.Clamp(Config.RefreshMilliseconds, 100, 5000);
 
     /// <summary>夾緊之後的搜尋距離（公尺）。</summary>
-    private static float EffectiveMaxDistance => Math.Clamp(Config.MaxDistance, 5f, 200f);
+    private static float EffectiveMaxDistance => Math.Clamp(Config.MaxDistance, 5f, NearbyObjectListModule.MaxDistanceCap);
 
     private void OnUpdate(IFramework framework)
     {
@@ -449,7 +449,7 @@ public sealed unsafe class NearbyOnMinimap : TcModule
 
         ImGui.SetNextItemWidth(180f);
         var distance = Config.MaxDistance;
-        if (ImGui.SliderFloat("搜尋距離（公尺）", ref distance, 5f, 200f, "%.0f"))
+        if (ImGui.SliderFloat("搜尋距離（公尺）", ref distance, 5f, NearbyObjectListModule.MaxDistanceCap, "%.0f"))
         {
             Config.MaxDistance = distance;
             Plugin.Instance.Config.Save();
