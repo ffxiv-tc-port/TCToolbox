@@ -13,7 +13,7 @@ namespace TCToolbox.Core;
 /// </summary>
 /// <remarks>
 /// 位址<b>只做等值比較，永遠不解參考</b>。解除點：位址從同名清單消失（每幀輪詢）、同位址 <c>PostSetup</c>
-/// （這一幀才登記的不清）、常駐窗連續隱藏 N 幀、逃生口。<c>PreFinalize</c> 是<b>上鎖點</b>：鎖到位址消失或同位址重建。
+/// （這一幀才登記的不清）、常駐窗連續隱藏 N 幀、常駐選單窗收起後重新顯示、逃生口。<c>PreFinalize</c> 是<b>上鎖點</b>：鎖到位址消失或同位址重建。
 /// ⚠️ 刻意<b>不</b>把 <c>PostRefresh</c> 也當解除點：它有可能在「關閉中」那幾幀觸發，會把封鎖提早解除。
 /// 時鐘一律是本類別在 <c>Framework.Update</c> 數的幀，不用牆鐘（卡頓時牆鐘會比危險窗口先到期）。
 /// <para>⚠️ 只在主執行緒使用（與 <see cref="Throttle"/> 同一個前提）。任何不確定一律回 <see langword="false"/>。</para>
@@ -97,6 +97,12 @@ internal static unsafe class AddonPressGuard
     /// <summary>常駐窗按下後，要<b>連續</b>觀察到「還在清單裡、但已隱藏」這麼多幀才解除。</summary>
     private const int HiddenReleaseFrames = 20;
 
+    /// <summary>
+    /// 常駐窗按下後連續隱藏滿這麼多幀、送出當下又可見就緒＝已收起並被重新開啟（新的一次顯示），放行。
+    /// </summary>
+    /// <remarks>只用在非多次互動的常駐窗（右鍵選單類）；多次互動窗照舊走自己的逃生口。</remarks>
+    private const int ReshowHiddenFrames = 3;
+
     /// <param name="Frame">按下時的守衛幀號。</param>
     /// <param name="Routine">以多次互動窗身分登記；為 <see langword="false"/> 且鍵為空＝終結按法。</param>
     private readonly record struct PressRecord(ulong Frame, bool Routine);
@@ -109,6 +115,9 @@ internal static unsafe class AddonPressGuard
 
         /// <summary>連續觀察到「還在清單裡、但已隱藏」的幀數；只有常駐窗會累加，看得見或重新按下就歸零。</summary>
         public int HiddenFrames { get; set; }
+
+        /// <summary>最後一次按下之後曾連續隱藏滿 <see cref="ReshowHiddenFrames"/> 幀（之後再可見也不清掉）。</summary>
+        public bool HiddenSincePress { get; set; }
 
         /// <summary>登記時在 <see cref="AddonName"/> 的同名清單裡找得到這個位址；只有它成立才准用「從清單消失」解除。</summary>
         /// <remarks>名稱對不上時清單裡永遠找不到它，不設這道就會在下一幀被當成「已消失」而提早解除。</remarks>
@@ -233,10 +242,18 @@ internal static unsafe class AddonPressGuard
         // 🔴 常駐窗送出前必須可見；只對 PersistentAddons 判。
         // 🔴 刻意不對名單外的窗判可見：AutoPlayerCommend（_Notification）與 AutoMaterialize（PostSetup 當下就按）
         //    刻意不判可見，無差別加上這道檢查會把它們靜默改成不送。
-        if (PersistentAddons.Contains(addonName) && !UiHelper.IsReady(addon)) return false;
+        var persistent = PersistentAddons.Contains(addonName);
+        if (persistent && !UiHelper.IsReady(addon)) return false;
 
         GuardedNames.Add(addonName);
         Pressed.TryGetValue(address, out var records);
+        if (records != null && persistent && !routine && !records.Finalizing && records.HiddenSincePress)
+        {
+            Svc.Log.Debug(
+                $"[AddonPressGuard] 「{addonName}」（實例 0x{address:X}）按過後已收起、現在又重新顯示，當成新的一次開啟。");
+            Pressed.Remove(address);
+            records = null;
+        }
         if (records != null)
         {
             if (records.Finalizing)
@@ -282,6 +299,7 @@ internal static unsafe class AddonPressGuard
         records.LastFrame = frame;
         // 🔴 承重：隱藏解除是「從最後一次按下起算」連續隱藏幾幀。
         records.HiddenFrames = 0;
+        records.HiddenSincePress = false;
         LogPressDiag(addonName, address, paramKey);
         return true;
     }
@@ -416,7 +434,8 @@ internal static unsafe class AddonPressGuard
                 continue;
             }
 
-            if (++records.HiddenFrames < HiddenReleaseFrames) continue;
+            if (++records.HiddenFrames >= ReshowHiddenFrames) records.HiddenSincePress = true;
+            if (records.HiddenFrames < HiddenReleaseFrames) continue;
 
             ReleaseBuf.Add(address);
             if (HiddenReleaseReported.Add(records.AddonName))

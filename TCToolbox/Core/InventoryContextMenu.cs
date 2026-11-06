@@ -57,13 +57,14 @@ public static unsafe class InventoryContextMenu
     /// <param name="addonRowId">選單文字所在的 <c>Addon</c> 列號。</param>
     /// <param name="logTag">記錄行的前綴（通常是模組的 <c>InternalName</c>）。</param>
     /// <param name="label">實際比對用的選單文字（讀不到時是空字串）。</param>
+    /// <param name="logMenu">要不要寫選單傾印那行 Information（同一下右鍵逐幀重試時只寫第一次）。</param>
     /// <remarks>
     /// 索引方式照抄 Artisan <c>Tasks/TaskSelectRetainer.cs</c>（台服實測有效）：選單實際佔用
     /// <c>EventParams[ContexItemStartIndex .. +ContextItemCount]</c>，<b>不能掃完 98 格再數字串</b>
     /// —— 那樣會掃到上一次選單的殘留，算出來的序號也不是 callback 要的列號。
     /// </remarks>
     public static ContextMenuFireResult TryFireEntry(
-        AgentInventoryContext* agent, uint addonRowId, string logTag, out string label)
+        AgentInventoryContext* agent, uint addonRowId, string logTag, out string label, bool logMenu = true)
     {
         label = string.Empty;
         if (agent == null) return ContextMenuFireResult.AddonUnavailable;
@@ -96,16 +97,19 @@ public static unsafe class InventoryContextMenu
         // 選單長相一律記下來（Information 級：要使用者回報的診斷）。
         // 「▸」標的是被收進二級指令的項目——那是最可能讓找不到的原因，
         // 而且從錯誤訊息裡看不出來，只能靠這行分辨「沒有這個項目」與「在二級選單裡」。
-        var dump = new string[itemCount];
-        for (var entry = 0; entry < itemCount; entry++)
+        if (logMenu)
         {
-            var inSubmenu = (agent->ContextItemSubmenuMask & (1u << entry)) != 0;
-            dump[entry] = $"{entry}{(inSubmenu ? "▸" : "")}:{labels[entry]}";
-        }
+            var dump = new string[itemCount];
+            for (var entry = 0; entry < itemCount; entry++)
+            {
+                var inSubmenu = (agent->ContextItemSubmenuMask & (1u << entry)) != 0;
+                dump[entry] = $"{entry}{(inSubmenu ? "▸" : "")}:{labels[entry]}";
+            }
 
-        Svc.Log.Information(
-            $"[{logTag}] 找「{wanted}」→ {(index == -1 ? "沒找到" : $"第 {index} 項")}；" +
-            $"選單 {itemCount} 項（起點 EventParams[{startIndex}]，▸＝二級指令）：{string.Join(" | ", dump)}");
+            Svc.Log.Information(
+                $"[{logTag}] 找「{wanted}」→ {(index == -1 ? "沒找到" : $"第 {index} 項")}；" +
+                $"選單 {itemCount} 項（起點 EventParams[{startIndex}]，▸＝二級指令）：{string.Join(" | ", dump)}");
+        }
 
         if (index == -1) return ContextMenuFireResult.NotFound;
 
