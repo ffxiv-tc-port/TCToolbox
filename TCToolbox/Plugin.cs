@@ -83,6 +83,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new RetainerBatchRetrieve());
         Modules.Add(new CraftShoppingList());
         Modules.Add(new TriadCardRecycle());
+        Modules.Add(new DiscardList());
 
         // ② 戰鬥 · 小隊
         Modules.Add(new OptimizedEnemyList());
@@ -116,6 +117,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new HuntTrainOnMappy());
         Modules.Add(new PalacePalOnMappy());
         Modules.Add(new AutoVeryEasyFirstBattle());
+        Modules.Add(new MovementSpeedMultiplier());
 
         // ③ 公會 · 生活
         Modules.Add(new AutoFCWSDeliver());
@@ -128,6 +130,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoRequestItemSubmit());
         Modules.Add(new AutoCrafterGathererManual());
         Modules.Add(new ARSwitcher());
+        Modules.Add(new ExpertDeliveryUnlock());
 
         // ④ 介面 · 雜項
         Modules.Add(new AutoHideBanners());
@@ -147,20 +150,17 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new ChatCoordsOpenMap());
         Modules.Add(new LoginCommands());
         Modules.Add(new AetherCurrentTracker());
-        Modules.Add(new DiscardList());
         Modules.Add(new AutoDisplayMSQProgress());
         Modules.Add(new AutoChangeKeyboardLayout());
         Modules.Add(new LargerIMECandidates());
         Modules.Add(new AutoNumericInputMax());
         Modules.Add(new IconReference());
-        Modules.Add(new MovementSpeedMultiplier());
         Modules.Add(new QuestionableStepOnMappy());
         Modules.Add(new NearbyOnMinimap());
         Modules.Add(new FleetEmergencyStop());
         Modules.Add(new FleetControlWatch());
         Modules.Add(new WorldTravelPanel());
         Modules.Add(new PluginUpdateNotice());
-        Modules.Add(new ExpertDeliveryUnlock());
         Modules.Add(new DailyDutyTodo());
 
         // 🔴 一定要在模組 Enable() 之前：同一個 AddonLifecycle 事件的監聽器是依註冊順序在同一次派送裡逐一呼叫的，

@@ -869,9 +869,14 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         // 「hook 沒被呼叫」還是「讀不到那一格」。右鍵才會觸發，不會洗版。
         if (item == null || item->ItemId == 0)
         {
-            Svc.Log.Information(
+            // 格位陣列正常且 ItemId=0＝空格，右鍵逐格掃過時是常態，只進 Debug。
+            var message =
                 $"[{InternalName}] 讀不到來源格，不動作：{source}#{slot}" +
-                $"（item={(item == null ? "null" : "ItemId=0")}、格位陣列={(containerReady ? "ok" : "未配置")}）");
+                $"（item={(item == null ? "null" : "ItemId=0")}、格位陣列={(containerReady ? "ok" : "未配置")}）";
+            if (containerReady && item != null)
+                Svc.Log.Debug(message);
+            else
+                Svc.Log.Information(message);
             return;
         }
 

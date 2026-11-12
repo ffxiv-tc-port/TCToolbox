@@ -55,6 +55,9 @@ public sealed unsafe class AutoGysahlGreens : TcModule
     private bool diagSampled;
     private ConditionFlag? lastDiagBlockedBy;
 
+    // 連續 UseAction 被拒次數；只在框架執行緒讀寫。
+    private int useFailStreak;
+
     private AutoGysahlGreensConfig Config => Plugin.Instance.Config.GysahlGreens;
 
     public override bool HasConfigUI => true;
@@ -66,6 +69,7 @@ public sealed unsafe class AutoGysahlGreens : TcModule
         if (row != null)
             itemName = row.Value.Name.ExtractText();
 
+        useFailStreak = 0;
         Svc.Framework.Update += OnUpdate;
         Svc.Log.Information($"[AutoGysahlGreens] 模組啟用：門檻 {Config.ThresholdMinutes} 分鐘");
     }
@@ -132,11 +136,19 @@ public sealed unsafe class AutoGysahlGreens : TcModule
             return;
         }
 
-        if (blocked) return;
-        if (uiState == null) return;
+        // 狀態一變（被擋、剩餘時間離開餵食區間）就清掉失敗計數，下一輪從 10 秒重新退避。
+        if (blocked || uiState == null)
+        {
+            useFailStreak = 0;
+            return;
+        }
 
         var timeLeft = uiState->Buddy.CompanionInfo.TimeLeft;
-        if (timeLeft <= 0 || timeLeft > Config.ThresholdMinutes * 60f) return;
+        if (timeLeft <= 0 || timeLeft > Config.ThresholdMinutes * 60f)
+        {
+            useFailStreak = 0;
+            return;
+        }
 
         var inventory = InventoryManager.Instance();
         if (inventory == null) return;
@@ -153,15 +165,32 @@ public sealed unsafe class AutoGysahlGreens : TcModule
 
         if (ActionManager.Instance()->UseAction(ActionType.Item, GysahlGreensItemId, extraParam: 65535))
         {
+            useFailStreak = 0;
             Svc.Log.Information($"[AutoGysahlGreens] 已自動餵食{itemName}：UseAction 已受理（剩餘 {timeLeft:F0} 秒）。");
             if (Config.NotifyOnFeed)
                 Svc.Chat.Print($"[TC Toolbox] 陸行鳥剩餘時間不足，已自動餵食{itemName}。");
         }
         else
         {
-            Svc.Log.Information($"[AutoGysahlGreens] UseAction 回傳 false：遊戲拒絕使用道具（剩餘 {timeLeft:F0} 秒）。");
+            useFailStreak++;
+            var backoffMs = UseBackoffMs(useFailStreak);
+            Throttle.Block("AutoGysahlGreens-Use", backoffMs);
+
+            // 同一原因持續拒絕時只在第 1 次、剛退到上限時、之後每 30 次寫一行。
+            if (useFailStreak == 1 || useFailStreak == UseBackoffCapStreak || useFailStreak % 30 == 0)
+            {
+                Svc.Log.Information(
+                    $"[AutoGysahlGreens] UseAction 回傳 false：遊戲拒絕使用道具（剩餘 {timeLeft:F0} 秒），" +
+                    $"已連續失敗 {useFailStreak} 次，{backoffMs / 1000} 秒後再試。");
+            }
         }
     }
+
+    /// <summary>連續失敗退避：10、20、40、80、120 秒（封頂）。</summary>
+    private static int UseBackoffMs(int streak)
+        => System.Math.Min(10_000 << System.Math.Min(streak - 1, 4), 120_000);
+
+    private const int UseBackoffCapStreak = 5;
 
     /// <summary>第一個擋下餵食的狀態；null＝可以餵。</summary>
     private static ConditionFlag? FindBlockingFlag(bool isFisher)
