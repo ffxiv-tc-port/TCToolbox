@@ -272,15 +272,8 @@ public sealed unsafe class OpenAllCoffers : TcModule
     /// <summary>現在不能繼續開的原因；<c>null</c>＝可以。</summary>
     private static string? GetBlockedReason()
     {
-        if (Svc.Objects.LocalPlayer == null)
-            return "目前不在遊戲中。";
-
-        if (Svc.Condition[ConditionFlag.BetweenAreas] || Svc.Condition[ConditionFlag.BetweenAreas51])
-            return "正在讀取地圖。";
-
-        if (Svc.Condition[ConditionFlag.WatchingCutscene] ||
-            Svc.Condition[ConditionFlag.OccupiedInCutSceneEvent])
-            return "正在播放過場動畫。";
+        if (AutomationGate.GetManualBasicBlockedReason() is { } basic)
+            return basic;
 
         if (Svc.Condition[ConditionFlag.OccupiedInQuestEvent] || Svc.Condition[ConditionFlag.Occupied33])
             return "正在進行中的事件裡。";

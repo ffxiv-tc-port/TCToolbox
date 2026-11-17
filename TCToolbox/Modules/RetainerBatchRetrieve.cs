@@ -702,14 +702,8 @@ public sealed unsafe class RetainerBatchRetrieve : TcModule
     /// <summary>現在不能取回的原因；<c>null</c>＝可以。</summary>
     private static string? GetBlockedReason()
     {
-        if (Svc.Objects.LocalPlayer == null) return "目前不在遊戲中。";
-
-        if (Svc.Condition[ConditionFlag.BetweenAreas] || Svc.Condition[ConditionFlag.BetweenAreas51])
-            return "正在讀取地圖。";
-
-        if (Svc.Condition[ConditionFlag.WatchingCutscene] ||
-            Svc.Condition[ConditionFlag.OccupiedInCutSceneEvent])
-            return "正在播放過場動畫。";
+        if (AutomationGate.GetManualBasicBlockedReason() is { } basic)
+            return basic;
 
         // 🔴 這是提供端唯一的前置條件：那兩個 addon 有沒有開好。誰開的都算數。
         if (!IsRetainerInventoryOpen())

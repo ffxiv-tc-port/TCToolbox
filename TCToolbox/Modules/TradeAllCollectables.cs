@@ -211,15 +211,8 @@ public sealed unsafe class TradeAllCollectables : TcModule
     /// <summary>現在不能交易的原因；<c>null</c>＝可以。</summary>
     private static string? GetBlockedReason()
     {
-        if (Svc.Objects.LocalPlayer == null)
-            return "目前不在遊戲中。";
-
-        if (Svc.Condition[ConditionFlag.BetweenAreas] || Svc.Condition[ConditionFlag.BetweenAreas51])
-            return "正在讀取地圖。";
-
-        if (Svc.Condition[ConditionFlag.WatchingCutscene] ||
-            Svc.Condition[ConditionFlag.OccupiedInCutSceneEvent])
-            return "正在播放過場動畫。";
+        if (AutomationGate.GetManualBasicBlockedReason() is { } basic)
+            return basic;
 
         // 🔴 出現任何確認框就停手。我們無法離線證明那個框問的是什麼，
         //    而代按「是」的代價是不可逆的道具操作。

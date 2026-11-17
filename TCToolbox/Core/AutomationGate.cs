@@ -213,4 +213,26 @@ internal static class AutomationGate
 
     /// <summary>現在可以動手嗎。理由不需要時用這支。</summary>
     public static bool IsFree() => !TryGetBusyReason(out _);
+
+    /// <summary>
+    /// 手動步進器（使用者按了才跑）共用的基本三項：不在遊戲中／讀圖／過場。<see langword="null"/>＝沒擋。
+    /// </summary>
+    /// <remarks>
+    /// 刻意比 <see cref="TryGetBusyReason"/> 寬、也不看急停冷卻：是使用者自己按的，其餘條件由各模組接著判。
+    /// 回傳字串會出現在按鈕 tooltip 與聊天的結束摘要裡，改字＝使用者看得到的改動。
+    /// </remarks>
+    public static string? GetManualBasicBlockedReason()
+    {
+        if (Svc.Objects.LocalPlayer == null)
+            return "目前不在遊戲中。";
+
+        if (Svc.Condition[ConditionFlag.BetweenAreas] || Svc.Condition[ConditionFlag.BetweenAreas51])
+            return "正在讀取地圖。";
+
+        if (Svc.Condition[ConditionFlag.WatchingCutscene] ||
+            Svc.Condition[ConditionFlag.OccupiedInCutSceneEvent])
+            return "正在播放過場動畫。";
+
+        return null;
+    }
 }
