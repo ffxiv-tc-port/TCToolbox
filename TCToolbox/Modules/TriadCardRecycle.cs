@@ -397,11 +397,7 @@ public sealed unsafe class TriadCardRecycle : TcModule
 
         foreach (var bag in PlayerBags)
         {
-            var container = manager->GetInventoryContainer(bag);
-
-            // 🔴 判的是 Items 不是 GetInventorySlot 的回傳值：Items 為 null 而 Size > 0 時，
-            //    GetInventorySlot 回的是「null + 偏移」這種非 null 的假指標，item != null 一定通過。
-            if (container == null || !container->IsLoaded || container->Items == null) continue;
+            if (!InventoryScan.TryGet(manager, bag, out var container)) continue;
 
             var size = container->Size;
             for (var i = 0; i < size; i++)
@@ -451,8 +447,7 @@ public sealed unsafe class TriadCardRecycle : TcModule
 
         foreach (var bag in SaddleBags)
         {
-            var container = manager->GetInventoryContainer(bag);
-            if (container == null || !container->IsLoaded || container->Items == null) continue;
+            if (!InventoryScan.TryGet(manager, bag, out var container)) continue;
 
             anyLoaded = true;
 
