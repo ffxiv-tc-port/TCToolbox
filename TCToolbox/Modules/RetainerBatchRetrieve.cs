@@ -583,8 +583,7 @@ public sealed unsafe class RetainerBatchRetrieve : TcModule
     {
         if (manager == null) return null;
 
-        var container = manager->GetInventoryContainer(type);
-        if (container == null || container->Items == null) return null;
+        if (!InventoryScan.TryGetIgnoringLoaded(manager, type, out var container)) return null;
         return container;
     }
 

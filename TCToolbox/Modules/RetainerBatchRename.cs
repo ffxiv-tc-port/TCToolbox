@@ -3151,12 +3151,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
         var manager = InventoryManager.Instance();
         if (manager == null) return false;
 
-        var found = manager->GetInventoryContainer(InventoryType.RetainerEquippedItems);
-        // 🔴 判的是 Items 不是 GetInventorySlot 的回傳值：Items 為 null 而 Size > 0 時，
-        //    GetInventorySlot 回的是「null + 偏移」這種非 null 的假指標，下面的判空一定通過，
-        //    解參考就是攔不到的 AVE（corrupted-state exception，try/catch 無效）。
-        //    樣板同 DiscardList.ScanMatches／TriadCardRecycle 的背包掃描。
-        if (found == null || !found->IsLoaded || found->Items == null || found->Size <= 0) return false;
+        if (!InventoryScan.TryGet(manager, InventoryType.RetainerEquippedItems, out var found) || found->Size <= 0) return false;
 
         container = found;
         return true;
@@ -3170,9 +3165,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
 
         foreach (var type in PlayerBags)
         {
-            var inventory = manager->GetInventoryContainer(type);
-            // 🔴 Items 為 null 而 Size > 0 時，GetInventorySlot 回的是非 null 的假指標（理由同本檔上一處）。
-            if (inventory == null || !inventory->IsLoaded || inventory->Items == null) continue;
+            if (!InventoryScan.TryGet(manager, type, out var inventory)) continue;
 
             for (var i = 0; i < inventory->Size; i++)
             {
@@ -3196,9 +3189,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
 
         foreach (var type in PlayerBags)
         {
-            var inventory = manager->GetInventoryContainer(type);
-            // 🔴 Items 為 null 而 Size > 0 時，GetInventorySlot 回的是非 null 的假指標（理由同本檔上一處）。
-            if (inventory == null || !inventory->IsLoaded || inventory->Items == null) continue;
+            if (!InventoryScan.TryGet(manager, type, out var inventory)) continue;
 
             for (var i = 0; i < inventory->Size; i++)
             {
@@ -3477,9 +3468,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
 
         foreach (var type in WatchedContainers)
         {
-            var container = manager->GetInventoryContainer(type);
-            // 🔴 Items 為 null 而 Size > 0 時，GetInventorySlot 回的是非 null 的假指標（理由同本檔上一處）。
-            if (container == null || !container->IsLoaded || container->Items == null) continue;
+            if (!InventoryScan.TryGet(manager, type, out var container)) continue;
 
             for (var i = 0; i < container->Size; i++)
             {

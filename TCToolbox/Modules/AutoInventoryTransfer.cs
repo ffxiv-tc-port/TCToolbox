@@ -463,12 +463,7 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
 
         foreach (var page in FreeCompanyPages)
         {
-            var container = manager->GetInventoryContainer(page);
-            // 🔴 判的是 Items 不是 GetInventorySlot 的回傳值：Items 為 null 而 Size > 0 時，
-            //    GetInventorySlot 回的是「null + 偏移」這種非 null 的假指標，下面的判空一定通過，
-            //    解參考就是攔不到的 AVE（corrupted-state exception，try/catch 無效）。
-            //    樣板同 DiscardList.ScanMatches／TriadCardRecycle 的背包掃描。
-            if (container == null || !container->IsLoaded || container->Items == null) continue;
+            if (!InventoryScan.TryGet(manager, page, out var container)) continue;
 
             for (var i = 0; i < container->Size; i++)
             {
@@ -518,9 +513,7 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
             return false;
         }
 
-        var container = manager->GetInventoryContainer(agentType);
-        // 🔴 Items 為 null 而 Size > 0 時，GetInventorySlot 回的是非 null 的假指標（理由見 TryResolveHoveredFreeCompanySlot）。
-        if (container == null || !container->IsLoaded || container->Items == null)
+        if (!InventoryScan.TryGet(manager, agentType, out var container))
         {
             diagnosis = $"(A) 容器 {agentType} 未載入（或格位陣列尚未配置）";
             return false;
@@ -861,9 +854,7 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         var manager = InventoryManager.Instance();
         if (manager == null) return;
 
-        // 🔴 Items 為 null 而 Size > 0 時，GetInventorySlot 回的是非 null 的假指標（理由見 TryResolveHoveredFreeCompanySlot）。
-        var container = manager->GetInventoryContainer(source);
-        var containerReady = container != null && container->Items != null;
+        var containerReady = InventoryScan.TryGetIgnoringLoaded(manager, source, out _);
         var item = containerReady ? manager->GetInventorySlot(source, slot) : null;
 
         // 要使用者回報的診斷：把遊戲實際傳進來的容器與格號記下來，才能分辨是
@@ -1100,9 +1091,7 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
             }
 
             var manager = InventoryManager.Instance();
-            // 🔴 Items 為 null 而 Size > 0 時，GetInventorySlot 回的是非 null 的假指標（理由見 TryResolveHoveredFreeCompanySlot）。
-            var container = manager == null ? null : manager->GetInventoryContainer(source);
-            var containerReady = container != null && container->Items != null;
+            var containerReady = InventoryScan.TryGetIgnoringLoaded(manager, source, out _);
             var sourceItem = containerReady ? manager->GetInventorySlot(source, slot) : null;
 
             // 讀不到來源格與「置物櫃沒有位子」是兩種原因，訊息不能共用：
@@ -1261,10 +1250,8 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
 
     private static bool IsItemAt(InventoryManager* manager, InventoryType type, int slot, uint baseItemId)
     {
-        // 🔴 Items 為 null 而 Size > 0 時，GetInventorySlot 回的是非 null 的假指標（理由見 TryResolveHoveredFreeCompanySlot）。
         // 刻意不連 IsLoaded 一起擋：它為 false 時 Items 仍可能有效，擋掉會把既有判斷改成「讀不到」。
-        var container = manager->GetInventoryContainer(type);
-        if (container == null || container->Items == null) return false;
+        if (!InventoryScan.TryGetIgnoringLoaded(manager, type, out _)) return false;
 
         var item = manager->GetInventorySlot(type, slot);
         return item != null && item->GetBaseItemId() == baseItemId;
@@ -1279,9 +1266,8 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         quantity = 0;
         flags = 0;
 
-        // 🔴 假指標防線與 IsItemAt 同一條，理由見那裡。
-        var container = manager->GetInventoryContainer(type);
-        if (container == null || container->Items == null) return false;
+        // 不看 IsLoaded 的理由同 IsItemAt。
+        if (!InventoryScan.TryGetIgnoringLoaded(manager, type, out _)) return false;
 
         var item = manager->GetInventorySlot(type, slot);
         if (item == null || item->ItemId == 0) return false;
@@ -1396,9 +1382,7 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
         {
             foreach (var type in candidates)
             {
-                var container = manager->GetInventoryContainer(type);
-                // 🔴 Items 為 null 而 Size > 0 時，GetInventorySlot 回的是非 null 的假指標（理由見 TryResolveHoveredFreeCompanySlot）。
-                if (container == null || !container->IsLoaded || container->Items == null) continue;
+                if (!InventoryScan.TryGet(manager, type, out var container)) continue;
 
                 for (var i = 0; i < container->Size; i++)
                 {
@@ -1417,9 +1401,7 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
 
         foreach (var type in candidates)
         {
-            var container = manager->GetInventoryContainer(type);
-            // 🔴 Items 為 null 而 Size > 0 時，GetInventorySlot 回的是非 null 的假指標（理由見 TryResolveHoveredFreeCompanySlot）。
-            if (container == null || !container->IsLoaded || container->Items == null) continue;
+            if (!InventoryScan.TryGet(manager, type, out var container)) continue;
 
             for (var i = 0; i < container->Size; i++)
             {
