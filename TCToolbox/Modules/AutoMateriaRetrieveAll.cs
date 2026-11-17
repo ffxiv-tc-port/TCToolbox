@@ -306,12 +306,7 @@ public sealed unsafe class AutoMateriaRetrieveAll : TcModule
         var manager = InventoryManager.Instance();
         if (manager == null) return null;
 
-        var inventory = manager->GetInventoryContainer(container);
-        // 🔴 判的是 Items 不是 GetInventorySlot 的回傳值：Items 為 null 而 Size > 0 時，
-        //    GetInventorySlot 回的是「null + 偏移」這種非 null 的假指標，下面的判空一定通過，
-        //    解參考就是攔不到的 AVE（corrupted-state exception，try/catch 無效）。
-        //    樣板同 DiscardList.ScanMatches／TriadCardRecycle 的背包掃描。
-        if (inventory == null || !inventory->IsLoaded || inventory->Items == null) return null;
+        if (!InventoryScan.TryGet(manager, container, out var inventory)) return null;
         if (slot >= inventory->Size) return null;
 
         return inventory->GetInventorySlot(slot);

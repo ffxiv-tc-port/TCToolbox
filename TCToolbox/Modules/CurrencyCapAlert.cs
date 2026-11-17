@@ -465,9 +465,7 @@ public sealed unsafe class CurrencyCapAlert : TcModule
 
         foreach (var type in HeldContainers)
         {
-            var container = manager->GetInventoryContainer(type);
-            // 判 Items 不判 GetInventorySlot 的回傳：Items 為 null 時它回的是非 null 的假指標。
-            if (container == null || !container->IsLoaded || container->Items == null) return false;
+            if (!InventoryScan.TryGet(manager, type, out var container)) return false;
 
             for (var i = 0; i < container->Size; i++)
             {
