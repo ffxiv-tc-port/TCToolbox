@@ -167,9 +167,9 @@ public sealed unsafe class CurrencyCapAlert : TcModule
 
         dtrEntry = Svc.DtrBar.Get("TC Toolbox 貨幣上限");
         dtrEntry.Shown = false;
-        dtrEntry.Text = new SeString(new IconPayload(DtrIcon), new TextPayload("?"));
+        dtrEntry.Text = TcDtr.IconText(DtrIcon, "?");
         dtrEntry.Tooltip = "TC Toolbox — 貨幣上限警示";
-        dtrEntry.OnClick = _ => Plugin.Instance.ToggleMainWindow();
+        dtrEntry.OnClick = TcDtr.Click(null);
 
         Svc.Framework.Update += OnUpdate;
     }
@@ -178,8 +178,7 @@ public sealed unsafe class CurrencyCapAlert : TcModule
     {
         Svc.Framework.Update -= OnUpdate;
 
-        dtrEntry?.Remove();
-        dtrEntry = null;
+        TcDtr.Remove(ref dtrEntry);
 
         nearCap.Clear();
         allCurrencies.Clear();
@@ -651,7 +650,7 @@ public sealed unsafe class CurrencyCapAlert : TcModule
         {
             dtrEntry.Shown = true;
             if (DtrIsCurrent(DtrContent.Unreadable, othersNear)) return;
-            dtrEntry.Text = new SeString(new IconPayload(DtrIcon), new TextPayload("?"));
+            dtrEntry.Text = TcDtr.IconText(DtrIcon, "?");
             dtrEntry.Tooltip =
                 "TC Toolbox — 貨幣上限警示\n讀不到貨幣資料，目前無法判斷有沒有快滿的貨幣。\n" +
                 "（剛登入時會有短暫的這個狀態，屬正常。）" + BuildOtherSealsTooltip() +
@@ -673,7 +672,7 @@ public sealed unsafe class CurrencyCapAlert : TcModule
         if (DtrIsCurrent(DtrContent.List, othersNear)) return;
         var label = othersNear == 0 ? nearCap.Count.ToString() : $"{nearCap.Count}+{othersNear}";
         if (heldUnreadable.Count > 0) label = nothingNear ? "?" : label + "+?";
-        dtrEntry.Text = new SeString(new IconPayload(DtrIcon), new TextPayload(label));
+        dtrEntry.Text = TcDtr.IconText(DtrIcon, label);
 
         var sb = new StringBuilder();
         sb.Append(nothingNear ? "TC Toolbox — 貨幣上限警示\n" : "TC Toolbox — 貨幣快接近上限\n");

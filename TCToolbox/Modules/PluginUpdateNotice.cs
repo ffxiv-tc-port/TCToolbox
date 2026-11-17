@@ -173,14 +173,10 @@ public sealed class PluginUpdateNotice : TcModule
 
         dtrEntry = Svc.DtrBar.Get("TC Toolbox 台服插件更新");
         dtrEntry.Shown = false;
-        dtrEntry.Text = new SeString(new IconPayload(DtrIcon), new TextPayload("台服插件更新 ?"));
+        dtrEntry.Text = TcDtr.IconText(DtrIcon, "台服插件更新 ?");
         dtrEntry.Tooltip = "TC Toolbox — 台服插件可更新提示";
         // 安裝器是 Dalamud 的視窗，左鍵只開不關。
-        dtrEntry.OnClick = ev =>
-        {
-            if (ev.ClickType != MouseClickType.Left) Plugin.Instance.ToggleMainWindow();
-            else OpenInstaller();
-        };
+        dtrEntry.OnClick = TcDtr.Click(OpenInstaller);
 
         Svc.ClientState.Login += OnLogin;
         Svc.PluginInterface.ActivePluginsChanged += OnActivePluginsChanged;
@@ -198,8 +194,7 @@ public sealed class PluginUpdateNotice : TcModule
         Interlocked.Exchange(ref cts, null)?.Cancel();
         Interlocked.Exchange(ref http, null)?.Dispose();
 
-        dtrEntry?.Remove();
-        dtrEntry = null;
+        TcDtr.Remove(ref dtrEntry);
 
         state = null;
         incomingFeed = null;
@@ -594,7 +589,7 @@ public sealed class PluginUpdateNotice : TcModule
         if (!current.EverSucceeded)
         {
             dtrEntry.Shown = true;
-            dtrEntry.Text = new SeString(new IconPayload(DtrIcon), new TextPayload("台服插件更新 ?"));
+            dtrEntry.Text = TcDtr.IconText(DtrIcon, "台服插件更新 ?");
             dtrEntry.Tooltip = BuildTooltip(current);
             return;
         }
@@ -607,8 +602,7 @@ public sealed class PluginUpdateNotice : TcModule
         }
 
         dtrEntry.Shown = true;
-        dtrEntry.Text = new SeString(
-            new IconPayload(DtrIcon), new TextPayload($"台服插件可更新 {current.Pending.Count}"));
+        dtrEntry.Text = TcDtr.IconText(DtrIcon, $"台服插件可更新 {current.Pending.Count}");
         dtrEntry.Tooltip = BuildTooltip(current);
     }
 

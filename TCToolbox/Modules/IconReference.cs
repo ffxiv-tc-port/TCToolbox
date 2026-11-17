@@ -318,11 +318,7 @@ public sealed class IconReference : TcModule
             // 🔑 識別字放 tooltip：資訊列橫向空間很擠，而這一格的重點是「圖示本身長什麼樣」。
             dtrEntry.Tooltip =
                 $"TC Toolbox — 圖示預覽\n{entry.Identifier}\n{entry.Note}\n\n左鍵：開啟／關閉圖示對照表\n右鍵：開啟／關閉 TC Toolbox 設定";
-            dtrEntry.OnClick = ev =>
-            {
-                if (ev.ClickType != MouseClickType.Left) Plugin.Instance.ToggleMainWindow();
-                else windowOpen = !windowOpen;
-            };
+            dtrEntry.OnClick = TcDtr.Click(() => windowOpen = !windowOpen);
             dtrEntry.Shown = true;
             dtrCurrent = entry.Identifier;
 

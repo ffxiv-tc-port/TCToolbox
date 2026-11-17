@@ -184,11 +184,7 @@ public sealed class DailyDutyTodo : TcModule
 
         dtrEntry = Svc.DtrBar.Get("TC Toolbox DailyDuty 未完成任務");
         dtrEntry.Shown = false;
-        dtrEntry.OnClick = ev =>
-        {
-            if (ev.ClickType != MouseClickType.Left) Plugin.Instance.ToggleMainWindow();
-            else if (window != null) window.Toggle();
-        };
+        dtrEntry.OnClick = TcDtr.Click(() => window?.Toggle());
 
         ResetState();
         Svc.Framework.Update += OnUpdate;
@@ -211,8 +207,7 @@ public sealed class DailyDutyTodo : TcModule
 
         Svc.Commands.RemoveHandler(Command);
 
-        dtrEntry?.Remove();
-        dtrEntry = null;
+        TcDtr.Remove(ref dtrEntry);
 
         ResetState();
     }

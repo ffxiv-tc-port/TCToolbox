@@ -205,13 +205,7 @@ public abstract unsafe class NearbyObjectListModule : TcModule
 
         dtrEntry = Svc.DtrBar.Get(DtrTitle);
         dtrEntry.Shown = false;
-        dtrEntry.OnClick = ev =>
-        {
-            if (ev.ClickType == MouseClickType.Right)
-                Plugin.Instance.ToggleMainWindow();
-            else
-                windowOpen = !windowOpen;
-        };
+        dtrEntry.OnClick = TcDtr.Click(() => windowOpen = !windowOpen);
 
         Svc.Framework.Update += OnUpdate;
         Svc.PluginInterface.UiBuilder.Draw += DrawWindow;
@@ -222,8 +216,7 @@ public abstract unsafe class NearbyObjectListModule : TcModule
         Svc.Framework.Update -= OnUpdate;
         Svc.PluginInterface.UiBuilder.Draw -= DrawWindow;
 
-        dtrEntry?.Remove();
-        dtrEntry = null;
+        TcDtr.Remove(ref dtrEntry);
         rows.Clear();
         pool.Clear();
         visible.Clear();

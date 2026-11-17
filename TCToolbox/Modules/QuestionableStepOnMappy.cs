@@ -133,7 +133,7 @@ public sealed class QuestionableStepOnMappy : TcModule
         dtrEntry = Svc.DtrBar.Get("TC Toolbox 任務進度");
         dtrEntry.Shown = false;
         dtrEntry.Tooltip = "TC Toolbox — Questionable 目前步驟";
-        dtrEntry.OnClick = _ => Plugin.Instance.ToggleMainWindow();
+        dtrEntry.OnClick = TcDtr.Click(null);
 
         Throttle.Reset(PollThrottleKey);
         Throttle.Reset(ForceResyncThrottleKey);
@@ -155,8 +155,7 @@ public sealed class QuestionableStepOnMappy : TcModule
         // 🔴 停用（含外掛卸載）一定要把標記收乾淨，否則 Mappy 會一直畫著一個沒人再更新的舊標記。
         publisher.Clear();
 
-        dtrEntry?.Remove();
-        dtrEntry = null;
+        TcDtr.Remove(ref dtrEntry);
 
         lastSignature = string.Empty;
         mappyWasAvailable = false;

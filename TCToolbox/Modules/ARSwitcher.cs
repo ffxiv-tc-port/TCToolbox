@@ -105,7 +105,7 @@ public sealed class ARSwitcher : TcModule
 
         dtrEntry = Svc.DtrBar.Get("TC Toolbox 角色切換");
         dtrEntry.Shown = false;
-        dtrEntry.Text = new SeString(new IconPayload(DtrIcon), new TextPayload("?"));
+        dtrEntry.Text = TcDtr.IconText(DtrIcon, "?");
         dtrEntry.Tooltip = "TC Toolbox — AutoRetainer 角色切換";
         dtrEntry.OnClick = OnDtrClick;
 
@@ -135,8 +135,7 @@ public sealed class ARSwitcher : TcModule
         Svc.Commands.RemoveHandler(PrevCommand);
         Svc.Commands.RemoveHandler(SwitchCommand);
 
-        dtrEntry?.Remove();
-        dtrEntry = null;
+        TcDtr.Remove(ref dtrEntry);
 
         characters.Clear();
         currentIndex = -1;
@@ -349,7 +348,7 @@ public sealed class ARSwitcher : TcModule
         if (Config.ShowVentureCountdown)
             label += "　" + VentureBarText();
 
-        dtrEntry.Text = new SeString(new IconPayload(DtrIcon), new TextPayload(label));
+        dtrEntry.Text = TcDtr.IconText(DtrIcon, label);
 
         var sb = new StringBuilder();
         sb.Append("TC Toolbox — AutoRetainer 角色切換\n");

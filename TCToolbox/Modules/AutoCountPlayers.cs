@@ -186,16 +186,10 @@ public sealed class AutoCountPlayers : TcModule
         dtrTextCount = -1;
         dtrTooltipCount = -1;
         dtrEntry.Shown = true;
-        dtrEntry.Text = new SeString(new IconPayload(DtrIcon), new TextPayload("0"));
+        dtrEntry.Text = TcDtr.IconText(DtrIcon, "0");
         dtrEntry.Tooltip = "TC Toolbox — 周邊玩家\n左鍵：開啟／關閉周邊玩家清單\n右鍵：開啟／關閉 TC Toolbox 設定";
         // 左鍵＝開關名單視窗；右鍵＝開 TC Toolbox 主視窗。
-        dtrEntry.OnClick = ev =>
-        {
-            if (ev.ClickType == MouseClickType.Right)
-                Plugin.Instance.ToggleMainWindow();
-            else
-                windowOpen = !windowOpen;
-        };
+        dtrEntry.OnClick = TcDtr.Click(() => windowOpen = !windowOpen);
 
         Svc.Framework.Update += OnUpdate;
         Svc.PluginInterface.UiBuilder.Draw += DrawWindow;
@@ -206,8 +200,7 @@ public sealed class AutoCountPlayers : TcModule
         Svc.Framework.Update -= OnUpdate;
         Svc.PluginInterface.UiBuilder.Draw -= DrawWindow;
 
-        dtrEntry?.Remove();
-        dtrEntry = null;
+        TcDtr.Remove(ref dtrEntry);
         players.Clear();
         playerPool.Clear();
         playerTexts.Clear();
@@ -290,7 +283,7 @@ public sealed class AutoCountPlayers : TcModule
         {
             dtrTextCount = players.Count;
             // DTR 空間很擠：用圖示取代「周邊玩家: 」這個每次都一樣的前綴，只留數字。
-            dtrEntry.Text = new SeString(new IconPayload(DtrIcon), new TextPayload(players.Count.ToString()));
+            dtrEntry.Text = TcDtr.IconText(DtrIcon, players.Count.ToString());
         }
 
         if (players.Count == 0)
