@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Text;
+using Dalamud.Bindings.ImGui;
 using Dalamud.Memory;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
@@ -19,6 +21,26 @@ public static unsafe class UiHelper
         addon != null && addon->IsVisible && addon->UldManager.LoadedState == AtkLoadState.Loaded;
 
     public static bool IsAddonReady(string name) => IsReady(GetAddon(name));
+
+    /// <summary>疊在原生視窗正上方的 ImGui 小窗的標準旗標（自動大小、無標題列、不可收合、不存設定）。</summary>
+    public const ImGuiWindowFlags AboveAddonFlags = ImGuiWindowFlags.AlwaysAutoResize |
+                                                    ImGuiWindowFlags.NoTitleBar |
+                                                    ImGuiWindowFlags.NoCollapse |
+                                                    ImGuiWindowFlags.NoSavedSettings;
+
+    /// <summary>開一個貼在 <paramref name="addon"/> 左上角正上方的 ImGui 小窗（左緣右移 <paramref name="offsetX"/>、與視窗頂端相隔 <paramref name="gap"/>）。</summary>
+    /// <remarks>
+    /// 契約同 <c>ImGui.Begin</c>：不論回傳值，呼叫端都要在同一幀呼叫一次 <c>ImGui.End()</c>。
+    /// <paramref name="addon"/> 必須是本幀取得、已判過 <see cref="IsReady"/> 的指標。
+    /// </remarks>
+    public static bool BeginAboveAddon(string id, AtkUnitBase* addon, ImGuiWindowFlags flags = AboveAddonFlags,
+                                       float offsetX = 6, float gap = 4)
+    {
+        if (!ImGui.Begin(id, flags)) return false;
+
+        ImGui.SetWindowPos(new Vector2(addon->GetX() + offsetX, addon->GetY() - ImGui.GetWindowSize().Y - gap));
+        return true;
+    }
 
     /// <summary>
     /// 視窗名稱的<b>有界</b>讀法（<c>AtkUnitBase.Name</c> 是偏移 0x8 的 32 byte 固定長度欄位）。

@@ -112,15 +112,8 @@ public sealed unsafe class RepairAllContainers : TcModule
         var addon = UiHelper.GetAddon(RepairAddon);
         if (!UiHelper.IsReady(addon)) return;
 
-        const ImGuiWindowFlags flags = ImGuiWindowFlags.AlwaysAutoResize |
-                                       ImGuiWindowFlags.NoTitleBar |
-                                       ImGuiWindowFlags.NoCollapse |
-                                       ImGuiWindowFlags.NoSavedSettings;
-
-        if (ImGui.Begin("###TCToolboxRepairAll", flags))
+        if (UiHelper.BeginAboveAddon("###TCToolboxRepairAll", addon))
         {
-            ImGui.SetWindowPos(new Vector2(addon->GetX() + 6, addon->GetY() - ImGui.GetWindowSize().Y - 4));
-
             ImGui.AlignTextToFramePadding();
             ImGui.TextColored(new Vector4(1f, 0.85f, 0.35f, 1f), DisplayName);
 

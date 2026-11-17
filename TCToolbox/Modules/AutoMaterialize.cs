@@ -160,15 +160,8 @@ public sealed unsafe class AutoMaterialize : TcModule
         var addon = UiHelper.GetAddon("Materialize");
         if (!UiHelper.IsReady(addon)) return;
 
-        const ImGuiWindowFlags flags = ImGuiWindowFlags.AlwaysAutoResize |
-                                       ImGuiWindowFlags.NoTitleBar |
-                                       ImGuiWindowFlags.NoCollapse |
-                                       ImGuiWindowFlags.NoSavedSettings;
-
-        if (ImGui.Begin("###TCToolboxMaterialize", flags))
+        if (UiHelper.BeginAboveAddon("###TCToolboxMaterialize", addon))
         {
-            ImGui.SetWindowPos(new Vector2(addon->GetX() + 6, addon->GetY() - ImGui.GetWindowSize().Y - 4));
-
             ImGui.AlignTextToFramePadding();
             ImGui.TextColored(new Vector4(1f, 0.85f, 0.35f, 1f), DisplayName);
 

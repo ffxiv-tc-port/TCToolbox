@@ -138,16 +138,8 @@ public sealed unsafe class OptimizedDutyFinderSetting : TcModule
         if (addon == null) return;
         if (ContentsFinder.Instance() == null) return;
 
-        const ImGuiWindowFlags flags = ImGuiWindowFlags.AlwaysAutoResize |
-                                       ImGuiWindowFlags.NoTitleBar |
-                                       ImGuiWindowFlags.NoCollapse |
-                                       ImGuiWindowFlags.NoScrollbar |
-                                       ImGuiWindowFlags.NoSavedSettings;
-
-        if (ImGui.Begin("###TCToolboxDutyFinderSettings", flags))
+        if (UiHelper.BeginAboveAddon("###TCToolboxDutyFinderSettings", addon, UiHelper.AboveAddonFlags | ImGuiWindowFlags.NoScrollbar, offsetX: 8, gap: 2))
         {
-            ImGui.SetWindowPos(new Vector2(addon->GetX() + 8, addon->GetY() - ImGui.GetWindowSize().Y - 2));
-
             var size = Config.ButtonSize;
 
             for (var i = 0; i < ToggleButtons.Length; i++)

@@ -224,16 +224,8 @@ public sealed unsafe class AutoClaimPVPRewards : TcModule
         var addon = UiHelper.GetAddon(AddonName);
         if (!UiHelper.IsReady(addon)) return;
 
-        const ImGuiWindowFlags flags = ImGuiWindowFlags.AlwaysAutoResize |
-                                       ImGuiWindowFlags.NoTitleBar |
-                                       ImGuiWindowFlags.NoCollapse |
-                                       ImGuiWindowFlags.NoScrollbar |
-                                       ImGuiWindowFlags.NoSavedSettings;
-
-        if (ImGui.Begin("###TCToolboxPvpReward", flags))
+        if (UiHelper.BeginAboveAddon("###TCToolboxPvpReward", addon, UiHelper.AboveAddonFlags | ImGuiWindowFlags.NoScrollbar))
         {
-            ImGui.SetWindowPos(new Vector2(addon->GetX() + 6, addon->GetY() - ImGui.GetWindowSize().Y - 4));
-
             ImGui.AlignTextToFramePadding();
             // 浮在報酬視窗上的標題直接引用 DisplayName，不各寫一份字面值。
             ImGui.TextColored(new Vector4(1f, 0.85f, 0.35f, 1f), DisplayName);
