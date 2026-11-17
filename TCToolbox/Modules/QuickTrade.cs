@@ -157,8 +157,7 @@ public sealed unsafe class QuickTrade : TcModule
         }
 
         // Items 為 null 而 Size > 0 時 GetInventorySlot 回的是非 null 的假指標，先判容器。
-        var container = manager->GetInventoryContainer(inventoryType);
-        if (container == null || container->Items == null) return;
+        if (!InventoryScan.TryGetIgnoringLoaded(manager, inventoryType, out _)) return;
 
         var item = manager->GetInventorySlot(inventoryType, slot);
         if (item == null || item->ItemId == 0)
@@ -226,8 +225,7 @@ public sealed unsafe class QuickTrade : TcModule
             return Abandon(p, $"右鍵選單已換成 {agent->TargetInventoryId}#{agent->TargetInventorySlotId}");
 
         // Items 為 null 而 Size > 0 時 GetInventorySlot 回的是非 null 的假指標，先判容器。
-        var container = manager->GetInventoryContainer(p.Container);
-        if (container == null || container->Items == null) return Abandon(p, "背包容器讀不到");
+        if (!InventoryScan.TryGetIgnoringLoaded(manager, p.Container, out _)) return Abandon(p, "背包容器讀不到");
 
         var item = manager->GetInventorySlot(p.Container, p.Slot);
         if (item == null || item->ItemId != p.ItemId) return Abandon(p, "那一格的道具已經變了");
