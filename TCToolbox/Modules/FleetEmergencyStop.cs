@@ -325,7 +325,7 @@ public sealed class FleetEmergencyStop : TcModule
         ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
         ImGui.TextDisabled(
             "只停不啟：這裡沒有「一鍵恢復」，要繼續請各自回那些插件裡打開。\n" +
-            "WrathCombo 與 SomethingNeedDoing 走它們自己的聊天指令（/wrath auto off、/snd stop all），" +
+            "WrathCombo 與 SomethingNeedDoing 走它們自己的聊天指令（/wrath stop，舊版退回 /wrath auto off；/snd stop all），" +
             "其餘走 IPC；沒安裝的顯示成「未安裝」而不是失敗。");
         ImGui.PopTextWrapPos();
     }

@@ -87,6 +87,10 @@ internal static class FleetStop
     private static readonly StopAllEndpoint LogogramHelperStopAll = new("LogogramHelper");
     private static readonly StopAllEndpoint MarketbuddyStopAll = new("Marketbuddy");
 
+    // WrathCombo/Services/IPC/Provider.cs [EzIPC] public void StopAll(string)：只用來判斷這一版認得 /wrath stop，
+    // 實際叫停仍走指令（理由見 StopWrathCombo）。
+    private static readonly StopAllEndpoint WrathComboStopAll = new("WrathCombo");
+
     // BossmodReborn/BossMod/Framework/IPCProvider.cs Register("AI.SetEnabled", (bool)=>bool)
     // 🔴 前綴是 "BossMod" 不是 "BossmodReborn"，而且它是 Func<bool,bool>（回傳關掉之後的實際狀態）。
     private static readonly Lazy<ICallGateSubscriber<bool, bool>> BossModAiSetEnabled =
@@ -384,16 +388,33 @@ internal static class FleetStop
     }
 
     /// <summary>
-    /// WrathCombo：關掉自動循環。
+    /// WrathCombo：收回其他插件對自動循環的控制權，並關掉自動循環。
     /// </summary>
     /// <remarks>
-    /// 🔴 <b>刻意走聊天指令而不是 IPC。</b>它的 <c>WrathCombo.SetAutoRotationState</c> 需要一個
+    /// 🔴 <b>刻意走聊天指令而不是租約 IPC。</b>它的 <c>WrathCombo.SetAutoRotationState</c> 需要一個
     /// <b>租約</b>（<c>RegisterForLease</c>）——為了按一次急停去承租別人的自動循環控制權，
     /// 之後還得負責歸還、處理回呼與逾時，代價遠大於收益，而且租約沒還乾淨的失敗形式是
-    /// 「使用者自己再也開不回來」。<c>/wrath auto off</c> 走的是使用者自己打指令的同一條路。
+    /// 「使用者自己再也開不回來」。指令走的是使用者自己打指令的同一條路。
+    /// 舊版不認得 <c>/wrath stop</c>（會被當成「開設定視窗」），所以用同一版加入的
+    /// <c>WrathCombo.StopAll</c> 端點在不在來判斷；不在就退回 <c>/wrath auto off</c>。
     /// </remarks>
     private static FleetStopResult StopWrathCombo()
-        => RunCommand("WrathCombo", "/wrath", "/wrath auto off", string.Empty);
+    {
+        bool hasStop;
+        try
+        {
+            hasStop = WrathComboStopAll.Subscriber.HasAction;
+        }
+        catch
+        {
+            hasStop = false;
+        }
+
+        return hasStop
+            ? RunCommand("WrathCombo", "/wrath", "/wrath stop", "（關閉自動循環，並收回其他插件對它的控制權）")
+            : RunCommand("WrathCombo", "/wrath", "/wrath auto off",
+                "（這一版 WrathCombo 還沒有 /wrath stop：只關你自己的自動循環設定，其他插件正在控制它時可能關不掉）");
+    }
 
     /// <summary>
     /// SomethingNeedDoing：停掉所有正在跑的巨集。
