@@ -177,7 +177,7 @@ internal static class FleetStop
         results.Add(InvokeStopAll("Eureka Helper 魔法甕尋寶", EurekaHelperStopAll,
             "取消待補送的自動走向、結束這一輪尋寶、停下它送出的導航；提示與畫面標記保留"));
         results.Add(InvokeStopAll("Saucy 金碟小遊戲", SaucyStopAll,
-            "金碟遊樂場小遊戲的自動化與 GATE 移動全部停止（同 /saucy stop 與各「停止」按鈕）"));
+            "金碟遊樂園小遊戲的自動化與 GATE 移動全部停止（同 /saucy stop 與各「停止」按鈕）"));
         results.Add(InvokeStopAll("LatihasChocobo 陸行鳥競賽", LatihasChocoboStopAll, "陸行鳥競賽的自動操作停止"));
         results.Add(StopBossModAi());
 

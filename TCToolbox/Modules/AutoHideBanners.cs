@@ -83,7 +83,7 @@ public sealed unsafe class AutoHideBanners : TcModule
     private const string CategoryTreasure = "尋寶";
     private const string CategoryExpedition = "探險・探索之旅";
     private const string CategoryTribe = "友好部族";
-    private const string CategoryGate = "金碟遊樂場 GATE";
+    private const string CategoryGate = "金碟遊樂園 GATE";
     private const string CategoryCosmic = "宇宙探索";
 
     /// <summary>
