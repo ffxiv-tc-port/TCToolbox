@@ -412,22 +412,9 @@ public sealed unsafe class AutoMerge : TcModule
 
         ImGui.Separator();
 
-        var interval = Config.StepIntervalMs;
-        if (ImGui.SliderInt("每次搬移的間隔（毫秒）##autoMergeInterval", ref interval, 100, 1_000))
-        {
-            Config.StepIntervalMs = interval;
-            Plugin.Instance.Config.Save();
-        }
-
-        var notify = Config.NotifyOnFinish;
-        if (ImGui.Checkbox("結束時在聊天欄報告##autoMergeNotify", ref notify))
-        {
-            Config.NotifyOnFinish = notify;
-            Plugin.Instance.Config.Save();
-        }
-
-        if (lastSummary.Length > 0)
-            ImGui.TextDisabled($"上次結果：{lastSummary}");
+        ManualStepUi.DrawStepSettings(ref Config.StepIntervalMs, ref Config.NotifyOnFinish,
+            "每次搬移的間隔（毫秒）##autoMergeInterval", 100, 1_000,
+            "結束時在聊天欄報告##autoMergeNotify", lastSummary);
 
         ImGui.TextDisabled("只處理背包第 1～4 頁；蒐藏品與不可疊放的道具會跳過。");
     }

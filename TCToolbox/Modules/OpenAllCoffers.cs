@@ -314,22 +314,9 @@ public sealed unsafe class OpenAllCoffers : TcModule
 
         ImGui.Separator();
 
-        var interval = Config.StepIntervalMs;
-        if (ImGui.SliderInt("每件之間的間隔（毫秒）##openAllCoffersInterval", ref interval, 200, 2_000))
-        {
-            Config.StepIntervalMs = interval;
-            Plugin.Instance.Config.Save();
-        }
-
-        var notify = Config.NotifyOnFinish;
-        if (ImGui.Checkbox("結束時在聊天欄報告##openAllCoffersNotify", ref notify))
-        {
-            Config.NotifyOnFinish = notify;
-            Plugin.Instance.Config.Save();
-        }
-
-        if (lastSummary.Length > 0)
-            ImGui.TextDisabled($"上次結果：{lastSummary}");
+        ManualStepUi.DrawStepSettings(ref Config.StepIntervalMs, ref Config.NotifyOnFinish,
+            "每件之間的間隔（毫秒）##openAllCoffersInterval", 200, 2_000,
+            "結束時在聊天欄報告##openAllCoffersNotify", lastSummary);
 
         ImGui.TextDisabled("藥品不會出現這個選項（上游的判斷式會把禦火藥那一系列一起算進來）。");
         ImGui.TextDisabled($"背包空格少於 {MinimumFreeSlots} 格、進入戰鬥或過場時會自動停下。");

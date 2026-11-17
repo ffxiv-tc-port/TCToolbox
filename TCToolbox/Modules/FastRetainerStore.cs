@@ -315,21 +315,8 @@ public sealed unsafe class FastRetainerStore : TcModule
 
         ImGui.Separator();
 
-        var interval = Config.StepIntervalMs;
-        if (ImGui.SliderInt("每格之間的間隔（毫秒）##fastRetainerStore", ref interval, 100, 1_000))
-        {
-            Config.StepIntervalMs = interval;
-            Plugin.Instance.Config.Save();
-        }
-
-        var notify = Config.NotifyOnFinish;
-        if (ImGui.Checkbox("結束時在聊天欄報告##fastRetainerStore", ref notify))
-        {
-            Config.NotifyOnFinish = notify;
-            Plugin.Instance.Config.Save();
-        }
-
-        if (lastSummary.Length > 0)
-            ImGui.TextDisabled($"上次結果：{lastSummary}");
+        ManualStepUi.DrawStepSettings(ref Config.StepIntervalMs, ref Config.NotifyOnFinish,
+            "每格之間的間隔（毫秒）##fastRetainerStore", 100, 1_000,
+            "結束時在聊天欄報告##fastRetainerStore", lastSummary);
     }
 }

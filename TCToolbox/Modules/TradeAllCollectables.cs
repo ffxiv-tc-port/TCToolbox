@@ -261,22 +261,9 @@ public sealed unsafe class TradeAllCollectables : TcModule
 
         ImGui.Separator();
 
-        var interval = Config.StepIntervalMs;
-        if (ImGui.SliderInt("每件之間的間隔（毫秒）##tradeAllCollectablesInterval", ref interval, 200, 2_000))
-        {
-            Config.StepIntervalMs = interval;
-            Plugin.Instance.Config.Save();
-        }
-
-        var notify = Config.NotifyOnFinish;
-        if (ImGui.Checkbox("結束時在聊天欄報告##tradeAllCollectablesNotify", ref notify))
-        {
-            Config.NotifyOnFinish = notify;
-            Plugin.Instance.Config.Save();
-        }
-
-        if (lastSummary.Length > 0)
-            ImGui.TextDisabled($"上次結果：{lastSummary}");
+        ManualStepUi.DrawStepSettings(ref Config.StepIntervalMs, ref Config.NotifyOnFinish,
+            "每件之間的間隔（毫秒）##tradeAllCollectablesInterval", 200, 2_000,
+            "結束時在聊天欄報告##tradeAllCollectablesNotify", lastSummary);
 
         ImGui.TextColored(new Vector4(1f, 0.8f, 0.35f, 1f),
                           "⚠ 只交出目前分頁（職業）的收藏品，而且會交完為止——確定分頁對了再按。");
