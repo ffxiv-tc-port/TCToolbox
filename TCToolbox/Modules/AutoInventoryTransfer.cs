@@ -146,6 +146,7 @@ public sealed unsafe class AutoInventoryTransfer : TcModule
     {
         ["2026.07.22.0000.0000"] = 0x51D630, // 7.20
         ["2026.09.14.0000.0000"] = 0x51D4B0, // 7.25
+        ["2026.11.05.0000.0000"] = 0x51D9E0, // 7.3
     };
 
     /// <summary>比對執行期 RVA 與這一版的離線基準；沒有這一版的基準時照實說，不叫使用者回報。</summary>

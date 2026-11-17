@@ -54,7 +54,7 @@ public sealed unsafe class AppraisalDiagnostics : TcModule
     private static readonly AgentId[] AppraisalAgents = [AgentId.ItemAppraisal, AgentId.ItemInspection];
 
     /// <summary>只在這一版讀代理物件原始欄位：兩者的配置大小（0xA0）只對這一版離線驗過。</summary>
-    private const string RawAgentVerifiedVersion = "2026.09.14.0000.0000";
+    private const string RawAgentVerifiedVersion = "2026.11.05.0000.0000";
 
     private const int RawAgentStart = 0x28;
     private const int RawAgentEnd = 0xA0;
