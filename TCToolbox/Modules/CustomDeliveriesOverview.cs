@@ -105,41 +105,9 @@ public sealed class CustomDeliveriesOverview : TcModule
     private bool windowOpen;
 
     // ── Mappy 標記（增量同步）─────────────────────────────────────────────
-    private readonly MappyMarkerPublisher mappy = new(MarkerSource);
-
-    /// <summary>重複使用的緩衝區，免得每次同步都配一個新的 List。</summary>
-    private readonly List<MappyMarkerPublisher.Marker> mappyPending = [];
-
-    /// <summary>上一次成功推給 Mappy 的內容簽章；空字串＝還沒推過或已被作廢。</summary>
-    private string lastMappySignature = string.Empty;
-
-    private bool mappyWasAvailable;
-    private bool mappyHasMarkers;
-    private MappyState mappyState = MappyState.Unknown;
-    private int lastMappyPlaced;
-    private int lastMappyRejected;
-    private int lastMappySkippedNoCoords;
+    private readonly MappyBridge mappy = new(MarkerSource);
 
     private CustomDeliveriesOverviewConfig Config => Plugin.Instance.Config.CustomDeliveriesOverview;
-
-    /// <summary>Mappy 橋接的狀態。<b>「不知道」是零值</b>。</summary>
-    private enum MappyState
-    {
-        /// <summary>還沒探測過。</summary>
-        Unknown = 0,
-
-        /// <summary>使用者把「也顯示到 Mappy」關掉了。</summary>
-        Disabled,
-
-        /// <summary>Mappy 沒裝或還沒載入。</summary>
-        Missing,
-
-        /// <summary>Mappy 回報的 IPC 版本比本模組寫的時候還舊。</summary>
-        VersionTooOld,
-
-        /// <summary>一切正常。</summary>
-        Ok,
-    }
 
     protected override void OnEnable()
     {
@@ -189,11 +157,7 @@ public sealed class CustomDeliveriesOverview : TcModule
         Svc.Framework.Update += OnFrameworkUpdate;
 
         // 啟用後立刻同步一次，不要讓使用者等一個節流週期。
-        Throttle.Reset(MappySyncThrottleKey);
-        Throttle.Reset(MappyForceResyncThrottleKey);
-        lastMappySignature = string.Empty;
-        mappyWasAvailable = false;
-        mappy.Forget();
+        mappy.OnEnable(MappySyncThrottleKey, MappyForceResyncThrottleKey);
     }
 
     public override string? StopForFleetEmergency()
@@ -213,14 +177,7 @@ public sealed class CustomDeliveriesOverview : TcModule
         NavStop.Release();
 
         // 🔴 停用（含外掛卸載）時一定要把標記收乾淨，否則 Mappy 會一直畫著一組沒有人再更新的舊標記。
-        mappy.Clear();
-        mappyHasMarkers = false;
-        mappyWasAvailable = false;
-        mappyState = MappyState.Unknown;
-        lastMappySignature = string.Empty;
-        lastMappyPlaced = 0;
-        lastMappyRejected = 0;
-        lastMappySkippedNoCoords = 0;
+        mappy.OnDisable();
 
         npcs.Clear();
         windowOpen = false;
@@ -248,55 +205,8 @@ public sealed class CustomDeliveriesOverview : TcModule
     /// </remarks>
     private unsafe void SyncMappy()
     {
-        if (!Throttle.Pass(MappySyncThrottleKey, MappySyncIntervalMs)) return;
-
-        if (!Config.ShowOnMappy)
-        {
-            if (mappyHasMarkers)
-            {
-                mappy.Clear();
-                mappyHasMarkers = false;
-                lastMappySignature = string.Empty;
-                lastMappyPlaced = 0;
-            }
-
-            mappyState = MappyState.Disabled;
+        if (!mappy.TryBeginSync(MappySyncThrottleKey, MappySyncIntervalMs, Config.ShowOnMappy, MappyMissingBackoffMs))
             return;
-        }
-
-        // 未登入時讀不到老主顧狀態；已放上去的標記留著不動。
-        if (!Svc.ClientState.IsLoggedIn) return;
-
-        if (!MappyMarkerIpc.TryGetVersion(out var version))
-        {
-            if (mappyWasAvailable || mappyState != MappyState.Missing)
-            {
-                // 🔴 手上的 handle 全部失效了，留著會讓下一次同步以為「已經放上去了」。
-                mappy.Forget();
-                lastMappySignature = string.Empty;
-            }
-
-            mappyWasAvailable = false;
-            mappyHasMarkers = false;
-            mappyState = MappyState.Missing;
-
-            // 沒裝 Mappy 是常態，退避到一分鐘一次（理由見 MappyMissingBackoffMs）。
-            Throttle.Block(MappySyncThrottleKey, MappyMissingBackoffMs);
-            return;
-        }
-
-        if (version < MappyMarkerIpc.SupportedVersion)
-        {
-            mappyState = MappyState.VersionTooOld;
-            return;
-        }
-
-        if (!mappyWasAvailable)
-        {
-            mappy.Forget();
-            lastMappySignature = string.Empty;
-            mappyWasAvailable = true;
-        }
 
         var mgr = SatisfactionSupplyManager.Instance();
         if (mgr == null) return;
@@ -312,7 +222,7 @@ public sealed class CustomDeliveriesOverview : TcModule
 
         var iconId = Config.MappyIconId is 0 ? DefaultMappyIconId : Config.MappyIconId;
 
-        mappyPending.Clear();
+        mappy.Pending.Clear();
         var skippedNoCoords = 0;
 
         var signature = new StringBuilder();
@@ -342,7 +252,7 @@ public sealed class CustomDeliveriesOverview : TcModule
                 continue;
             }
 
-            mappyPending.Add(new MappyMarkerPublisher.Marker(
+            mappy.Pending.Add(new MappyMarkerPublisher.Marker(
                 idx.ToString(CultureInfo.InvariantCulture),
                 loc.Map,
                 coords,
@@ -354,33 +264,18 @@ public sealed class CustomDeliveriesOverview : TcModule
 
         var newSignature = signature.ToString();
 
-        var forceFull = Throttle.Pass(MappyForceResyncThrottleKey, MappyForceResyncIntervalMs);
-        var contentChanged = newSignature != lastMappySignature;
-
-        if (!forceFull && !contentChanged && mappyState == MappyState.Ok)
-        {
-            mappyPending.Clear();
+        if (!mappy.Commit(MappyForceResyncThrottleKey, MappyForceResyncIntervalMs, newSignature,
+                          skippedNoCoords, out var contentChanged))
             return;
-        }
-
-        mappy.Publish(mappyPending, forceFull);
-        mappyPending.Clear();
-
-        lastMappyPlaced = mappy.Placed;
-        lastMappyRejected = mappy.LastRejected;
-        lastMappySkippedNoCoords = skippedNoCoords;
-        lastMappySignature = newSignature;
-        mappyHasMarkers = mappy.Placed > 0;
-        mappyState = MappyState.Ok;
 
         if (!contentChanged) return;
 
         // 要使用者回報的診斷。
         Svc.Log.Information(
-            $"[{InternalName}] 同步老主顧到 Mappy：放上 {lastMappyPlaced} 個"
+            $"[{InternalName}] 同步老主顧到 Mappy：放上 {mappy.LastPlaced} 個"
             + $"（本次異動 {mappy.LastIpcCalls} 次、圖示 {iconId}、共用額度剩 {remaining}／{WeeklyTotalCap}）"
             + (skippedNoCoords > 0 ? $"、座標換算不出來 {skippedNoCoords} 個" : string.Empty)
-            + (lastMappyRejected > 0 ? $"、被 Mappy 拒絕 {lastMappyRejected} 個" : string.Empty));
+            + (mappy.LastRejected > 0 ? $"、被 Mappy 拒絕 {mappy.LastRejected} 個" : string.Empty));
     }
 
     private static string BuildMappyTooltip(NpcStaticInfo npc, byte rank, byte usedN, int remaining, bool done)
@@ -482,7 +377,7 @@ public sealed class CustomDeliveriesOverview : TcModule
 
     /// <summary>設定畫面上的 Mappy 區塊。</summary>
     /// <remarks>
-    /// 📌 模組沒啟用時 <see cref="SyncMappy"/> 沒在跑，<see cref="mappyState"/> 是死的——
+    /// 📌 模組沒啟用時 <see cref="SyncMappy"/> 沒在跑，<see cref="MappyBridge.Status"/> 是死的——
     /// 這裡自己（節流地）探一次，讓使用者在還沒啟用之前就看得出來「Mappy 在不在」。
     /// </remarks>
     private void DrawMappyConfig()
@@ -492,7 +387,7 @@ public sealed class CustomDeliveriesOverview : TcModule
         {
             Config.ShowOnMappy = onMappy;
             Plugin.Instance.Config.Save();
-            lastMappySignature = string.Empty;
+            mappy.LastSignature = string.Empty;
             Throttle.Reset(MappySyncThrottleKey);
         }
 
@@ -512,7 +407,7 @@ public sealed class CustomDeliveriesOverview : TcModule
         {
             Config.OnlyWithRemainingDeliveries = onlyRemaining;
             Plugin.Instance.Config.Save();
-            lastMappySignature = string.Empty;
+            mappy.LastSignature = string.Empty;
         }
 
         if (ImGui.IsItemHovered())
@@ -523,25 +418,25 @@ public sealed class CustomDeliveriesOverview : TcModule
         }
 
         if (!IsEnabled && Throttle.Pass($"TCToolbox.{InternalName}.MappyUiProbe", 2_000))
-            mappyState = MappyMarkerIpc.TryGetVersion(out _) ? MappyState.Unknown : MappyState.Missing;
+            mappy.Status = MappyMarkerIpc.TryGetVersion(out _) ? MappyBridge.State.Unknown : MappyBridge.State.Missing;
 
-        switch (mappyState)
+        switch (mappy.Status)
         {
-            case MappyState.Missing:
+            case MappyBridge.State.Missing:
                 ImGui.TextDisabled("Mappy 未載入——標記沒有地方可以放。");
                 break;
 
-            case MappyState.VersionTooOld:
+            case MappyBridge.State.VersionTooOld:
                 ImGui.TextDisabled("Mappy 回報的 IPC 版本過舊，同步已停下來。");
                 break;
 
-            case MappyState.Ok:
-                ImGui.TextDisabled($"目前放上 {lastMappyPlaced} 個老主顧。");
+            case MappyBridge.State.Ok:
+                ImGui.TextDisabled($"目前放上 {mappy.LastPlaced} 個老主顧。");
                 if (ImGui.IsItemHovered())
                 {
                     ImGui.SetTooltip(
-                        $"座標換算不出來：{lastMappySkippedNoCoords} 個\n" +
-                        $"被 Mappy 拒絕：{lastMappyRejected} 個\n" +
+                        $"座標換算不出來：{mappy.LastSkippedNoCoords} 個\n" +
+                        $"被 Mappy 拒絕：{mappy.LastRejected} 個\n" +
                         $"標記來源：{MarkerSource}（可在 Mappy 的設定裡單獨關掉）");
                 }
 
@@ -579,7 +474,7 @@ public sealed class CustomDeliveriesOverview : TcModule
             // 🔴 清空／輸入 0 一律寫回哨兵 0（理由同 AetherCurrentTracker：寫具體常數＝烙死編號）。
             Config.MappyIconId = value <= 0 ? 0u : (uint)value;
             Plugin.Instance.Config.Save();
-            lastMappySignature = string.Empty;
+            mappy.LastSignature = string.Empty;
         }
 
         ImGui.SameLine();
@@ -587,7 +482,7 @@ public sealed class CustomDeliveriesOverview : TcModule
         {
             Config.MappyIconId = 0;
             Plugin.Instance.Config.Save();
-            lastMappySignature = string.Empty;
+            mappy.LastSignature = string.Empty;
         }
 
         if (ImGui.IsItemHovered())

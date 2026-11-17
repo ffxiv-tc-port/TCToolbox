@@ -138,46 +138,7 @@ public sealed unsafe class AetherCurrentTracker : TcModule
     private int totalWithPosition;
 
     // ── Mappy 標記（增量同步）─────────────────────────────────────────────
-    private readonly MappyMarkerPublisher mappy = new(MarkerSource);
-
-    /// <summary>重複使用的緩衝區，免得每次同步都配一個新的 List。</summary>
-    private readonly List<MappyMarkerPublisher.Marker> mappyPending = [];
-
-    /// <summary>上一次成功推給 Mappy 的內容簽章；空字串＝還沒推過或已被作廢。</summary>
-    private string lastMappySignature = string.Empty;
-
-    /// <summary>Mappy 上一次探測時在不在（用來偵測「從不在變成在」）。</summary>
-    private bool mappyWasAvailable;
-
-    /// <summary>目前地圖上有沒有我們放的東西（設定被關掉時要收乾淨）。</summary>
-    private bool mappyHasMarkers;
-
-    /// <summary>Mappy 端的狀態，給設定畫面顯示用。<b>零值＝「不知道」</b>。</summary>
-    private MappyState mappyState = MappyState.Unknown;
-
-    /// <summary>最後一次同步的筆數（設定畫面用）。</summary>
-    private int lastMappyPlaced;
-    private int lastMappyRejected;
-    private int lastMappySkippedNoCoords;
-
-    /// <summary>Mappy 橋接的狀態。<b>「不知道」是零值</b>。</summary>
-    private enum MappyState
-    {
-        /// <summary>還沒探測過。</summary>
-        Unknown = 0,
-
-        /// <summary>使用者把「也顯示到 Mappy」關掉了。</summary>
-        Disabled,
-
-        /// <summary>Mappy 沒裝或還沒載入。</summary>
-        Missing,
-
-        /// <summary>Mappy 回報的 IPC 版本比本模組寫的時候還舊。</summary>
-        VersionTooOld,
-
-        /// <summary>一切正常。</summary>
-        Ok,
-    }
+    private readonly MappyBridge mappy = new(MarkerSource);
 
     protected override void OnEnable()
     {
@@ -193,11 +154,7 @@ public sealed unsafe class AetherCurrentTracker : TcModule
         Svc.Framework.Update += OnUpdate;
 
         // 啟用後立刻同步一次，不要讓使用者等一個節流週期。
-        Throttle.Reset(MappySyncThrottleKey);
-        Throttle.Reset(MappyForceResyncThrottleKey);
-        lastMappySignature = string.Empty;
-        mappyWasAvailable = false;
-        mappy.Forget();
+        mappy.OnEnable(MappySyncThrottleKey, MappyForceResyncThrottleKey);
 
         // 🔑 「回 0」比「報錯」常見。四個數字一起印才分得出「表讀不到」與「鏈斷在中間」，
         //    所以期望值也一起印——這樣使用者回報的 log 不必再回頭查資料就看得出對不對。
@@ -229,14 +186,7 @@ public sealed unsafe class AetherCurrentTracker : TcModule
 
         // 🔴 停用（含外掛卸載，Plugin.Dispose 會把每個模組 Disable 一次）時一定要把標記收乾淨，
         //    否則 Mappy 會一直畫著一組沒有人再更新的舊標記。
-        mappy.Clear();
-        mappyHasMarkers = false;
-        mappyWasAvailable = false;
-        mappyState = MappyState.Unknown;
-        lastMappySignature = string.Empty;
-        lastMappyPlaced = 0;
-        lastMappyRejected = 0;
-        lastMappySkippedNoCoords = 0;
+        mappy.OnDisable();
 
         byTerritory.Clear();
         windowOpen = false;
@@ -266,62 +216,12 @@ public sealed unsafe class AetherCurrentTracker : TcModule
     /// </remarks>
     private void SyncMappy()
     {
-        if (!Throttle.Pass(MappySyncThrottleKey, MappySyncIntervalMs)) return;
-
-        if (!Config.ShowOnMappy)
-        {
-            // 使用者剛把它關掉：收乾淨。之後就什麼都不做。
-            if (mappyHasMarkers)
-            {
-                mappy.Clear();
-                mappyHasMarkers = false;
-                lastMappySignature = string.Empty;
-                lastMappyPlaced = 0;
-            }
-
-            mappyState = MappyState.Disabled;
+        if (!mappy.TryBeginSync(MappySyncThrottleKey, MappySyncIntervalMs, Config.ShowOnMappy, MappyMissingBackoffMs))
             return;
-        }
-
-        // 未登入時共鳴狀態沒有意義（而且不會變），跳過。已放上去的標記留著不動。
-        if (!Svc.ClientState.IsLoggedIn) return;
-
-        if (!MappyMarkerIpc.TryGetVersion(out var version))
-        {
-            if (mappyWasAvailable || mappyState != MappyState.Missing)
-            {
-                // 🔴 手上的 handle 全部失效了。留著會讓下一次同步以為「已經放上去了」，
-                //    表現成標記再也不出現而且毫無徵兆。
-                mappy.Forget();
-                lastMappySignature = string.Empty;
-            }
-
-            mappyWasAvailable = false;
-            mappyHasMarkers = false;
-            mappyState = MappyState.Missing;
-
-            // 沒裝 Mappy 是常態，退避到一分鐘一次（理由見 MappyMissingBackoffMs）。
-            Throttle.Block(MappySyncThrottleKey, MappyMissingBackoffMs);
-            return;
-        }
-
-        if (version < MappyMarkerIpc.SupportedVersion)
-        {
-            mappyState = MappyState.VersionTooOld;
-            return;
-        }
-
-        // Mappy 從「不在」變成「在」＝它的標記表是空的，一定要重放。
-        if (!mappyWasAvailable)
-        {
-            mappy.Forget();
-            lastMappySignature = string.Empty;
-            mappyWasAvailable = true;
-        }
 
         var iconId = Config.MappyIconId is 0 ? DefaultMappyIconId : Config.MappyIconId;
 
-        mappyPending.Clear();
+        mappy.Pending.Clear();
         var skippedNoCoords = 0;
 
         var signature = new StringBuilder();
@@ -340,7 +240,7 @@ public sealed unsafe class AetherCurrentTracker : TcModule
                     continue;
                 }
 
-                mappyPending.Add(new MappyMarkerPublisher.Marker(
+                mappy.Pending.Add(new MappyMarkerPublisher.Marker(
                     point.AetherCurrentId.ToString(CultureInfo.InvariantCulture),
                     point.Map,
                     coords,
@@ -353,25 +253,9 @@ public sealed unsafe class AetherCurrentTracker : TcModule
 
         var newSignature = signature.ToString();
 
-        // 保險：即使簽章沒變也定期整組重推一次（Mappy 可能在我們沒看見的時候被重載過）。
-        var forceFull = Throttle.Pass(MappyForceResyncThrottleKey, MappyForceResyncIntervalMs);
-        var contentChanged = newSignature != lastMappySignature;
-
-        if (!forceFull && !contentChanged && mappyState == MappyState.Ok)
-        {
-            mappyPending.Clear();
+        if (!mappy.Commit(MappyForceResyncThrottleKey, MappyForceResyncIntervalMs, newSignature,
+                          skippedNoCoords, out var contentChanged))
             return;
-        }
-
-        mappy.Publish(mappyPending, forceFull);
-        mappyPending.Clear();
-
-        lastMappyPlaced = mappy.Placed;
-        lastMappyRejected = mappy.LastRejected;
-        lastMappySkippedNoCoords = skippedNoCoords;
-        lastMappySignature = newSignature;
-        mappyHasMarkers = mappy.Placed > 0;
-        mappyState = MappyState.Ok;
 
         // 📌 只有「內容真的變了」才寫記錄：每分鐘一次的保險重推全部都寫的話會洗掉使用者的記錄，
         //    而那些行沒有任何新資訊。
@@ -379,10 +263,10 @@ public sealed unsafe class AetherCurrentTracker : TcModule
 
         // 🔴 Information 級：要使用者回報的診斷，Debug 會被淹沒。
         Svc.Log.Information(
-            $"[{InternalName}] 同步風脈泉到 Mappy：未共鳴 {lastMappyPlaced} 個"
+            $"[{InternalName}] 同步風脈泉到 Mappy：未共鳴 {mappy.LastPlaced} 個"
             + $"（本次異動 {mappy.LastIpcCalls} 次、圖示 {iconId}）"
             + (skippedNoCoords > 0 ? $"、座標換算不出來 {skippedNoCoords} 個" : string.Empty)
-            + (lastMappyRejected > 0 ? $"、被 Mappy 拒絕 {lastMappyRejected} 個" : string.Empty));
+            + (mappy.LastRejected > 0 ? $"、被 Mappy 拒絕 {mappy.LastRejected} 個" : string.Empty));
     }
 
     private static string BuildMappyTooltip(Point point)
@@ -1201,7 +1085,7 @@ public sealed unsafe class AetherCurrentTracker : TcModule
 
     /// <summary>設定畫面上的 Mappy 區塊。</summary>
     /// <remarks>
-    /// 📌 模組沒啟用時 <see cref="SyncMappy"/> 沒在跑，<see cref="mappyState"/> 是死的——
+    /// 📌 模組沒啟用時 <see cref="SyncMappy"/> 沒在跑，<see cref="MappyBridge.Status"/> 是死的——
     /// 這裡自己（節流地）探一次，讓使用者在還沒啟用之前就看得出來「Mappy 在不在」。
     /// </remarks>
     private void DrawMappyConfig()
@@ -1211,7 +1095,7 @@ public sealed unsafe class AetherCurrentTracker : TcModule
         {
             Config.ShowOnMappy = onMappy;
             Plugin.Instance.Config.Save();
-            lastMappySignature = string.Empty;
+            mappy.LastSignature = string.Empty;
             Throttle.Reset(MappySyncThrottleKey);
         }
 
@@ -1229,25 +1113,25 @@ public sealed unsafe class AetherCurrentTracker : TcModule
         using var indent = ImRaii.PushIndent();
 
         if (!IsEnabled && Throttle.Pass($"TCToolbox.{InternalName}.MappyUiProbe", 2_000))
-            mappyState = MappyMarkerIpc.TryGetVersion(out _) ? MappyState.Unknown : MappyState.Missing;
+            mappy.Status = MappyMarkerIpc.TryGetVersion(out _) ? MappyBridge.State.Unknown : MappyBridge.State.Missing;
 
-        switch (mappyState)
+        switch (mappy.Status)
         {
-            case MappyState.Missing:
+            case MappyBridge.State.Missing:
                 ImGui.TextDisabled("Mappy 未載入——標記沒有地方可以放。");
                 break;
 
-            case MappyState.VersionTooOld:
+            case MappyBridge.State.VersionTooOld:
                 ImGui.TextDisabled("Mappy 回報的 IPC 版本過舊，同步已停下來。");
                 break;
 
-            case MappyState.Ok:
-                ImGui.TextDisabled($"目前放上 {lastMappyPlaced} 個未共鳴的風脈泉。");
+            case MappyBridge.State.Ok:
+                ImGui.TextDisabled($"目前放上 {mappy.LastPlaced} 個未共鳴的風脈泉。");
                 if (ImGui.IsItemHovered())
                 {
                     ImGui.SetTooltip(
-                        $"座標換算不出來：{lastMappySkippedNoCoords} 個\n" +
-                        $"被 Mappy 拒絕：{lastMappyRejected} 個\n" +
+                        $"座標換算不出來：{mappy.LastSkippedNoCoords} 個\n" +
+                        $"被 Mappy 拒絕：{mappy.LastRejected} 個\n" +
                         $"標記來源：{MarkerSource}（可在 Mappy 的設定裡單獨關掉）");
                 }
 
@@ -1289,7 +1173,7 @@ public sealed unsafe class AetherCurrentTracker : TcModule
             //    日後修正 DefaultMappyIconId 對這個人靜默無效。
             Config.MappyIconId = value <= 0 ? 0u : (uint)value;
             Plugin.Instance.Config.Save();
-            lastMappySignature = string.Empty;
+            mappy.LastSignature = string.Empty;
         }
 
         ImGui.SameLine();
@@ -1297,7 +1181,7 @@ public sealed unsafe class AetherCurrentTracker : TcModule
         {
             Config.MappyIconId = 0;
             Plugin.Instance.Config.Save();
-            lastMappySignature = string.Empty;
+            mappy.LastSignature = string.Empty;
         }
 
         if (ImGui.IsItemHovered())
