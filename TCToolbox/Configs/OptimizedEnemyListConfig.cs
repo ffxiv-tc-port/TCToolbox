@@ -28,6 +28,9 @@ public sealed class OptimizedEnemyListConfig
     public bool HighlightTargetingYou = true;
     public float TextScale = 0.9f;
 
+    /// <summary>疊圖文字字級再乘上 addon 的介面縮放（false＝既有字級）。</summary>
+    public bool ScaleWithHud;
+
     /// <summary>疊圖畫在整列的右側外緣（false＝左側外緣）。</summary>
     public bool AnchorRight = true;
 

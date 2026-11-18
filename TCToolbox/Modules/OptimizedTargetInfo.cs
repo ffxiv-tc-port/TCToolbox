@@ -39,6 +39,14 @@ public sealed unsafe class OptimizedTargetInfo : TcModule
     private readonly OverlayTextMemo targetText = new();
     private readonly OverlayTextMemo focusText = new();
 
+    private readonly OverlayFont targetFont = new();
+
+    /// <summary>只在跟著介面縮放時用：兩個 addon 的縮放可能不同，共用一份字會每幀互相觸發重建。</summary>
+    private readonly OverlayFont focusFont = new();
+
+    /// <summary>「文字大小倍率」滑桿最後一次被拖著的幀；拖著時不新建字型。</summary>
+    private int textScaleActiveFrame = -100;
+
     protected override void OnEnable()
     {
         Svc.PluginInterface.UiBuilder.Draw += DrawOverlay;
@@ -49,6 +57,8 @@ public sealed unsafe class OptimizedTargetInfo : TcModule
         Svc.PluginInterface.UiBuilder.Draw -= DrawOverlay;
         targetText.Forget();
         focusText.Forget();
+        targetFont.Dispose();
+        focusFont.Dispose();
     }
 
     private void DrawOverlay()
@@ -76,7 +86,7 @@ public sealed unsafe class OptimizedTargetInfo : TcModule
             addon->GetX() + (Config.TargetOffsetX * addon->Scale),
             addon->GetY() + (Config.TargetOffsetY * addon->Scale));
 
-        DrawInfoText(target, origin, targetText);
+        DrawInfoText(target, origin, targetText, targetFont, addon->Scale);
     }
 
     private void DrawFocusTarget()
@@ -89,7 +99,7 @@ public sealed unsafe class OptimizedTargetInfo : TcModule
             addon->GetY() + (Config.FocusOffsetY * addon->Scale));
 
         if (Svc.Targets.FocusTarget is IBattleChara focus)
-            DrawInfoText(focus, origin, focusText);
+            DrawInfoText(focus, origin, focusText, Config.ScaleWithHud ? focusFont : targetFont, addon->Scale);
 
         if (!Config.ShowClearFocusButton) return;
 
@@ -116,18 +126,19 @@ public sealed unsafe class OptimizedTargetInfo : TcModule
         ImGui.End();
     }
 
-    private void DrawInfoText(IBattleChara chara, Vector2 origin, OverlayTextMemo memo)
+    private void DrawInfoText(IBattleChara chara, Vector2 origin, OverlayTextMemo memo, OverlayFont font, float hudScale)
     {
         var text = InfoText(chara, memo);
         if (text.Length == 0) return;
 
-        var drawList = ImGui.GetBackgroundDrawList();
-        var fontSize = ImGui.GetFontSize() * Config.TextScale;
+        var scale = OverlayTextScale.Effective(Config.TextScale, Config.ScaleWithHud, hudScale);
+        font.Request(scale, ImGui.GetFrameCount() - textScaleActiveFrame <= 1);
 
-        drawList.AddText(ImGui.GetFont(), fontSize, origin + new Vector2(1, 1),
-                         ImGui.ColorConvertFloat4ToU32(new Vector4(0f, 0f, 0f, 0.85f)), text);
-        drawList.AddText(ImGui.GetFont(), fontSize, origin,
-                         ImGui.ColorConvertFloat4ToU32(new Vector4(1f, 1f, 1f, 0.95f)), text);
+        // 字級在推入字型之前量：預設字型的大小 × 倍率，和改版前的字一樣大。
+        var fontPx = ImGui.GetFontSize() * scale;
+        using var pushed = font.Push();
+        OverlayFont.DrawOutlined(ImGui.GetBackgroundDrawList(), fontPx, origin,
+                                 ImGui.ColorConvertFloat4ToU32(new Vector4(1f, 1f, 1f, 0.95f)), text);
     }
 
     /// <summary>
@@ -229,6 +240,19 @@ public sealed unsafe class OptimizedTargetInfo : TcModule
             Config.TextScale = textScale;
             Plugin.Instance.Config.Save();
         }
+
+        if (ImGui.IsItemActive())
+            textScaleActiveFrame = ImGui.GetFrameCount();
+
+        var scaleWithHud = Config.ScaleWithHud;
+        if (ImGui.Checkbox("文字大小跟著目標情報的介面縮放", ref scaleWithHud))
+        {
+            Config.ScaleWithHud = scaleWithHud;
+            Plugin.Instance.Config.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("勾選後，文字會隨 HUD 配置裡目標情報的縮放一起放大縮小。\n不勾＝維持原本的字級，只看上面的倍率。");
 
         ImGui.SetNextItemWidth(180f);
         var targetOffset = new Vector2(Config.TargetOffsetX, Config.TargetOffsetY);

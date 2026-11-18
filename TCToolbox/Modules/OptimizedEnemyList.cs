@@ -81,6 +81,11 @@ public sealed unsafe class OptimizedEnemyList : TcModule
 
     private OptimizedEnemyListConfig Config => Plugin.Instance.Config.EnemyList;
 
+    private readonly OverlayFont font = new();
+
+    /// <summary>「文字大小倍率」滑桿最後一次被拖著的幀；拖著時不新建字型。</summary>
+    private int textScaleActiveFrame = -100;
+
     protected override void OnEnable()
     {
         Svc.PluginInterface.UiBuilder.Draw += DrawOverlay;
@@ -93,6 +98,7 @@ public sealed unsafe class OptimizedEnemyList : TcModule
         rowRectsFound.Clear();
         Array.Clear(castNameBytes);
         Array.Clear(lineTexts);
+        font.Dispose();
     }
 
     private void DrawOverlay()
@@ -107,9 +113,13 @@ public sealed unsafe class OptimizedEnemyList : TcModule
         if (rowRects == null) return;
 
         var drawList = ImGui.GetBackgroundDrawList();
-        var baseFontSize = ImGui.GetFontSize();
-        var fontSize = baseFontSize * Config.TextScale;
-        var textScale = fontSize / baseFontSize;
+        var scale = OverlayTextScale.Effective(Config.TextScale, Config.ScaleWithHud, addon->AtkUnitBase.Scale);
+        font.Request(scale, ImGui.GetFrameCount() - textScaleActiveFrame <= 1);
+
+        // 字級在推入字型之前量：預設字型的大小 × 倍率，和改版前的字一樣大。
+        var fontSize = ImGui.GetFontSize() * scale;
+        using var pushed = font.Push();
+        var textScale = fontSize / ImGui.GetFontSize();
         var showCastName = ShouldShowCastName();
 
         foreach (var row in rows)
@@ -139,10 +149,7 @@ public sealed unsafe class OptimizedEnemyList : TcModule
                             ? ImGui.ColorConvertFloat4ToU32(new Vector4(1f, 0.45f, 0.4f, 1f))
                             : ImGui.ColorConvertFloat4ToU32(new Vector4(1f, 1f, 1f, 0.9f));
 
-            // 先畫一層深色描邊，讓文字在任何底色上都看得清楚
-            var shadow = ImGui.ColorConvertFloat4ToU32(new Vector4(0f, 0f, 0f, 0.85f));
-            drawList.AddText(ImGui.GetFont(), fontSize, origin + new Vector2(1, 1), shadow, line);
-            drawList.AddText(ImGui.GetFont(), fontSize, origin, color, line);
+            OverlayFont.DrawOutlined(drawList, fontSize, origin, color, line);
         }
     }
 
@@ -420,6 +427,19 @@ public sealed unsafe class OptimizedEnemyList : TcModule
             Config.TextScale = textScale;
             Plugin.Instance.Config.Save();
         }
+
+        if (ImGui.IsItemActive())
+            textScaleActiveFrame = ImGui.GetFrameCount();
+
+        var scaleWithHud = Config.ScaleWithHud;
+        if (ImGui.Checkbox("文字大小跟著敵對列表的介面縮放", ref scaleWithHud))
+        {
+            Config.ScaleWithHud = scaleWithHud;
+            Plugin.Instance.Config.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("勾選後，文字會隨 HUD 配置裡敵對列表的縮放一起放大縮小。\n不勾＝維持原本的字級，只看上面的倍率。");
 
         var anchorRight = Config.AnchorRight;
         if (ImGui.Checkbox("顯示在列的右側（取消＝顯示在左側）", ref anchorRight))
