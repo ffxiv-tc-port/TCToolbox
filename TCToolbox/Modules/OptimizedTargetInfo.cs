@@ -11,8 +11,8 @@ namespace TCToolbox.Modules;
 /// <summary>
 /// 目標情報界面最佳化：在目標／焦點目標情報上疊出實際體力數值與詠唱剩餘秒數，
 /// 並提供一鍵清除焦點目標。
-/// 機制：資料讀 ObjectTable（遊戲已算好的體力與詠唱時間），UI 走 ImGui 疊圖定位在
-/// 對應 addon 的螢幕座標上；零 hook、不注入原生節點、不寫記憶體。
+/// 機制：資料讀 ObjectTable（遊戲已算好的體力與詠唱時間），UI 預設走 ImGui 疊圖定位在
+/// 對應 addon 的螢幕座標上；選用「以原生文字顯示（實驗）」時改掛 KamiToolKit 文字節點。零 hook、不寫記憶體。
 /// ⚠️ 與 DR 原版的差異：DR 另有「放大自身狀態效果」與整組節點外觀改寫，需要原生節點重排，
 /// 本模組只做「顯示既有數值」的子集（見設定說明）。
 /// </summary>
@@ -47,25 +47,162 @@ public sealed unsafe class OptimizedTargetInfo : TcModule
     /// <summary>「文字大小倍率」滑桿最後一次被拖著的幀；拖著時不新建字型。</summary>
     private int textScaleActiveFrame = -100;
 
+    private static readonly NativeTextState NativeHidden = new(string.Empty, Vector2.Zero, 0);
+
+    /// <summary>原生文字的三格（兩個主目標 addon＋焦點）；null＝目前沒用原生文字。只在框架執行緒讀寫。</summary>
+    private NativeTextSlot[]? nativeSlots;
+
+    /// <summary>本次遊戲內原生文字出過錯：不再重試，一律疊圖。</summary>
+    private bool nativeFailed;
+
+    private bool nativeThreadWarned;
+    private bool active;
+
+    private readonly OverlayTextMemo nativeTargetText = new();
+    private readonly OverlayTextMemo nativeFocusText = new();
+
+    public override ModuleNotice? RowNotice =>
+        Config.NativeText && nativeFailed
+            ? new ModuleNotice(ModuleNoticeLevel.Warning, "原生文字無法使用，已改回疊圖",
+                               "本次遊戲內「以原生文字顯示（實驗）」出過錯，已自動改回疊圖顯示；原因寫在 dalamud.log（搜尋 TCToolbox）。")
+            : null;
+
+    // 原生文字不在這裡啟動：插件載入時呼叫 OnEnable 的不是框架執行緒，留給第一次 DrawOverlay（主執行緒）。
     protected override void OnEnable()
     {
+        active = true;
         Svc.PluginInterface.UiBuilder.Draw += DrawOverlay;
     }
 
     protected override void OnDisable()
     {
+        active = false;
         Svc.PluginInterface.UiBuilder.Draw -= DrawOverlay;
         targetText.Forget();
         focusText.Forget();
         targetFont.Dispose();
         focusFont.Dispose();
+
+        if (Svc.Framework.IsInFrameworkUpdateThread)
+            StopNative();
+        else
+            Svc.Framework.RunOnFrameworkThread(() =>
+            {
+                if (!active) StopNative();
+            });
     }
 
     private void DrawOverlay()
     {
+        SyncNative();
         DrawTarget();
         DrawFocusTarget();
     }
+
+    /// <summary>照設定開／關原生文字；出過錯的格子在這裡收掉。</summary>
+    private void SyncNative()
+    {
+        if (nativeSlots != null)
+        {
+            foreach (var slot in nativeSlots)
+            {
+                if (!slot.Faulted) continue;
+                nativeFailed = true;
+                break;
+            }
+        }
+
+        var want = active && Config.NativeText && !nativeFailed;
+        if (want == (nativeSlots != null)) return;
+
+        if (!Svc.Framework.IsInFrameworkUpdateThread)
+        {
+            if (!nativeThreadWarned)
+                Svc.Log.Warning("[OptimizedTargetInfo] 繪製不在框架執行緒上，原生文字不切換，維持疊圖");
+            nativeThreadWarned = true;
+            return;
+        }
+
+        if (want)
+            StartNative();
+        else
+            StopNative();
+    }
+
+    private void StartNative()
+    {
+        if (KamiNative.Ensure() == null)
+        {
+            nativeFailed = true;
+            return;
+        }
+
+        var slots = new List<NativeTextSlot>(3);
+        try
+        {
+            foreach (var name in MainTargetAddons)
+                slots.Add(new NativeTextSlot(name, TargetNativeState));
+            slots.Add(new NativeTextSlot(FocusTargetAddon, FocusNativeState));
+            nativeSlots = slots.ToArray();
+            Svc.Log.Information("[OptimizedTargetInfo] 以原生文字顯示：已啟用");
+        }
+        catch (Exception ex)
+        {
+            foreach (var slot in slots)
+                slot.Dispose();
+            nativeFailed = true;
+            Svc.Log.Warning(ex, "[OptimizedTargetInfo] 以原生文字顯示：啟用失敗，改回疊圖");
+        }
+    }
+
+    private void StopNative()
+    {
+        var slots = nativeSlots;
+        nativeSlots = null;
+        if (slots == null) return;
+
+        foreach (var slot in slots)
+        {
+            try
+            {
+                slot.Dispose();
+            }
+            catch (Exception ex)
+            {
+                Svc.Log.Warning(ex, "[OptimizedTargetInfo] 拆除原生文字時發生例外");
+            }
+        }
+
+        nativeTargetText.Forget();
+        nativeFocusText.Forget();
+        Svc.Log.Information("[OptimizedTargetInfo] 以原生文字顯示：已停用");
+    }
+
+    /// <summary>這個 addon 上的字已經由原生節點畫了（疊圖就不畫）。</summary>
+    private bool NativeShowsOn(AtkUnitBase* addon)
+    {
+        if (nativeSlots == null) return false;
+        foreach (var slot in nativeSlots)
+        {
+            if (!slot.Faulted && slot.IsAttachedTo((nint)addon)) return true;
+        }
+
+        return false;
+    }
+
+    private byte NativeFontSize => (byte)Math.Clamp(Config.NativeFontSize, 8, 64);
+
+    private NativeTextState TargetNativeState() =>
+        Svc.Targets.Target is IBattleChara target
+            ? new NativeTextState(InfoText(target, nativeTargetText),
+                                  new Vector2(Config.TargetOffsetX, Config.TargetOffsetY), NativeFontSize)
+            : NativeHidden;
+
+    private NativeTextState FocusNativeState() =>
+        Svc.Targets.FocusTarget is IBattleChara focus
+            ? new NativeTextState(InfoText(focus, nativeFocusText),
+                                  new Vector2(Config.FocusOffsetX, Config.FocusOffsetY), NativeFontSize)
+            : NativeHidden;
 
     private void DrawTarget()
     {
@@ -80,7 +217,7 @@ public sealed unsafe class OptimizedTargetInfo : TcModule
             break;
         }
 
-        if (addon == null) return;
+        if (addon == null || NativeShowsOn(addon)) return;
 
         var origin = new Vector2(
             addon->GetX() + (Config.TargetOffsetX * addon->Scale),
@@ -98,7 +235,7 @@ public sealed unsafe class OptimizedTargetInfo : TcModule
             addon->GetX() + (Config.FocusOffsetX * addon->Scale),
             addon->GetY() + (Config.FocusOffsetY * addon->Scale));
 
-        if (Svc.Targets.FocusTarget is IBattleChara focus)
+        if (Svc.Targets.FocusTarget is IBattleChara focus && !NativeShowsOn(addon))
             DrawInfoText(focus, origin, focusText, Config.ScaleWithHud ? focusFont : targetFont, addon->Scale);
 
         if (!Config.ShowClearFocusButton) return;
@@ -197,6 +334,33 @@ public sealed unsafe class OptimizedTargetInfo : TcModule
 
     public override void DrawConfig()
     {
+        var nativeText = Config.NativeText;
+        if (ImGui.Checkbox("以原生文字顯示（實驗）", ref nativeText))
+        {
+            Config.NativeText = nativeText;
+            Plugin.Instance.Config.Save();
+        }
+
+        ImGui.SameLine();
+        ImGui.TextDisabled("(?)");
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("文字改由遊戲介面本身繪製：使用遊戲字型與外框，跟著 HUD 配置的縮放與隱藏，\n" +
+                             "會被上層的遊戲視窗蓋住。清除焦點按鈕仍是疊圖。\n" +
+                             "實驗功能：本次遊戲內出過錯就自動改回疊圖，原因寫在 dalamud.log。");
+        }
+
+        if (Config.NativeText)
+        {
+            ImGui.SetNextItemWidth(180f);
+            var nativeFontSize = Config.NativeFontSize;
+            if (ImGui.SliderInt("原生文字大小", ref nativeFontSize, 10, 32))
+            {
+                Config.NativeFontSize = nativeFontSize;
+                Plugin.Instance.Config.Save();
+            }
+        }
+
         var showHp = Config.ShowHp;
         if (ImGui.Checkbox("顯示體力數值", ref showHp))
         {

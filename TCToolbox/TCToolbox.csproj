@@ -19,6 +19,10 @@
         <FileVersion>$(Version)</FileVersion>
     </PropertyGroup>
 
+    <ItemGroup>
+        <ProjectReference Include="..\KamiToolKit\KamiToolKit.csproj" />
+    </ItemGroup>
+
     <Target Name="PersistBuildNumber" AfterTargets="Build">
         <WriteLinesToFile File="$(BuildNumberFile)" Lines="$(BuildNumber)" Overwrite="true" />
     </Target>

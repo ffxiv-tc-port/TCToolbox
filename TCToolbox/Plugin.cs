@@ -352,5 +352,8 @@ public sealed class Plugin : IDalamudPlugin
 
         // 模組啟用失敗時排進來、等登入才印的聊天提示也掛在 Framework.Update 上。
         ModuleFailureNotice.ForceTeardown();
+
+        // 模組都停用（原生節點已拆）之後才釋放 KamiToolKit。
+        KamiNative.ForceTeardown();
     }
 }
