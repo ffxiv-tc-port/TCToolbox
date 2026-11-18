@@ -82,6 +82,7 @@ public sealed unsafe class OptimizedEnemyList : TcModule
     private OptimizedEnemyListConfig Config => Plugin.Instance.Config.EnemyList;
 
     private readonly OverlayFont font = new();
+    private readonly System.Text.StringBuilder lineBuilder = new();
 
     /// <summary>「文字大小倍率」滑桿最後一次被拖著的幀；拖著時不新建字型。</summary>
     private int textScaleActiveFrame = -100;
@@ -210,34 +211,51 @@ public sealed unsafe class OptimizedEnemyList : TcModule
         return line;
     }
 
+    /// <remarks>各段之間兩個空白，與逐段組字串再 <c>string.Join("  ", …)</c> 逐字相同；只在繪製執行緒用。</remarks>
     private string BuildLine(RowInfo row, bool showCastName)
     {
-        var parts = new List<string>(3);
+        var sb = lineBuilder.Clear();
+        var parts = 0;
 
         if (Config.ShowHp && row.MaxHp > 0)
         {
-            parts.Add(Config.CompactNumbers
-                          ? $"{FormatCompact(row.CurrentHp)}/{FormatCompact(row.MaxHp)}"
-                          : $"{row.CurrentHp:N0}/{row.MaxHp:N0}");
+            OverlayTextMemo.NextPart(sb, ref parts);
+            if (Config.CompactNumbers)
+                sb.Append(FormatCompact(row.CurrentHp)).Append('/').Append(FormatCompact(row.MaxHp));
+            else
+                sb.Append($"{row.CurrentHp:N0}/{row.MaxHp:N0}");
         }
 
         if (Config.ShowHpPercent)
-            parts.Add($"{row.RemainingHpPercent}%");
+        {
+            OverlayTextMemo.NextPart(sb, ref parts);
+            sb.Append($"{row.RemainingHpPercent}%");
+        }
 
         if (Config.CastDisplay != CastDisplayMode.Off && row.CastName.Length > 0)
         {
-            var seconds = row.CastRemaining > 0f ? $"{row.CastRemaining:0.0}s" : string.Empty;
+            var casting = row.CastRemaining > 0f;
 
             if (showCastName)
-                parts.Add(seconds.Length > 0 ? $"{row.CastName} {seconds}" : row.CastName);
-            else if (seconds.Length > 0)
-                parts.Add(seconds);
+            {
+                OverlayTextMemo.NextPart(sb, ref parts);
+                sb.Append(row.CastName);
+                if (casting) sb.Append($" {row.CastRemaining:0.0}s");
+            }
+            else if (casting)
+            {
+                OverlayTextMemo.NextPart(sb, ref parts);
+                sb.Append($"{row.CastRemaining:0.0}s");
+            }
         }
 
         if (Config.HighlightTargetingYou && row.TargetingLocalPlayer)
-            parts.Add("◀");
+        {
+            OverlayTextMemo.NextPart(sb, ref parts);
+            sb.Append('◀');
+        }
 
-        return string.Join("  ", parts);
+        return sb.ToString();
     }
 
     /// <summary>中文簡寫（萬／億），台服玩家習慣的表達。</summary>

@@ -36,9 +36,13 @@ internal sealed class OverlayFont : IDisposable
 
         pending?.Dispose();
         pendingScale = scale;
-        pending = Svc.PluginInterface.UiBuilder.FontAtlas.NewDelegateFontHandle(
-            e => e.OnPreBuild(tk => tk.AddDalamudDefaultFont(-scale)));
+        pending = NewHandle(scale);
     }
+
+    // 另開方法：參數被 lambda 捕獲時閉包在方法入口就配置，放在 Request 裡會變成每幀每個疊圖都配一次。
+    private static IFontHandle NewHandle(float scale) =>
+        Svc.PluginInterface.UiBuilder.FontAtlas.NewDelegateFontHandle(
+            e => e.OnPreBuild(tk => tk.AddDalamudDefaultFont(-scale)));
 
     /// <summary>推入已建好的字；還沒建好回 <see langword="null"/>（照用目前字型）。</summary>
     public IDisposable? Push() => current is { Available: true } handle ? handle.Push() : null;

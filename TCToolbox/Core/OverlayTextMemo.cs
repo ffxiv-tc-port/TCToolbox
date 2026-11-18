@@ -52,4 +52,10 @@ internal sealed class OverlayTextMemo
     }
 
     public void Forget() => text = null;
+
+    /// <summary>開始下一段：不是第一段就先補段落間的兩個空白（＝<c>string.Join("  ", 各段)</c>）。</summary>
+    public static void NextPart(System.Text.StringBuilder sb, ref int parts)
+    {
+        if (parts++ > 0) sb.Append("  ");
+    }
 }

@@ -123,6 +123,7 @@ public sealed class AutoCountPlayers : TcModule
     private readonly string[] dtrTooltipJobs = new string[DtrPreviewCount];
     private readonly string[] dtrTooltipNames = new string[DtrPreviewCount];
     private readonly string[] dtrTooltipWorlds = new string[DtrPreviewCount];
+    private readonly StringBuilder dtrTooltipBuilder = new();
 
     /// <summary>
     /// 職業圖示 ID ＝ <c>62100 + ClassJob 列號</c>。
@@ -297,9 +298,16 @@ public sealed class AutoCountPlayers : TcModule
             if (DtrTooltipIsCurrent()) return;
             RememberDtrTooltipInputs();
 
-            var sb = new StringBuilder();
-            foreach (var p in players.Take(DtrPreviewCount))
-                sb.AppendLine($"[{p.Job}] {p.Name}{(string.IsNullOrEmpty(p.World) ? "" : $" @ {p.World}")}");
+            var sb = dtrTooltipBuilder.Clear();
+            var shown = Math.Min(players.Count, DtrPreviewCount);
+            for (var i = 0; i < shown; i++)
+            {
+                var p = players[i];
+                sb.Append('[').Append(p.Job).Append("] ").Append(p.Name);
+                if (!string.IsNullOrEmpty(p.World)) sb.Append(" @ ").Append(p.World);
+                sb.AppendLine();
+            }
+
             if (players.Count > DtrPreviewCount)
                 sb.AppendLine($"…等共 {players.Count} 人");
             sb.Append("左鍵：開啟／關閉周邊玩家清單\n右鍵：開啟／關閉 TC Toolbox 設定");

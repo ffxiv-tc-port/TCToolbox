@@ -38,6 +38,7 @@ public sealed unsafe class OptimizedTargetInfo : TcModule
 
     private readonly OverlayTextMemo targetText = new();
     private readonly OverlayTextMemo focusText = new();
+    private readonly System.Text.StringBuilder textBuilder = new();
 
     private readonly OverlayFont targetFont = new();
 
@@ -299,22 +300,31 @@ public sealed unsafe class OptimizedTargetInfo : TcModule
         if (reusable && memo.TryGet(options, hp, maxHp, 0, string.Empty, seconds[..secondsLength], out var cached))
             return cached;
 
-        var parts = new List<string>(3);
+        var sb = textBuilder.Clear();
+        var parts = 0;
 
         if (showHp && maxHp > 0)
         {
-            parts.Add(compact
-                          ? $"{FormatCompact(hp)}/{FormatCompact(maxHp)}"
-                          : $"{hp:N0}/{maxHp:N0}");
+            OverlayTextMemo.NextPart(sb, ref parts);
+            if (compact)
+                sb.Append(FormatCompact(hp)).Append('/').Append(FormatCompact(maxHp));
+            else
+                sb.Append($"{hp:N0}/{maxHp:N0}");
         }
 
         if (showPercent && maxHp > 0)
-            parts.Add($"{hp * 100f / maxHp:0.#}%");
+        {
+            OverlayTextMemo.NextPart(sb, ref parts);
+            sb.Append($"{hp * 100f / maxHp:0.#}%");
+        }
 
         if (casting)
-            parts.Add($"{remaining:0.0}s");
+        {
+            OverlayTextMemo.NextPart(sb, ref parts);
+            sb.Append($"{remaining:0.0}s");
+        }
 
-        var text = parts.Count == 0 ? string.Empty : string.Join("  ", parts);
+        var text = parts == 0 ? string.Empty : sb.ToString();
 
         if (reusable)
             memo.Store(options, hp, maxHp, 0, string.Empty, seconds[..secondsLength], text);

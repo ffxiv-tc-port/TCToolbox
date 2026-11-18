@@ -226,24 +226,25 @@ internal static class DailyDutyIpc
 
     private static bool TryGetNames(Lazy<ICallGateSubscriber<List<string>>> gate, string endpoint, out List<string> names)
     {
-        names = [];
-
+        // 空清單只在問不到時才配：問得到是每輪輪詢的常態，先配一份再換掉＝每次白配。
         try
         {
-            if (gate.Value.InvokeFunc() is not { } result) return false;
-
-            names = result;
-            return true;
+            if (gate.Value.InvokeFunc() is { } result)
+            {
+                names = result;
+                return true;
+            }
         }
         catch (IpcError)
         {
-            return false;
         }
         catch (Exception ex)
         {
             LogUnexpected(endpoint, ex);
-            return false;
         }
+
+        names = [];
+        return false;
     }
 
     private static void LogUnexpected(string endpoint, Exception ex)

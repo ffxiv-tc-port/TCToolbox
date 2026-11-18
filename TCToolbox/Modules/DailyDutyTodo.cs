@@ -112,6 +112,9 @@ public sealed class DailyDutyTodo : TcModule
     /// <summary>有啟用、但 DailyDuty 不知道狀態的任務。對方第 2 版或端點問不到時恆為空。</summary>
     private readonly List<TodoEntry> unknownEntries = [];
 
+    /// <summary>此刻畫得出「帶我去」的任務名；每輪輪詢整份重填，只在 <see cref="Refresh"/> 內用。</summary>
+    private readonly HashSet<string> travelSet = new(StringComparer.OrdinalIgnoreCase);
+
     private bool travelRunning;
     private bool someoneElseMoving;
     private string mover = string.Empty;
@@ -459,7 +462,8 @@ public sealed class DailyDutyTodo : TcModule
 
         // 目的地清單問不到時當成全都沒有目的地：只少了按鈕，清單本身照畫。
         DailyDutyIpc.TryGetTravelModules(out var travelNames);
-        var travelSet = new HashSet<string>(travelNames, StringComparer.OrdinalIgnoreCase);
+        travelSet.Clear();
+        foreach (var name in travelNames) travelSet.Add(name);
 
         entries.Clear();
         foreach (var name in incomplete)
