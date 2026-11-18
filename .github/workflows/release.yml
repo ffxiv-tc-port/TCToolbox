@@ -11,6 +11,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - name: Install .NET
         uses: actions/setup-dotnet@v5
         with:
@@ -44,8 +46,8 @@ jobs:
       - name: Rename artifact to TCToolbox.zip
         shell: pwsh
         run: |
-          $zip = Get-ChildItem -Path . -Recurse -Filter latest.zip | Select-Object -First 1
-          Copy-Item $zip.FullName -Destination "TCToolbox.zip"
+          # 明確路徑，不做遞迴搜尋：子模組也會被 checkout，遞迴搜尋可能取到別的 latest.zip。
+          Copy-Item "./TCToolbox/bin/Release/TCToolbox/latest.zip" -Destination "TCToolbox.zip"
       - name: 帳號痕跡閘門（上傳前；needle 由 secret 提供，讀不到就不放行）
         shell: pwsh
         env:
