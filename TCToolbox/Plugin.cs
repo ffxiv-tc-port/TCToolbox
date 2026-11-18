@@ -131,6 +131,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoCrafterGathererManual());
         Modules.Add(new ARSwitcher());
         Modules.Add(new ExpertDeliveryUnlock());
+        Modules.Add(new SquadronRoutine());
 
         // ④ 介面 · 雜項
         Modules.Add(new AutoHideBanners());

@@ -133,6 +133,7 @@ public sealed partial class Configuration : IPluginConfiguration
     public CraftShoppingListConfig CraftShoppingList { get; set; } = new();
     public PluginUpdateNoticeConfig PluginUpdateNotice { get; set; } = new();
     public DailyDutyTodoConfig DailyDutyTodo { get; set; } = new();
+    public SquadronRoutineConfig SquadronRoutine { get; set; } = new();
     public AutoFCWSDeliverConfig FcwsDeliver { get; set; } = new();
     public FcActionAutoUseConfig FcActionAutoUse { get; set; } = new();
     public NearbyInteractablesConfig NearbyInteractables { get; set; } = new();
