@@ -13,6 +13,12 @@ public sealed class DailyDutyTodoConfig
     /// <summary>「帶我去」（與「交給 GBR 採一張」）要按兩次才真的送出。</summary>
     public bool ConfirmTravel { get; set; } = true;
 
+    /// <summary>
+    /// 在這裡按的「帶我去」途中，使用者一手動移動就叫 DailyDuty 取消那一趟（不讓它停手後把人拉回去）。
+    /// 只看 vnavmesh 的讓位訊號；在 DailyDuty 自己介面按的行程不受影響。
+    /// </summary>
+    public bool CancelTravelOnManualMove { get; set; } = true;
+
     /// <summary>「交給 GBR 採一張」要採的寶物地圖道具 id；0＝還沒選（按鈕停用）。</summary>
     public uint TreasureMapItemId { get; set; }
 }

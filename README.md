@@ -132,6 +132,6 @@
 - **附近的寶箱與風脈泉顯示到小地圖**：把在場的寶箱與還沒共鳴的風脈泉畫成小地圖圓點（需要 Mini-Mappingway）
 - **換 World 與副本區**：一個面板看目前 World 與副本區，一鍵跨界傳送、換副本區、回旅店／自宅，附本 DC 各世界最低價摘要；全部手動按、透過 Lifestream 執行（`/tcworld`）
 - **台服插件可更新提示**：伺服器資訊列顯示台服插件庫有新版的插件數，滑鼠移上列出版本，點一下開插件安裝器（不自動下載安裝）
-- **DailyDuty 未完成任務清單**：列出 DailyDuty 追蹤中還沒做完的任務，有目的地的附「帶我去」（按下才出發）；資訊列顯示剩幾項（需要 DailyDuty；`/tcdaily`）
+- **DailyDuty 未完成任務清單**：列出 DailyDuty 追蹤中還沒做完的任務，有目的地的附「帶我去」（按下才出發；途中同一顆按鈕變「停止」，或輸入 `/tcdaily stop`，走路時手動移動也會停下）；資訊列顯示剩幾項（需要 DailyDuty；`/tcdaily`）
 - **誰在控制：跑完了叫我**：背景偵測導航或 AutoRetainer 的工作跑完時在聊天欄說一聲，有裝塔塔露誇獎的話順便念一句（唯讀）
 - **全艦隊急停**：一顆熱鍵或 `/tcstopall` 把 vnavmesh／Lifestream／AutoDuty／Questionable／BOCCHI／HoardFarm／DailyDuty 帶我去／visland／Chilled Leves／Explorer's Icebox／Eureka Helper／Saucy／LatihasChocobo／BossmodReborn AI／WrathCombo／Marketbuddy／AutoRetainer／Artisan／GatherBuddy Reborn／AutoHook／ICE／SomethingNeedDoing／LazyLoot／Logogram Helper 一次叫停，逐項顯示成功／失敗／未安裝

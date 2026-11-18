@@ -65,6 +65,9 @@ internal static class ExternalNav
     private static readonly Lazy<ICallGateSubscriber<bool>> VnavPathfindInProgress =
         new(() => Svc.PluginInterface.GetIpcSubscriber<bool>("vnavmesh.SimpleMove.PathfindInProgress"));
 
+    private static readonly Lazy<ICallGateSubscriber<bool>> VnavPathIsYieldingToInput =
+        new(() => Svc.PluginInterface.GetIpcSubscriber<bool>("vnavmesh.Path.IsYieldingToInput"));
+
     // 📌 vnavmesh 端註冊成 RegisterFunc("Query.Mesh.PointOnFloor",
     //    (Vector3 p, bool allowUnlandable, float halfExtentXZ) => ...FindPointOnFloor(p, halfExtentXZ))
     //    （vnavmesh/IPCProvider.cs）。回傳是 Vector3?——查不到落點時是 null，不是 Vector3.Zero，
@@ -199,6 +202,12 @@ internal static class ExternalNav
             return false;
         }
     }
+
+    /// <summary>
+    /// vnavmesh 此刻是不是因為使用者手動移動而暫停跟隨路徑（某個租約要求了「手動移動時讓位」）。
+    /// 舊版沒有這個端點、沒裝、或提供端擲例外一律回 <see langword="false"/>。
+    /// </summary>
+    public static bool IsVnavmeshYieldingToInput() => QueryState(VnavPathIsYieldingToInput) == ControlState.Active;
 
     /// <summary>取消 vnavmesh 還在背景計算的尋路（<c>Path.Stop</c> 清不到算到一半、算完才開走的那條）。</summary>
     /// <returns>IPC 是否送達（false＝vnavmesh 未安裝／未載入）。</returns>

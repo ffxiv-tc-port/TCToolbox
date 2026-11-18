@@ -21,7 +21,7 @@ namespace TCToolbox.Modules;
 /// 有目的地的附「帶我去」，行程中可以取消；寶物地圖另附「交給 GBR 採一張」。
 /// </summary>
 /// <remarks>
-/// 🔴 「帶我去」「交給 GBR 採一張」與「取消」只在使用者按下按鈕的那一次送出：按鈕只設待送欄位，
+/// 🔴 「帶我去」「交給 GBR 採一張」與「停止」只在使用者按下按鈕（或手動移動、輸入停止指令）的那一次送出：只設待送欄位，
 /// 下一次 <c>Framework.Update</c> 送一次就清掉。不輪詢、不重試、清單變動時不自動接續下一項。
 /// 🔴 本檔欄位只在遊戲主執行緒讀寫（<c>Framework.Update</c> 與 ImGui 的 Draw）；
 /// IPC 只在 <c>Framework.Update</c> 打，Draw 路徑只讀算好的欄位。
@@ -46,6 +46,11 @@ public sealed class DailyDutyTodo : TcModule
     private const string UnknownStatusTooltip =
         "DailyDuty 不知道這一項的狀態（例如沒有勾選要追蹤的項目），所以沒有算進未完成的數量。\n"
         + "請到 DailyDuty 裡這一項的「模組設定」確認；不想追蹤的話，在 DailyDuty 把這一項關掉就不會再列出來。";
+
+    private const string StopTooltip =
+        "叫 DailyDuty 取消目前的行程與還沒執行的出發請求（不論是誰發起的）。\n"
+        + "只停不啟，按錯了也不會讓角色去任何地方。\n"
+        + $"清單視窗關著時可以輸入 {Command} stop；從這裡按的「帶我去」，走路途中你一手動移動也會自動停下（設定可關）。";
 
     /// <summary>DailyDuty 寶物地圖模組的內部名稱（<c>ModuleName.TreasureMap</c>）。</summary>
     private const string TreasureMapModule = "TreasureMap";
@@ -81,7 +86,7 @@ public sealed class DailyDutyTodo : TcModule
 
     public override string Description =>
         "列出 DailyDuty 追蹤中、今天／本週還沒做完的任務（名稱跟著 DailyDuty 的介面語言），"
-        + "有目的地的附「帶我去」：按下去才交給 DailyDuty 出發，行程中可以按「取消」。"
+        + $"有目的地的附「帶我去」：按下去才交給 DailyDuty 出發，途中同一顆按鈕變成「停止」（或輸入 {Command} stop），走路時手動移動也會停下。"
         + "伺服器資訊列顯示還剩幾項，點一下開清單。需要另外安裝 DailyDuty（狀態介面第 2 版以上）。"
         + "DailyDuty 不知道狀態的任務（例如沒有勾選要追蹤的項目）另外列成「未知」（狀態介面第 3 版起）。"
         + "寶物地圖那一列另有「交給 GBR 採一張」：按下去才交給 GatherBuddy Reborn 照它自己的自動採集去採（需要它的狀態介面第 5 版以上，要採哪一種在這裡的設定選）。"
@@ -123,6 +128,12 @@ public sealed class DailyDutyTodo : TcModule
     private string pendingTravel = string.Empty;
 
     private bool pendingCancel;
+
+    /// <summary>下一幀送取消時寫進記錄的「誰要求的」；只在 <see cref="pendingCancel"/> 為真時有意義。</summary>
+    private string pendingCancelBy = string.Empty;
+
+    /// <summary>在這裡按的那一趟「帶我去」（顯示停止鈕、手動移動時取消、開始與結束的記錄）。</summary>
+    private readonly DailyDutyTripWatch trip = new();
 
     /// <summary>下一幀要交給 GBR 的寶物地圖道具 id；0＝沒有。</summary>
     private uint pendingMapGather;
@@ -179,7 +190,7 @@ public sealed class DailyDutyTodo : TcModule
     {
         Svc.Commands.AddHandler(Command, new CommandInfo(OnCommand)
         {
-            HelpMessage = "開啟「DailyDuty 未完成任務清單」",
+            HelpMessage = $"開啟「DailyDuty 未完成任務清單」；{Command} stop 停止 DailyDuty 正在帶的路",
         });
 
         window = new DailyDutyTodoWindow(this);
@@ -227,6 +238,8 @@ public sealed class DailyDutyTodo : TcModule
         mover = string.Empty;
         pendingTravel = string.Empty;
         pendingCancel = false;
+        pendingCancelBy = string.Empty;
+        trip.Clear();
         pendingMapGather = 0;
         gbrVersion = 0;
         mapChoices.Clear();
@@ -243,7 +256,24 @@ public sealed class DailyDutyTodo : TcModule
         dtrInputUnknown.Clear();
     }
 
-    private void OnCommand(string command, string arguments) => OpenWindow();
+    private void OnCommand(string command, string arguments)
+    {
+        var arg = arguments.Trim();
+        if (arg.Equals("stop", StringComparison.OrdinalIgnoreCase) || arg == "停止")
+        {
+            RequestCancel($"使用者輸入 {Command} stop");
+            return;
+        }
+
+        OpenWindow();
+    }
+
+    /// <summary>使用者要停：下一幀送一次取消。按鈕與指令共用。</summary>
+    private void RequestCancel(string by)
+    {
+        pendingCancel = true;
+        pendingCancelBy = by;
+    }
 
     private const string DtrClickHelp = "\n\n左鍵：開啟／關閉未完成任務清單\n右鍵：開啟／關閉 TC Toolbox 設定";
 
@@ -258,9 +288,11 @@ public sealed class DailyDutyTodo : TcModule
         // 🔴 使用者按下去的那一次一定要送出，不受輪詢節奏與視窗開不開影響。
         FlushPending();
 
-        // 行程旗標可以每幀問：「取消」按鈕要跟得上 DailyDuty 真的出發或抵達的那一刻。
+        // 行程旗標可以每幀問：「停止」按鈕要跟得上 DailyDuty 真的出發或抵達的那一刻。
         if (availability == Availability.Ready)
             travelRunning = DailyDutyIpc.IsTravelRunning() ?? false;
+
+        WatchOwnTrip();
 
         var now = Environment.TickCount64;
         if (now - lastPollTick < PollIntervalMs) return;
@@ -271,7 +303,7 @@ public sealed class DailyDutyTodo : TcModule
         UpdateDtr();
     }
 
-    /// <summary>把使用者按下的「取消」或「帶我去」送出去，每一個按下各送一次。</summary>
+    /// <summary>把使用者按下的「停止」或「帶我去」送出去，每一個按下各送一次。</summary>
     /// <remarks>同一幀兩個都有時取消贏（與 DailyDuty 端的語意一致）：出發請求直接丟掉。</remarks>
     private void FlushPending()
     {
@@ -280,7 +312,8 @@ public sealed class DailyDutyTodo : TcModule
             pendingCancel = false;
             pendingTravel = string.Empty;
             pendingMapGather = 0;
-            SendCancel();
+            SendCancel(pendingCancelBy.Length != 0 ? pendingCancelBy : "使用者按下取消");
+            pendingCancelBy = string.Empty;
         }
 
         if (pendingMapGather != 0)
@@ -309,10 +342,12 @@ public sealed class DailyDutyTodo : TcModule
         }
 
         var accepted = code == DailyDutyIpc.TravelRequested;
+        if (accepted) trip.NoteIssued(name, Environment.TickCount64);
+
         Report(
             accepted,
             accepted
-                ? $"已交給 DailyDuty 前往「{shown}」；沒有出發的話，原因會印在聊天視窗。"
+                ? $"已交給 DailyDuty 前往「{shown}」；要中途停下，按這一列的「停止」或輸入 {Command} stop。沒有出發的話，原因會印在聊天視窗。"
                 : $"DailyDuty 沒有接下「{shown}」：{DailyDutyIpc.DescribeTravelCode(code)}。");
 
         // 使用者回報用的定錨點：按了沒反應時，只有這一行分得出是誰沒接。
@@ -320,19 +355,62 @@ public sealed class DailyDutyTodo : TcModule
             $"[DailyDutyTodo] 使用者按下帶我去：{shown}（{name}），DailyDuty 回 {code}（{DailyDutyIpc.DescribeTravelCode(code)}）。");
     }
 
-    private void SendCancel()
+    /// <param name="by">記錄裡的「誰要求的」，例：使用者按下取消。</param>
+    /// <param name="reportOk">成功時畫面上顯示的那一句；空字串＝用通用的說法。</param>
+    private void SendCancel(string by, string reportOk = "")
     {
+        trip.NoteCancelRequested();
+
         if (!DailyDutyIpc.TryCancelTravel(out var hadSomething, out var error))
         {
             var why = error.Length != 0 ? error : "DailyDuty 未載入或版本不足";
             Report(false, $"呼叫失敗（{why}），沒有取消任何東西。");
-            Svc.Log.Information($"[DailyDutyTodo] 使用者按下取消，呼叫失敗（{why}）。");
+            Svc.Log.Information($"[DailyDutyTodo] {by}，呼叫失敗（{why}）。");
             return;
         }
 
-        Report(true, hadSomething ? "已要求 DailyDuty 取消目前的行程。" : "DailyDuty 回報現在沒有行程可以取消。");
+        Report(true, !hadSomething ? "DailyDuty 回報現在沒有行程可以取消。"
+            : reportOk.Length != 0 ? reportOk : "已要求 DailyDuty 取消目前的行程。");
         Svc.Log.Information(
-            $"[DailyDutyTodo] 使用者按下取消，DailyDuty 回 {hadSomething}（{(hadSomething ? "有東西可以取消" : "沒有東西可以取消")}）。");
+            $"[DailyDutyTodo] {by}，DailyDuty 回 {hadSomething}（{(hadSomething ? "有東西可以取消" : "沒有東西可以取消")}）。");
+    }
+
+    /// <summary>每幀：追蹤在這裡按的那一趟；使用者手動移動就取消，開始與結束各記一行。</summary>
+    private void WatchOwnTrip()
+    {
+        if (!trip.IsTracking) return;
+
+        var now = Environment.TickCount64;
+        var cancelOnMove = Config.CancelTravelOnManualMove;
+
+        // 讓位訊號只在自己那一趟正在跑、還沒要求取消時才問：平時零 IPC。
+        var steering = travelRunning && cancelOnMove && !trip.CancelRequested && ExternalNav.IsVnavmeshYieldingToInput();
+        var name = trip.Name;
+        var ranMs = trip.RunningMs(now);
+        var cancelled = trip.CancelRequested;
+
+        switch (trip.Observe(travelRunning, steering, cancelOnMove, now))
+        {
+            case DailyDutyTripEvent.Started:
+                Svc.Log.Information($"[DailyDutyTodo] DailyDuty 開始帶路：{FindDisplayName(name)}（{name}）。");
+                break;
+            case DailyDutyTripEvent.CancelForManualMove:
+                var shown = FindDisplayName(name);
+                SendCancel(
+                    $"偵測到手動移動（vnavmesh 讓位中），取消帶我去：{shown}（{name}）",
+                    $"偵測到你手動移動，已叫 DailyDuty 停止前往「{shown}」，不會再把你拉回去。");
+                break;
+            case DailyDutyTripEvent.Ended:
+                if (!cancelled) Report(true, $"DailyDuty 帶路結束：「{FindDisplayName(name)}」（抵達，或它自己停下；原因看聊天視窗）。");
+                Svc.Log.Information(
+                    $"[DailyDutyTodo] 帶我去結束：{FindDisplayName(name)}（{name}），帶路 {ranMs / 1000.0:F1} 秒，"
+                    + (cancelled ? "途中有人要求取消。" : "沒有人要求取消（抵達，或 DailyDuty 自己停下，原因看聊天視窗）。"));
+                break;
+            case DailyDutyTripEvent.NeverStarted:
+                Svc.Log.Information(
+                    $"[DailyDutyTodo] 帶我去送出後 {DailyDutyTripWatch.StartGraceMs / 1000} 秒都沒看到 DailyDuty 在帶路：{FindDisplayName(name)}（{name}），不再追蹤。");
+                break;
+        }
     }
 
     private void SendMapGather(uint itemId)
@@ -760,8 +838,25 @@ public sealed class DailyDutyTodo : TcModule
         {
             ImGui.SetTooltip(
                 "預設開啟。清單每一列都有一顆「帶我去」，彼此只隔幾個像素，\n"
-                + "而按錯的代價是角色被傳送到別的地方去。「取消」永遠是按一次就生效。\n"
+                + "而按錯的代價是角色被傳送到別的地方去。「停止」永遠是按一次就生效。\n"
                 + "寶物地圖那一列的「交給 GBR 採一張」也照這一格。");
+        }
+
+        var cancelOnMove = Config.CancelTravelOnManualMove;
+        if (ImGui.Checkbox("「帶我去」途中手動移動就停止", ref cancelOnMove))
+        {
+            Config.CancelTravelOnManualMove = cancelOnMove;
+            Plugin.Instance.Config.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(
+                "預設開啟。從這裡按的「帶我去」在走路途中，你一動方向鍵／搖桿，就叫 DailyDuty 取消這一趟，\n"
+                + "角色交還給你，不會在你停手後又被拉回目的地。\n"
+                + "關掉＝照 DailyDuty 自己的「手動操作時讓位」：停手一秒後接著走。\n"
+                + "靠 vnavmesh 的「讓位」訊號判斷：DailyDuty 的讓位選項或 vnavmesh 的「偵測到移動輸入就取消路徑」關著時不會觸發。\n"
+                + "傳送詠唱中移動會被遊戲自己打斷，不歸這一格管；在 DailyDuty 自己介面按的行程也不受影響。");
         }
 
         ImGui.SameLine();
@@ -798,19 +893,17 @@ public sealed class DailyDutyTodo : TcModule
 
     private void DrawTravelStatus()
     {
-        if (travelRunning)
+        if (travelRunning || trip.IsTracking)
         {
-            ImGui.TextColored(WarnColor, "DailyDuty 正在帶路。");
+            ImGui.TextColored(WarnColor, trip.IsTracking
+                ? $"DailyDuty 正在帶你去「{FindDisplayName(trip.Name)}」。"
+                : "DailyDuty 正在帶路（不是從這裡按的）。");
             ImGui.SameLine();
-            if (ImGui.SmallButton("取消##DailyDutyTodoCancel"))
-                pendingCancel = true;
+            if (ImGui.SmallButton("停止##DailyDutyTodoCancel"))
+                RequestCancel("使用者按下取消");
 
             if (ImGui.IsItemHovered())
-            {
-                ImGui.SetTooltip(
-                    "叫 DailyDuty 取消目前的行程與還沒執行的出發請求（不論是誰發起的）。\n"
-                    + "只停不啟，按錯了也不會讓角色去任何地方。");
-            }
+                ImGui.SetTooltip(StopTooltip);
         }
         else if (someoneElseMoving)
         {
@@ -908,6 +1001,18 @@ public sealed class DailyDutyTodo : TcModule
         if (!statusUnknown && string.Equals(entry.Name, TreasureMapModule, StringComparison.OrdinalIgnoreCase))
             DrawMapGatherButton();
 
+        // 正在帶的這一列：同一顆按鈕換成「停止」，按一次就送（停止不必確認）。
+        if (trip.IsTracking && string.Equals(trip.Name, entry.Name, StringComparison.OrdinalIgnoreCase))
+        {
+            ImGui.SameLine();
+            if (ImGui.SmallButton("停止###go"))
+                RequestCancel("使用者按下這一列的停止");
+
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip(StopTooltip);
+            return;
+        }
+
         if (!entry.CanTravel) return;
 
         var blocked = travelRunning || someoneElseMoving || pendingTravel.Length != 0 || pendingMapGather != 0;
@@ -954,7 +1059,7 @@ public sealed class DailyDutyTodo : TcModule
         if (!mapListKnown) return "還在向 GatherBuddy Reborn 詢問可以採哪些寶物地圖…";
         if (chosen == 0) return "還沒選要採哪一種寶物地圖：到 TC Toolbox 設定的「DailyDuty 未完成任務清單」選一種。";
         if (!IsMapChoice(chosen)) return $"選的地圖（道具 {chosen}）GatherBuddy Reborn 找不到採集點，請重新選一種。";
-        if (travelRunning) return "DailyDuty 正在帶路，先按上面的「取消」或等它到。";
+        if (travelRunning) return "DailyDuty 正在帶路，先按上面的「停止」或等它到。";
         if (someoneElseMoving) return $"「{mover}」正在移動角色，先讓它停下來。";
         if (pendingMapGather != 0 || pendingTravel.Length != 0) return "上一個請求還沒送出。";
         return string.Empty;
@@ -1035,7 +1140,7 @@ public sealed class DailyDutyTodo : TcModule
 
     private string BuildTravelTooltip(TodoEntry entry, bool armed)
     {
-        if (travelRunning) return "DailyDuty 已經在帶路了，先按上面的「取消」或等它到。";
+        if (travelRunning) return "DailyDuty 已經在帶路了，先按上面的「停止」或等它到。";
         if (someoneElseMoving) return $"「{mover}」正在移動角色，先讓它停下來。";
 
         var text = $"交給 DailyDuty 前往「{Label(entry)}」。按一次只送一次；出發不了的話，原因會印在聊天視窗。";
@@ -1065,7 +1170,7 @@ public sealed class DailyDutyTodo : TcModule
     {
         ImGui.Spacing();
         ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
-        ImGui.TextDisabled("「帶我去」由 DailyDuty 執行：按一次送一次，不會自己接著去下一項。");
+        ImGui.TextDisabled($"「帶我去」由 DailyDuty 執行：按一次送一次，不會自己接著去下一項。途中要停：按那一列的「停止」、輸入 {Command} stop，或直接手動移動。");
         ImGui.PopTextWrapPos();
     }
 }
