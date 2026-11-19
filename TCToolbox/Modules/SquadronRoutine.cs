@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Numerics;
 using System.Text;
@@ -158,11 +159,38 @@ public sealed unsafe class SquadronRoutine : TcModule
 
     private (ulong Cid, string Mission, DateTime SeenUtc)? pendingStart;
 
+    #region 只讀診斷的狀態（只在框架執行緒讀寫）
+
+    private const string MemberListAddon = "GcArmyMemberList";
+    private const long DiagPollMs = 200;
+    private const int DiagMaxFailures = 5;
+    private static readonly TimeSpan TrainingRefMaxAge = TimeSpan.FromMinutes(30);
+
+    private SquadronTables diagTables = new();
+    private readonly Dictionary<uint, string> diagClassNames = [];
+    private readonly SquadronDiagGate expeditionGate = new(10);
+    private readonly SquadronDiagGate memberGate = new(8);
+    private readonly SquadronDiagGate trainingGate = new(3);
+    private readonly SquadronDiagBudget diagBudget = new();
+    private readonly Stopwatch diagClock = Stopwatch.StartNew();
+    private readonly SquadronCell[] diagCells = new SquadronCell[SquadronDiag.MaxCells];
+    private long nextDiagPollMs;
+    private int? expeditionFirstFrameMission;
+    private HashSet<int>? expeditionVariants;
+    private string expeditionLastRuns = string.Empty;
+    private readonly Dictionary<ulong, ((int P, int M, int T) Value, DateTime Utc)> naTraining = [];
+    private readonly Dictionary<ulong, ((int P, int M, int T) Value, DateTime Utc)> windowTraining = [];
+    private int diagFailures;
+    private bool diagDisabled;
+
+    #endregion
+
     private SquadronRoutineConfig Config => Plugin.Instance.Config.SquadronRoutine;
 
     protected override void OnEnable()
     {
         LoadAnchors();
+        LoadDiagTables();
         NavStop.Acquire();
         queue.OnTimeout = step => EndRun($"步驟「{step}」逾時，已停手", false, true);
         Svc.Framework.Update += OnUpdate;
@@ -183,6 +211,7 @@ public sealed unsafe class SquadronRoutine : TcModule
         stopRequest = false;
         yesnoRetryUntil = null;
         pendingStart = null;
+        CloseDiagGates();
     }
 
     public override string? StopForFleetEmergency()
@@ -312,6 +341,7 @@ public sealed unsafe class SquadronRoutine : TcModule
 
         RetryYesnoRead();
         RefreshAvailability();
+        RunDiagnostics();
     }
 
     /// <summary>設定畫面開著才更新按鈕狀態（要打好幾支 IPC，不在畫面關著時白問）。</summary>
@@ -799,6 +829,298 @@ public sealed unsafe class SquadronRoutine : TcModule
                 Svc.Log.Information($"[{InternalName}] 處理聊天訊息時發生例外（已忽略）：{ex.Message}");
         }
     }
+
+    #endregion
+
+    #region 只讀診斷（分隊任務清單／編組名單／訓練窗）
+
+    // 只讀：不送 callback、不掛 hook、不碰 AddonPressGuard。每次讀都在同一幀重新取窗並確認 ready，
+    // 不跨幀保存任何原生指標；格數、型別、NumberArray Size 都先檢查，不符就只記一行。
+    // 用途：把設計裡靜態推導、執行期沒驗過的版面與公式，在使用者照常操作時寫成「符合／不符」。
+
+    private void LoadDiagTables()
+    {
+        try
+        {
+            diagTables = SquadronTableLoader.Build(
+                Svc.Data.GetExcelSheet<GcArmyExpedition>(), Svc.Data.GetExcelSheet<GcArmyMemberGrow>());
+            diagClassNames.Clear();
+            foreach (var cj in diagTables.Grow.Keys)
+            {
+                var name = Svc.Data.GetExcelSheet<ClassJob>().GetRowOrDefault(cj)?.Name.ExtractText();
+                diagClassNames[cj] = string.IsNullOrEmpty(name) ? $"職業{cj}" : name;
+            }
+        }
+        catch (Exception ex)
+        {
+            diagTables = new SquadronTables();
+            Svc.Log.Information($"[{InternalName}] 分隊診斷：讀不到分隊相關的表（{ex.Message}），只記原始值、不比對公式。");
+        }
+
+        var csIndex = (int)NumberArrayType.GcArmyExpedition;
+        Svc.Log.Information(
+            $"[{InternalName}] 分隊診斷：表 任務 {diagTables.Missions.Count} 筆、成長表 {diagTables.Grow.Count} 職業；" +
+            $"NumberArray 用 {SquadronDiag.ExpeditionNumberArray}（CS 列舉值 {csIndex}{(csIndex == SquadronDiag.ExpeditionNumberArray ? "，一致" : "，不一致，以遊戲碼的 113 為準")}）。");
+    }
+
+    private string DiagClassName(uint classJob) =>
+        diagClassNames.TryGetValue(classJob, out var name) ? name : $"職業{classJob}";
+
+    private void CloseDiagGates()
+    {
+        expeditionGate.MarkClosed();
+        memberGate.MarkClosed();
+        trainingGate.MarkClosed();
+    }
+
+    /// <summary>同插件所有 Update 處理器共用一個 try/catch，所以這裡自己全包、不往外擲。</summary>
+    private void RunDiagnostics()
+    {
+        if (diagDisabled) return;
+
+        try
+        {
+            DiagnosticsTick();
+        }
+        catch (Exception ex)
+        {
+            if (++diagFailures >= DiagMaxFailures)
+            {
+                diagDisabled = true;
+                Svc.Log.Information($"[{InternalName}] 分隊診斷發生例外 {diagFailures} 次，本次載入不再記錄：{ex}");
+            }
+            else if (Throttle.Pass($"{InternalName}-Diag", 60_000))
+            {
+                Svc.Log.Information($"[{InternalName}] 分隊診斷發生例外（已忽略，第 {diagFailures} 次）：{ex.Message}");
+            }
+        }
+    }
+
+    private void DiagnosticsTick()
+    {
+        if (!TryGetBarracks(out _))
+        {
+            CloseDiagGates();
+            return;
+        }
+
+        var now = diagClock.ElapsedMilliseconds;
+        var expedition = UiHelper.FindReadyAddon(ExpeditionAddon);
+        var members = UiHelper.FindReadyAddon(MemberListAddon);
+        var training = UiHelper.FindReadyAddon(TrainingAddon);
+
+        if (expedition == null)
+        {
+            expeditionGate.MarkClosed();
+        }
+        else if (expeditionGate.MarkReady(now))
+        {
+            // 開窗這一幀的 [1]：和穩定後的值不同＝NumberArray 開窗瞬間還留著舊值。
+            Span<int> first = stackalloc int[SquadronDiag.NumberArrayReadLength];
+            expeditionFirstFrameMission = ReadExpeditionNa(first, out _, out _) > 1 ? first[1] : null;
+            expeditionVariants = null;
+            expeditionLastRuns = string.Empty;
+        }
+
+        if (members == null) memberGate.MarkClosed();
+        else memberGate.MarkReady(now);
+
+        if (training == null) trainingGate.MarkClosed();
+        else trainingGate.MarkReady(now);
+
+        if (now < nextDiagPollMs) return;
+        nextDiagPollMs = now + DiagPollMs;
+
+        if (expedition != null && expeditionGate.Settled(now)) DiagExpedition(expedition, now);
+        if (members != null && memberGate.Settled(now)) DiagMemberList(members, now);
+        if (training != null && trainingGate.Settled(now)) DiagTraining(training, now);
+    }
+
+    /// <summary>NumberArray 113 抄進 <paramref name="buffer"/>（長度先截到 Size）；回抄了幾格，0＝讀不到。</summary>
+    private static int ReadExpeditionNa(Span<int> buffer, out int size, out string problem)
+    {
+        size = -1;
+        problem = string.Empty;
+
+        var atk = RaptureAtkModule.Instance();
+        if (atk == null)
+        {
+            problem = "RaptureAtkModule 取不到";
+            return 0;
+        }
+
+        ref var holder = ref atk->AtkModule.AtkArrayDataHolder;
+        if (!SquadronDiag.IsPlausiblePointer((nint)holder.NumberArrays) || SquadronDiag.ExpeditionNumberArray >= holder.NumberArrayCount)
+        {
+            problem = $"NumberArrays 不可用（共 {holder.NumberArrayCount} 個）";
+            return 0;
+        }
+
+        var array = holder.NumberArrays[SquadronDiag.ExpeditionNumberArray];
+        if (!SquadronDiag.IsPlausiblePointer((nint)array) || !SquadronDiag.IsPlausiblePointer((nint)array->IntArray))
+        {
+            problem = $"NumberArray {SquadronDiag.ExpeditionNumberArray} 是空的";
+            return 0;
+        }
+
+        size = array->AtkArrayData.Size;
+        return SquadronDiag.CopyInts(array->IntArray, size, buffer);
+    }
+
+    /// <param name="addon">本幀取得、已判過 ready 的窗。</param>
+    private bool TryReadCells(AtkUnitBase* addon, out int count, out string problem)
+    {
+        count = addon->AtkValuesCount;
+        problem = string.Empty;
+        if (count == 0 || !SquadronDiag.IsPlausiblePointer((nint)addon->AtkValues))
+        {
+            problem = $"AtkValues 是空的（格數 {count}）";
+            return false;
+        }
+
+        if (count > diagCells.Length)
+        {
+            problem = $"AtkValues 格數 {count} 超過讀取上限 {diagCells.Length}";
+            return false;
+        }
+
+        SquadronDiag.ReadCells((byte*)addon->AtkValues, count, diagCells);
+        return true;
+    }
+
+    /// <returns>可以記這一筆；預算剛用完時順便記一行說明。</returns>
+    private bool OfferDiag(SquadronDiagGate gate, ulong key, long now)
+    {
+        if (gate.Offer(key, now, diagBudget, out var exhausted))
+        {
+            if (gate.LastForced)
+                Svc.Log.Information($"[{InternalName}] 分隊診斷：開窗 {SquadronDiagGate.ForceFirstMs / 1000} 秒內值一直在變，下面照當下的值記一次。");
+            return true;
+        }
+
+        if (exhausted)
+            Svc.Log.Information($"[{InternalName}] 分隊診斷：{SquadronDiagBudget.WindowMs / 3_600_000} 小時內已記 {SquadronDiagBudget.MaxRecords} 筆，先不再記。");
+        return false;
+    }
+
+    private static ulong ProblemKey(string problem) => SquadronDiag.Hash([problem.GetHashCode(), problem.Length]);
+
+    private void DiagExpedition(AtkUnitBase* addon, long now)
+    {
+        Span<int> na = stackalloc int[SquadronDiag.NumberArrayReadLength];
+        var naLen = ReadExpeditionNa(na, out var size, out var naProblem);
+        var hasCells = TryReadCells(addon, out var count, out var cellProblem);
+        var cells = hasCells ? new ReadOnlySpan<SquadronCell>(diagCells, 0, count) : default;
+
+        // [0] 是遊戲每幀寫入的軍票數，不算進「值變了沒」。
+        var key = SquadronDiag.Hash(cells, SquadronDiag.Hash(na[Math.Min(1, naLen)..naLen]));
+        if (!hasCells) key ^= ProblemKey(cellProblem);
+        if (naLen == 0) key ^= ProblemKey(naProblem);
+        if (!OfferDiag(expeditionGate, key, now)) return;
+
+        var v = new SquadronVerdict();
+        SquadronExpeditionList? list = null;
+        if (hasCells)
+        {
+            list = SquadronDiag.CheckExpeditionList(cells, diagTables, expeditionGate.LoggedThisOpen == 1, v, out var listDetail);
+            var runs = SquadronDiag.TypeRuns(cells);
+            var runsText = runs == expeditionLastRuns ? string.Empty : $"；型別序列（{SquadronDiag.TypeLegend}）{runs}";
+            expeditionLastRuns = runs;
+            Svc.Log.Information($"[{InternalName}] 分隊診斷｜任務清單 AtkValues：{listDetail}{runsText}");
+        }
+        else
+        {
+            v.Fail(cellProblem);
+        }
+
+        SquadronExpeditionNa? read = null;
+        if (naLen == 0)
+            v.Fail(naProblem);
+        else
+            read = SquadronDiag.ParseExpeditionNa(na[..naLen], size, v);
+
+        var cid = Svc.PlayerState.ContentId;
+        var title = "任務清單";
+        if (read != null)
+        {
+            SquadronDiag.CheckExpeditionNa(read, diagTables, list, ref expeditionVariants, TrainingRef(windowTraining, cid), v);
+            Svc.Log.Information(
+                $"[{InternalName}] 分隊診斷｜任務清單 NA{SquadronDiag.ExpeditionNumberArray}：{SquadronDiag.DescribeExpeditionNa(read, diagTables, expeditionFirstFrameMission)}");
+            if (cid != 0) naTraining[cid] = (read.Training, DateTime.UtcNow);
+            title = $"任務清單 #{read.MissionId}";
+        }
+
+        Svc.Log.Information($"[{InternalName}] 分隊診斷結論｜{v.Format(title)}");
+    }
+
+    private void DiagMemberList(AtkUnitBase* addon, long now)
+    {
+        var hasCells = TryReadCells(addon, out var count, out var cellProblem);
+        var cells = hasCells ? new ReadOnlySpan<SquadronCell>(diagCells, 0, count) : default;
+        var key = hasCells ? SquadronDiag.Hash(cells) : ProblemKey(cellProblem);
+        if (!OfferDiag(memberGate, key, now)) return;
+
+        var v = new SquadronVerdict();
+        if (!hasCells)
+        {
+            v.Fail(cellProblem);
+            Svc.Log.Information($"[{InternalName}] 分隊診斷結論｜{v.Format("編組名單")}");
+            return;
+        }
+
+        // 同一幀的 NumberArray 113：名單換人時遊戲同步重算隊伍，拿來對選中的人。
+        Span<int> na = stackalloc int[SquadronDiag.NumberArrayReadLength];
+        var naLen = ReadExpeditionNa(na, out var size, out _);
+        var read = naLen > 0 && UiHelper.IsAddonReady(ExpeditionAddon)
+            ? SquadronDiag.ParseExpeditionNa(na[..naLen], size, new SquadronVerdict())
+            : null;
+
+        SquadronDiag.CheckMemberList(cells, diagTables, read, DiagClassName, v, out var detail);
+        Svc.Log.Information(
+            $"[{InternalName}] 分隊診斷｜編組名單 AtkValues：{detail}" +
+            (memberGate.LoggedThisOpen == 1 ? $"；型別序列（{SquadronDiag.TypeLegend}）{SquadronDiag.TypeRuns(cells)}" : string.Empty));
+        Svc.Log.Information($"[{InternalName}] 分隊診斷結論｜{v.Format("編組名單")}");
+    }
+
+    private void DiagTraining(AtkUnitBase* addon, long now)
+    {
+        var hasCells = TryReadCells(addon, out var count, out var cellProblem);
+        var cells = hasCells ? new ReadOnlySpan<SquadronCell>(diagCells, 0, count) : default;
+
+        // 只看模式、目前三項與上限：滑鼠移到各訓練上只改預覽格，不另記。
+        ulong key;
+        if (!hasCells) key = ProblemKey(cellProblem);
+        else
+        {
+            Span<int> picked = stackalloc int[6];
+            ReadOnlySpan<int> indexes = [0, 13, 15, 17, 21, count];
+            for (var i = 0; i < indexes.Length; i++)
+                picked[i] = indexes[i] < count ? (int)cells[indexes[i]].Value ^ (cells[indexes[i]].Type << 24) : indexes[i];
+            key = SquadronDiag.Hash(picked);
+        }
+
+        if (!OfferDiag(trainingGate, key, now)) return;
+
+        var v = new SquadronVerdict();
+        if (!hasCells)
+        {
+            v.Fail(cellProblem);
+            Svc.Log.Information($"[{InternalName}] 分隊診斷結論｜{v.Format("訓練窗")}");
+            return;
+        }
+
+        var cid = Svc.PlayerState.ContentId;
+        var read = SquadronDiag.CheckTraining(cells, TrainingRef(naTraining, cid), v, out var detail);
+        if (read.Complete && cid != 0) windowTraining[cid] = (read.Current, DateTime.UtcNow);
+
+        Svc.Log.Information(
+            $"[{InternalName}] 分隊診斷｜訓練窗 AtkValues：{detail}" +
+            (trainingGate.LoggedThisOpen == 1 ? $"；型別序列（{SquadronDiag.TypeLegend}）{SquadronDiag.TypeRuns(cells)}" : string.Empty));
+        Svc.Log.Information($"[{InternalName}] 分隊診斷結論｜{v.Format("訓練窗")}");
+    }
+
+    private static (int P, int M, int T)? TrainingRef(Dictionary<ulong, ((int P, int M, int T) Value, DateTime Utc)> source, ulong cid) =>
+        cid != 0 && source.TryGetValue(cid, out var e) && DateTime.UtcNow - e.Utc <= TrainingRefMaxAge ? e.Value : null;
 
     #endregion
 
