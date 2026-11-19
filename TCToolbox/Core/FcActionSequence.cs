@@ -53,9 +53,32 @@ internal static class FcActionCatalog
 /// <param name="Valid"><see langword="false"/>＝形狀不對（可能讀錯陣列），不能拿來按。</param>
 internal readonly record struct FcStockRead(bool Valid, IReadOnlyList<uint> Actions, string Problem)
 {
+    /// <summary>有效時是陣列開頭到最後一筆的原始格子（校準「每一份是不是各佔一筆」用）。</summary>
+    public IReadOnlyList<int>? Raw { get; init; }
+
     public static FcStockRead Invalid(string problem) => new(false, Array.Empty<uint>(), problem);
 
     public string Describe() => Valid ? $"[{string.Join(",", Actions)}]" : $"無效（{Problem}）";
+
+    /// <summary>「前 12 格｜每筆三格」。</summary>
+    public string DescribeRaw()
+    {
+        if (Raw is not { Count: >= FcActionStock.FirstIndex } raw) return "（沒有）";
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append('[');
+        for (var i = 0; i < FcActionStock.FirstIndex; i++)
+            sb.Append(i == 0 ? string.Empty : ",").Append(raw[i]);
+        sb.Append("]｜");
+        for (var i = FcActionStock.FirstIndex; i < raw.Count; i++)
+        {
+            var col = (i - FcActionStock.FirstIndex) % FcActionStock.Stride;
+            sb.Append(col == 0 ? "[" : ",").Append(raw[i]);
+            if (col == FcActionStock.Stride - 1 || i == raw.Count - 1) sb.Append(']');
+        }
+
+        return sb.ToString();
+    }
 }
 
 internal static class FcActionStock
@@ -95,7 +118,8 @@ internal static class FcActionStock
             actions.Add((uint)raw);
         }
 
-        return new FcStockRead(true, actions, string.Empty);
+        var rawLength = Math.Min(values.Length, FirstIndex + Stride * count);
+        return new FcStockRead(true, actions, string.Empty) { Raw = values[..rawLength].ToArray() };
     }
 }
 
@@ -346,6 +370,7 @@ internal sealed class FcActionSequence
     private long lastStockReadAt;
     private long actionReadySince = -1;
     private bool finishedReported;
+    private bool stockReported;
     private int rejections;
     private long holdUntil = long.MinValue;
 
@@ -354,6 +379,11 @@ internal sealed class FcActionSequence
     public List<string> Failed { get; } = [];
 
     public string StopReason { get; private set; } = string.Empty;
+
+    /// <summary>最後一次穩定下來的庫存讀數；<see cref="StableStockReads"/> 每多一次就換一份。</summary>
+    public FcStockRead? LastStableStock { get; private set; }
+
+    public int StableStockReads { get; private set; }
 
     /// <summary>正在處理的那一個（還沒選過任何庫存列時是預設值）。</summary>
     public FcTarget Current => current;
@@ -548,7 +578,14 @@ internal sealed class FcActionSequence
 
         if (nowMs - lastStockReadAt < StockStableGapMs) return FcCommand.None;
 
-        log($"庫存 {stock.Actions.Count} 筆：{signature}");
+        // 等選單或確認框關掉時會停在這裡好幾幀；同一次讀庫存只回報一次。
+        if (!stockReported)
+        {
+            stockReported = true;
+            log($"庫存 {stock.Actions.Count} 筆：{signature}（原始：{stock.DescribeRaw()}）");
+            LastStableStock = stock;
+            StableStockReads++;
+        }
 
         while (pending.Count > 0)
         {
@@ -683,6 +720,7 @@ internal sealed class FcActionSequence
     private void Enter(Phase next, long nowMs)
     {
         phase = next;
+        stockReported = false;
         phaseStartedAt = nowMs;
         sends = 0;
         lastSentAt = long.MinValue;
