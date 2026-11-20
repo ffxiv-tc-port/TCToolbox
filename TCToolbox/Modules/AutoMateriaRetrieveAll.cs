@@ -187,6 +187,14 @@ public sealed unsafe class AutoMateriaRetrieveAll : TcModule
         // ⚠️ 這裡讀到的是「送出前」的數量：伺服器還沒回，本機還沒扣。
         if (count <= 1) return;
 
+        // 背包滿時連這一下都不接手：使用者這一下已照常交給遊戲，接手只會空等伺服器逾時；
+        // 騰出空位後再點一次就會照常接手。
+        if (!BagHasSpace())
+        {
+            Report("[TC Toolbox] 背包已滿，這次不自動取出剩下的魔晶石；騰出空位後再取出一顆即可接手。");
+            return;
+        }
+
         watchedContainer = container;
         watchedSlot = slot;
         watchedItemId = item->ItemId;
@@ -249,9 +257,7 @@ public sealed unsafe class AutoMateriaRetrieveAll : TcModule
 
             // ⚠️ 取出的魔晶石要有地方放。就算實際上不需要背包空位，這個判斷也只會讓我們
             // 在背包全滿這種罕見狀況下早一步停手，不會造成別的影響。
-            var manager = InventoryManager.Instance();
-            if (manager == null) return null;
-            if (manager->GetEmptySlotsInBag() == 0)
+            if (!BagHasSpace())
             {
                 Report("[TC Toolbox] 背包已滿，已停止自動取出魔晶石。");
                 ClearWatch();
@@ -278,6 +284,14 @@ public sealed unsafe class AutoMateriaRetrieveAll : TcModule
 
             var countNow = MateriaCount(item);
             if (countNow == 0) return null;
+
+            // 送出前最後一道：上一步檢查到現在之間背包可能被別的東西塞滿。
+            if (!BagHasSpace())
+            {
+                Report("[TC Toolbox] 背包已滿，已停止自動取出魔晶石。");
+                ClearWatch();
+                return null;
+            }
 
             var framework = EventFramework.Instance();
             if (framework == null) return null;
@@ -327,6 +341,13 @@ public sealed unsafe class AutoMateriaRetrieveAll : TcModule
         }
 
         return true;
+    }
+
+    /// <summary>讀不到背包時回 false：呼叫端一律當成「不能送」。</summary>
+    private static bool BagHasSpace()
+    {
+        var manager = InventoryManager.Instance();
+        return manager != null && manager->GetEmptySlotsInBag() > 0;
     }
 
     private static int MateriaCount(InventoryItem* item)
