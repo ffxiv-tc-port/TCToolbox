@@ -93,7 +93,12 @@ internal sealed class SquadronVerdict
             : $"{title}：不符 {bad.Count} 項：{string.Join("；", bad)}｜符合 {ok.Count} 項：{string.Join("、", ok)}";
 }
 
-internal readonly record struct SquadronNaMember(int Flags, int Icon, int Level, int LevelState, int P, int M, int T);
+/// <remarks>遊戲把在隊的人從第 0 格起連續寫、旗標至少帶 bit0；不足 4 人時只把其餘格的旗標寫 0，
+/// 那些格的其他 6 個值是上一次留下的殘值，不能算進隊伍。</remarks>
+internal readonly record struct SquadronNaMember(int Flags, int Icon, int Level, int LevelState, int P, int M, int T)
+{
+    public bool Filled => Flags != 0;
+}
 
 /// <summary>NumberArray 113（GcArmyExpedition）的一次快照。</summary>
 internal sealed class SquadronExpeditionNa
@@ -106,9 +111,15 @@ internal sealed class SquadronExpeditionNa
     public readonly int[] Total = new int[3];
     public readonly SquadronNaMember[] Members = new SquadronNaMember[4];
 
-    /// <summary>隊伍合計減掉 4 人各自的三項（含吉兆）＝推得的訓練值。</summary>
+    /// <summary>在隊的人（旗標非 0 的格）。</summary>
+    public IEnumerable<SquadronNaMember> InTeam => Members.Where(m => m.Filled);
+
+    /// <summary>在隊的人都在空格之前（遊戲的寫法）；不成立時推得的訓練值不可信。</summary>
+    public bool InTeamContiguous => Members.SkipWhile(m => m.Filled).All(m => !m.Filled);
+
+    /// <summary>隊伍合計減掉在隊各人的三項（含吉兆）＝推得的訓練值。</summary>
     public (int P, int M, int T) Training =>
-        (Total[0] - Members.Sum(m => m.P), Total[1] - Members.Sum(m => m.M), Total[2] - Members.Sum(m => m.T));
+        (Total[0] - InTeam.Sum(m => m.P), Total[1] - InTeam.Sum(m => m.M), Total[2] - InTeam.Sum(m => m.T));
 }
 
 internal sealed class SquadronExpeditionList
@@ -465,7 +476,7 @@ internal static unsafe class SquadronDiag
         SquadronExpeditionNa n, SquadronTables t, SquadronExpeditionList? list, ref HashSet<int>? sessionVariants,
         (int P, int M, int T)? trainingWindow, SquadronVerdict v)
     {
-        var maxLevel = n.Members.Max(m => m.Level);
+        var maxLevel = n.InTeam.Select(m => m.Level).DefaultIfEmpty(0).Max();
 
         if (list != null && list.Entries.Count > 0)
         {
@@ -522,10 +533,17 @@ internal static unsafe class SquadronDiag
                 if (rewards.Count == 1)
                 {
                     v.Equal("[4]獎勵道具", rewards[0].RewardItem, n.RewardItem);
-                    v.Equal("[6]獎勵數量", rewards[0].RewardQuantity, n.RewardQuantity);
+
+                    // 沒有獎勵道具時遊戲只寫 [4]=0，[5][6] 留著前一個任務的值，比了只會誤報。
+                    if (rewards[0].RewardItem != 0)
+                        v.Equal("[6]獎勵數量", rewards[0].RewardQuantity, n.RewardQuantity);
                 }
             }
         }
+
+        var inTeam = n.InTeam.Count();
+        if (n.InTeamContiguous) v.Pass($"在隊 {inTeam} 人");
+        else v.Fail($"在隊的人不連續（旗標 {string.Join(",", n.Members.Select(m => $"0x{m.Flags:X}"))}）");
 
         if (t.HasGrow)
         {
@@ -534,7 +552,7 @@ internal static unsafe class SquadronDiag
             for (var k = 0; k < 4; k++)
             {
                 var mem = n.Members[k];
-                if (mem.Level <= 0) continue;
+                if (!mem.Filled || mem.Level <= 0) continue;
                 if (t.MinLevelSum(mem.Level) is not { } floor) continue;
 
                 compared++;
@@ -548,7 +566,7 @@ internal static unsafe class SquadronDiag
 
         var tr = n.Training;
         if (tr.P >= 0 && tr.M >= 0 && tr.T >= 0) v.Pass($"推得訓練值 {tr.P}/{tr.M}/{tr.T} ≥0");
-        else v.Fail($"推得訓練值 {tr.P}/{tr.M}/{tr.T} 有負數（[11..13] 不是「訓練值＋4 人三項」）");
+        else v.Fail($"推得訓練值 {tr.P}/{tr.M}/{tr.T} 有負數（[11..13] 不是「訓練值＋在隊各人三項」）");
 
         CompareTraining("推得訓練值＝訓練窗", tr, trainingWindow, v);
     }
@@ -556,12 +574,16 @@ internal static unsafe class SquadronDiag
     public static string DescribeExpeditionNa(SquadronExpeditionNa n, SquadronTables t, int? firstFrameMissionId)
     {
         var name = t.Missions.TryGetValue(n.MissionId, out var m) ? $"「{m.Name}」Lv{m.Level}" : "（表內沒有）";
-        var members = string.Join("｜", n.Members.Select((x, k) =>
-            $"{k}:旗標0x{x.Flags:X} 圖示{x.Icon} Lv{x.Level} 狀態{x.LevelState} {x.P}/{x.M}/{x.T}"));
+        var members = string.Join("｜", n.Members.Select((x, k) => x.Filled
+            ? $"{k}:旗標0x{x.Flags:X} 圖示{x.Icon} Lv{x.Level} 狀態{x.LevelState} {x.P}/{x.M}/{x.T}"
+            : $"{k}:空（旗標 0，其餘是殘值）"));
+        var reward = n.RewardItem != 0
+            ? $"{n.RewardItem}/{n.RewardValue}/×{n.RewardQuantity}"
+            : $"無（[5][6] 殘值 {n.RewardValue}/×{n.RewardQuantity}）";
         var tr = n.Training;
         return $"Size={n.Size}；開窗第一幀 [1]={(firstFrameMissionId?.ToString() ?? "沒讀到")}；" +
                $"[0]軍票={n.Raw[0]} [1]任務=#{n.MissionId}{name} [2]等級不足={n.LevelBlocked} [3]經驗={n.Experience} " +
-               $"[4..6]獎勵={n.RewardItem}/{n.RewardValue}/×{n.RewardQuantity} [7]需軍票={n.Seals} " +
+               $"[4..6]獎勵={reward} [7]需軍票={n.Seals} " +
                $"[8..10]需求={n.Need[0]}/{n.Need[1]}/{n.Need[2]} [11..13]合計={n.Total[0]}/{n.Total[1]}/{n.Total[2]} " +
                $"[14]分級={n.Tier} [15]={n.Refresh}；隊員 {members}；推得訓練值={tr.P}/{tr.M}/{tr.T}；" +
                $"原始[0..{n.Raw.Length - 1}]={string.Join(",", n.Raw)}";
@@ -580,7 +602,8 @@ internal static unsafe class SquadronDiag
         var checkedCells = 1;
         v.Equal("格數", MemberListCells, c.Length);
 
-        if (!Want(c, 4, TypeInt, typeBad, out var count) || count < 0 || 5 + 15 * count > c.Length)
+        // 人數格遊戲是先把型別改成 UInt 再寫；其餘數值格是 Int。
+        if (!Want(c, 4, TypeUInt, typeBad, out var count) || count < 0 || 5 + 15 * count > c.Length)
         {
             SummarizeTypes(v, checkedCells, typeBad);
             v.Fail($"[4]人數={count} 讀不到或超出格數 {c.Length}，不讀各人");
@@ -630,19 +653,25 @@ internal static unsafe class SquadronDiag
         if (selected.Count <= 4) v.Pass($"已選中（旗標 0x2）{selected.Count} 人 ≤4");
         else v.Fail($"已選中（旗標 0x2）{selected.Count} 人，超過 4");
 
-        if (na != null && selected.Count == 4)
+        var naTeam = na?.InTeam.ToList();
+        if (naTeam != null && selected.Count > 0 && selected.Count == naTeam.Count)
         {
+            var n = selected.Count;
             var listLevels = string.Join(",", selected.Select(x => x.Level).Order());
-            var naLevels = string.Join(",", na.Members.Select(x => x.Level).Order());
-            if (listLevels == naLevels) v.Pass($"選中 4 人等級＝NA 隊員等級（{listLevels}）");
-            else v.Fail($"選中 4 人等級 {listLevels}、NA 隊員等級 {naLevels}");
+            var naLevels = string.Join(",", naTeam.Select(x => x.Level).Order());
+            if (listLevels == naLevels) v.Pass($"選中 {n} 人等級＝NA 隊員等級（{listLevels}）");
+            else v.Fail($"選中 {n} 人等級 {listLevels}、NA 隊員等級 {naLevels}");
 
             var baseSum = (selected.Sum(x => x.P), selected.Sum(x => x.M), selected.Sum(x => x.T));
-            var naSum = (na.Members.Sum(x => x.P), na.Members.Sum(x => x.M), na.Members.Sum(x => x.T));
+            var naSum = (naTeam.Sum(x => x.P), naTeam.Sum(x => x.M), naTeam.Sum(x => x.T));
             if (baseSum.Item1 <= naSum.Item1 && baseSum.Item2 <= naSum.Item2 && baseSum.Item3 <= naSum.Item3)
-                v.Pass($"選中 4 人基礎合計 {baseSum.Item1}/{baseSum.Item2}/{baseSum.Item3} ≤ NA 隊員合計 {naSum.Item1}/{naSum.Item2}/{naSum.Item3}");
+                v.Pass($"選中 {n} 人基礎合計 {baseSum.Item1}/{baseSum.Item2}/{baseSum.Item3} ≤ NA 隊員合計 {naSum.Item1}/{naSum.Item2}/{naSum.Item3}");
             else
-                v.Fail($"選中 4 人基礎合計 {baseSum.Item1}/{baseSum.Item2}/{baseSum.Item3} 大於 NA 隊員合計 {naSum.Item1}/{naSum.Item2}/{naSum.Item3}");
+                v.Fail($"選中 {n} 人基礎合計 {baseSum.Item1}/{baseSum.Item2}/{baseSum.Item3} 大於 NA 隊員合計 {naSum.Item1}/{naSum.Item2}/{naSum.Item3}");
+        }
+        else if (naTeam != null && selected.Count > 0)
+        {
+            v.Fail($"選中 {selected.Count} 人、NA 在隊 {naTeam.Count} 人");
         }
 
         detail = $"格數 {c.Length}；型別 {TypeHistogram(c)}；[4]人數={count}；{string.Join("｜", parts)}";
