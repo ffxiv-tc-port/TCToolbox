@@ -114,17 +114,8 @@ public sealed unsafe class AutoRefreshPartyFinder : TcModule
         var addon = UiHelper.GetAddon(PartyFinderAddon);
         if (!UiHelper.IsReady(addon)) return;
 
-        const ImGuiWindowFlags flags = ImGuiWindowFlags.AlwaysAutoResize |
-                                       ImGuiWindowFlags.NoTitleBar |
-                                       ImGuiWindowFlags.NoCollapse |
-                                       ImGuiWindowFlags.NoScrollbar |
-                                       ImGuiWindowFlags.NoSavedSettings;
-
-        if (ImGui.Begin("###TCToolboxRefreshPartyFinder", flags))
+        if (UiHelper.BeginAboveAddon("###TCToolboxRefreshPartyFinder", addon, UiHelper.AboveAddonFlags | ImGuiWindowFlags.NoScrollbar))
         {
-            ImGui.SetWindowPos(new System.Numerics.Vector2(
-                                   addon->GetX() + 6, addon->GetY() - ImGui.GetWindowSize().Y - 4));
-
             if (!CanRefresh())
             {
                 ImGui.TextDisabled("自動刷新：暫停中");
