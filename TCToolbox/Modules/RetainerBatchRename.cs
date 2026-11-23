@@ -3848,7 +3848,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
             ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp);
         if (!table) return;
 
-        ImGui.TableSetupColumn("改", ImGuiTableColumnFlags.WidthFixed, 30f);
+        ImGui.TableSetupColumn("改", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(30f));
         ImGui.TableSetupColumn("現名", ImGuiTableColumnFlags.WidthStretch, 1f);
         ImGui.TableSetupColumn("預定新名", ImGuiTableColumnFlags.WidthStretch, 1.2f);
         ImGui.TableSetupColumn("狀態", ImGuiTableColumnFlags.WidthStretch, 1.3f);
@@ -4408,7 +4408,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
                 "關掉的話一律等你按按鈕（按鈕永遠都在）。");
         }
 
-        ImGui.SetNextItemWidth(180f);
+        ImGui.SetNextItemWidth(UiScale.Px(180f));
         var attempts = Config.MaxCandidateAttemptsPerRetainer;
         if (ImGui.SliderInt("同一位僱員最多試幾個候選", ref attempts, 1, 20))
         {
@@ -4423,7 +4423,7 @@ public sealed unsafe class RetainerBatchRename : TcModule
                 "免得一路把整份名單燒光。預設 5。");
         }
 
-        ImGui.SetNextItemWidth(180f);
+        ImGui.SetNextItemWidth(UiScale.Px(180f));
         var delay = Config.UndressVerifyDelayMs;
         if (ImGui.SliderInt("卸裝後等待伺服器確認（毫秒）", ref delay, 500, 20_000))
         {

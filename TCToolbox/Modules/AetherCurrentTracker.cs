@@ -593,7 +593,7 @@ public sealed unsafe class AetherCurrentTracker : TcModule
     {
         if (!windowOpen) return;
 
-        ImGui.SetNextWindowSize(new Vector2(520f, 380f), ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowSize(UiScale.Px(520f, 380f), ImGuiCond.FirstUseEver);
         if (!ImGui.Begin("風脈泉一覽###TCToolboxAetherCurrents", ref windowOpen))
         {
             ImGui.End();
@@ -704,10 +704,10 @@ public sealed unsafe class AetherCurrentTracker : TcModule
                                        ImGuiTableFlags.ScrollY);
         if (!table) return;
 
-        ImGui.TableSetupColumn("#", ImGuiTableColumnFlags.WidthFixed, 28f);
-        ImGui.TableSetupColumn("狀態", ImGuiTableColumnFlags.WidthFixed, 72f);
+        ImGui.TableSetupColumn("#", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(28f));
+        ImGui.TableSetupColumn("狀態", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(72f));
         ImGui.TableSetupColumn("來源／座標", ImGuiTableColumnFlags.WidthStretch);
-        ImGui.TableSetupColumn("距離", ImGuiTableColumnFlags.WidthFixed, 68f);
+        ImGui.TableSetupColumn("距離", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(68f));
         ImGui.TableSetupScrollFreeze(0, 1);
         ImGui.TableHeadersRow();
 
@@ -1159,11 +1159,11 @@ public sealed unsafe class AetherCurrentTracker : TcModule
         var wrap = GameIcons.TryGet(current);
         if (wrap != null)
         {
-            ImGui.Image(wrap.Handle, new Vector2(24f, 24f));
+            ImGui.Image(wrap.Handle, UiScale.Px(24f, 24f));
             ImGui.SameLine();
         }
 
-        ImGui.SetNextItemWidth(120f);
+        ImGui.SetNextItemWidth(UiScale.Px(120f));
 
         // 輸入框顯示的是「實際會用的編號」（哨兵 0 時顯示內建預設值），不要讓使用者看到一個 0。
         var value = (int)current;

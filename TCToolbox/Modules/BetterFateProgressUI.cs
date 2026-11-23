@@ -241,7 +241,7 @@ public sealed unsafe class BetterFateProgressUI : TcModule
             Plugin.Instance.Config.Save();
         }
 
-        ImGui.SetNextItemWidth(160f);
+        ImGui.SetNextItemWidth(UiScale.Px(160f));
         var interval = Config.RequestIntervalMs;
         if (ImGui.SliderInt("每筆之間的間隔（毫秒）", ref interval, 200, 5000))
         {
@@ -256,7 +256,7 @@ public sealed unsafe class BetterFateProgressUI : TcModule
     {
         if (!windowOpen) return;
 
-        ImGui.SetNextWindowSize(new Vector2(560, 420), ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowSize(UiScale.Px(560, 420), ImGuiCond.FirstUseEver);
         if (ImGui.Begin($"{DisplayName}###TCToolboxBetterFateProgressUI", ref windowOpen))
             DrawContent();
         ImGui.End();
@@ -291,7 +291,7 @@ public sealed unsafe class BetterFateProgressUI : TcModule
             var lookup = new GameIconLookup(gemIconId);
             if (Svc.Textures.TryGetFromGameIcon(lookup, out var tex))
             {
-                ImGui.Image(tex.GetWrapOrEmpty().Handle, new Vector2(24f, 24f));
+                ImGui.Image(tex.GetWrapOrEmpty().Handle, UiScale.Px(24f, 24f));
                 ImGui.SameLine();
             }
         }
@@ -345,9 +345,9 @@ public sealed unsafe class BetterFateProgressUI : TcModule
             return;
 
         ImGui.TableSetupColumn("區域", ImGuiTableColumnFlags.WidthStretch);
-        ImGui.TableSetupColumn("進度", ImGuiTableColumnFlags.WidthFixed, 190f);
-        ImGui.TableSetupColumn("地圖", ImGuiTableColumnFlags.WidthFixed, 52f);
-        ImGui.TableSetupColumn("傳送", ImGuiTableColumnFlags.WidthFixed, 52f);
+        ImGui.TableSetupColumn("進度", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(190f));
+        ImGui.TableSetupColumn("地圖", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(52f));
+        ImGui.TableSetupColumn("傳送", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(52f));
         ImGui.TableHeadersRow();
 
         foreach (var zone in zones)

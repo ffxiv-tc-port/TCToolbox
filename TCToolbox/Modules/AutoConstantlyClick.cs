@@ -286,7 +286,7 @@ public sealed unsafe class AutoConstantlyClick : TcModule
 
     public override void DrawConfig()
     {
-        ImGui.SetNextItemWidth(200f);
+        ImGui.SetNextItemWidth(UiScale.Px(200f));
         var interval = Config.RepeatIntervalMs;
         if (ImGui.SliderInt("重複間隔（毫秒）", ref interval, 100, 1_000))
         {

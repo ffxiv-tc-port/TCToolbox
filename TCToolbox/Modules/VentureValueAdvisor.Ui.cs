@@ -50,7 +50,7 @@ public sealed partial class VentureValueAdvisor
         ImGui.TextDisabled($"或輸入 {Command}");
 
         var top = Config.TopCount;
-        ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(UiScale.Px(120));
         if (ImGui.SliderInt("展開時列出前幾名", ref top, 1, 20))
         {
             Config.TopCount = top;
@@ -58,7 +58,7 @@ public sealed partial class VentureValueAdvisor
         }
 
         var stale = Config.StaleHours;
-        ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(UiScale.Px(120));
         if (ImGui.SliderInt("行情超過幾小時算太舊", ref stale, 1, 720))
         {
             Config.StaleHours = Math.Clamp(stale, 1, 720);
@@ -188,7 +188,7 @@ public sealed partial class VentureValueAdvisor
         try
         {
             ImGui.TableSetupScrollFreeze(0, 1);
-            ImGui.TableSetupColumn(Headers[0], ImGuiTableColumnFlags.NoSort | ImGuiTableColumnFlags.WidthFixed, 22 * ImGuiHelpers.GlobalScale);
+            ImGui.TableSetupColumn(Headers[0], ImGuiTableColumnFlags.NoSort | ImGuiTableColumnFlags.WidthFixed, UiScale.Px(22));
             ImGui.TableSetupColumn(Headers[1]);
             ImGui.TableSetupColumn(Headers[2]);
             ImGui.TableSetupColumn(Headers[3], ImGuiTableColumnFlags.PreferSortDescending);

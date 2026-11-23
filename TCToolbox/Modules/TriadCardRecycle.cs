@@ -795,7 +795,7 @@ public sealed unsafe class TriadCardRecycle : TcModule
             ImGui.TextDisabled($"鞍袋：另有 {saddleBagCards} 張幻卡（回收視窗看不到鞍袋，要先拿出來）");
         }
 
-        using var child = ImRaii.Child("TriadRecycleList", new Vector2(-1f, 200f), true);
+        using var child = ImRaii.Child("TriadRecycleList", new Vector2(-1f, UiScale.Px(200f)), true);
         if (!child) return;
 
         if (bagCards.Count == 0)

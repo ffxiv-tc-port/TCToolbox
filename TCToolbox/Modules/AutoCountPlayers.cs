@@ -752,7 +752,7 @@ public sealed class AutoCountPlayers : TcModule
     {
         if (!windowOpen) return;
 
-        ImGui.SetNextWindowSize(new Vector2(420, 340), ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowSize(UiScale.Px(420, 340), ImGuiCond.FirstUseEver);
         // 標題引用 DisplayName；### 之後的 ID 保持原字面值，視窗位置／大小的存檔才不會被重置。
         if (ImGui.Begin($"{DisplayName} ({players.Count})###TCToolboxCountPlayers", ref windowOpen))
         {
@@ -770,8 +770,8 @@ public sealed class AutoCountPlayers : TcModule
                                        Math.Max(jobIconSize + ImGui.GetStyle().CellPadding.X * 2f,
                                                 ImGui.CalcTextSize("職業").X));
                 ImGui.TableSetupColumn("名稱", ImGuiTableColumnFlags.WidthStretch);
-                ImGui.TableSetupColumn("伺服器", ImGuiTableColumnFlags.WidthFixed, 80f);
-                ImGui.TableSetupColumn("距離", ImGuiTableColumnFlags.WidthFixed, 56f);
+                ImGui.TableSetupColumn("伺服器", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(80f));
+                ImGui.TableSetupColumn("距離", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(56f));
                 ImGui.TableHeadersRow();
 
                 foreach (var p in players.ToArray())
@@ -916,7 +916,7 @@ public sealed class AutoCountPlayers : TcModule
         ImGui.SameLine();
         var multi = CountActiveConditions(rule) >= 2;
         if (!multi) ImGui.BeginDisabled();
-        ImGui.SetNextItemWidth(150f);
+        ImGui.SetNextItemWidth(UiScale.Px(150f));
         var modeIndex = (int)rule.MatchMode;
         if (ImGui.Combo("##matchMode", ref modeIndex, MatchModeLabels, MatchModeLabels.Length))
         {
@@ -965,7 +965,7 @@ public sealed class AutoCountPlayers : TcModule
         }
 
         ImGui.SameLine();
-        ImGui.SetNextItemWidth(180f);
+        ImGui.SetNextItemWidth(UiScale.Px(180f));
         var pattern = rule.Pattern;
         if (ImGui.InputTextWithHint("##pattern", "名稱樣式…", ref pattern, 128))
         {
@@ -1020,7 +1020,7 @@ public sealed class AutoCountPlayers : TcModule
                              "這是名字比對之外最可靠的一條軸：名字可以取成任何樣子，狀態不行。");
 
         ImGui.SameLine();
-        ImGui.SetNextItemWidth(300f);
+        ImGui.SetNextItemWidth(UiScale.Px(300f));
         if (ImGui.BeginCombo("##onlineStatuses", DescribeOnlineStatuses(rule.OnlineStatuses)))
         {
             foreach (var (rowId, name) in OnlineStatusOptions)
@@ -1072,7 +1072,7 @@ public sealed class AutoCountPlayers : TcModule
             ImGui.SetTooltip("比對名字後面那個公會簡稱。\n沒有公會的玩家是空字串。");
 
         ImGui.SameLine();
-        ImGui.SetNextItemWidth(180f);
+        ImGui.SetNextItemWidth(UiScale.Px(180f));
         var fcPattern = rule.CompanyTagPattern;
         if (ImGui.InputTextWithHint("##fcPattern", "公會簡稱樣式…", ref fcPattern, 64))
         {
@@ -1113,7 +1113,7 @@ public sealed class AutoCountPlayers : TcModule
                              "⚠️ 單獨啟用時，任何走近的玩家都會觸發——多半要搭配「所有條件都命中」使用。");
 
         ImGui.SameLine();
-        ImGui.SetNextItemWidth(200f);
+        ImGui.SetNextItemWidth(UiScale.Px(200f));
         var maxDistance = rule.MaxDistance;
         if (ImGui.SliderFloat("公尺以內##distance", ref maxDistance, 1f, 100f, "%.0f"))
             rule.MaxDistance = Math.Clamp(maxDistance, 0f, 1000f);
@@ -1156,7 +1156,7 @@ public sealed class AutoCountPlayers : TcModule
                 "出聲時機與這條規則完全相同，冷卻也共用下面的設定。");
 
         ImGui.SameLine();
-        ImGui.SetNextItemWidth(80f);
+        ImGui.SetNextItemWidth(UiScale.Px(80f));
         var cooldown = rule.CooldownSeconds;
         if (ImGui.InputInt("冷卻(秒)", ref cooldown, 0))
         {

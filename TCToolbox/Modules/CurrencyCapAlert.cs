@@ -870,9 +870,9 @@ public sealed unsafe class CurrencyCapAlert : TcModule
                 ImGuiTableFlags.RowBg | ImGuiTableFlags.Borders | ImGuiTableFlags.SizingStretchProp))
             return;
 
-        ImGui.TableSetupColumn("監看", ImGuiTableColumnFlags.WidthFixed, 40f);
+        ImGui.TableSetupColumn("監看", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(40f));
         ImGui.TableSetupColumn("貨幣", ImGuiTableColumnFlags.WidthStretch);
-        ImGui.TableSetupColumn("持有 / 上限", ImGuiTableColumnFlags.WidthFixed, 150f);
+        ImGui.TableSetupColumn("持有 / 上限", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(150f));
         ImGui.TableHeadersRow();
 
         foreach (var c in allCurrencies)
@@ -933,9 +933,9 @@ public sealed unsafe class CurrencyCapAlert : TcModule
             return;
 
         ImGui.TableSetupColumn("角色", ImGuiTableColumnFlags.WidthStretch);
-        ImGui.TableSetupColumn("軍票 / 上限", ImGuiTableColumnFlags.WidthFixed, 130f);
-        ImGui.TableSetupColumn("記錄時間", ImGuiTableColumnFlags.WidthFixed, 90f);
-        ImGui.TableSetupColumn("##switch", ImGuiTableColumnFlags.WidthFixed, 50f);
+        ImGui.TableSetupColumn("軍票 / 上限", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(130f));
+        ImGui.TableSetupColumn("記錄時間", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(90f));
+        ImGui.TableSetupColumn("##switch", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(50f));
         ImGui.TableHeadersRow();
 
         var threshold = ThresholdRatio();

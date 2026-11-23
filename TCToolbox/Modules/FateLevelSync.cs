@@ -311,7 +311,7 @@ public sealed unsafe class FateLevelSync : TcModule
                 "每個 F.A.T.E. 最多送兩次指令。");
         }
 
-        ImGui.SetNextItemWidth(160f);
+        ImGui.SetNextItemWidth(UiScale.Px(160f));
         var delay = Config.VerifyDelayMs;
         if (ImGui.SliderInt("送出後等待確認（毫秒）", ref delay, 500, 8000))
         {

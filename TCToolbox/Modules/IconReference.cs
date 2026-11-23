@@ -391,7 +391,7 @@ public sealed class IconReference : TcModule
             return;
         }
 
-        ImGui.SetNextWindowSize(new Vector2(620, 520), ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowSize(UiScale.Px(620, 520), ImGuiCond.FirstUseEver);
 
         // 標題引用 DisplayName；### 後面的 id 保持原字面值，視窗位置／大小的存檔才不會被重置。
         if (ImGui.Begin($"{DisplayName}###TCToolboxIconReference", ref windowOpen))
@@ -468,8 +468,8 @@ public sealed class IconReference : TcModule
                 ImGui.TableSetupColumn("渲染", ImGuiTableColumnFlags.WidthFixed,
                                        Math.Max(ImGui.GetTextLineHeight() * 2f, ImGui.CalcTextSize("渲染").X));
                 ImGui.TableSetupColumn("識別字", ImGuiTableColumnFlags.WidthStretch);
-                ImGui.TableSetupColumn("備註", ImGuiTableColumnFlags.WidthFixed, 130f);
-                ImGui.TableSetupColumn("操作", ImGuiTableColumnFlags.WidthFixed, 170f);
+                ImGui.TableSetupColumn("備註", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(130f));
+                ImGui.TableSetupColumn("操作", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(170f));
                 ImGui.TableHeadersRow();
 
                 foreach (var entry in entries)

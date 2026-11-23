@@ -411,7 +411,7 @@ public sealed unsafe class OptimizedEnemyList : TcModule
             Plugin.Instance.Config.Save();
         }
 
-        ImGui.SetNextItemWidth(240f);
+        ImGui.SetNextItemWidth(UiScale.Px(240f));
         var castIndex = (int)Config.CastDisplay;
         if (ImGui.Combo("詠唱顯示", ref castIndex, CastDisplayLabels, CastDisplayLabels.Length))
         {
@@ -438,7 +438,7 @@ public sealed unsafe class OptimizedEnemyList : TcModule
             Plugin.Instance.Config.Save();
         }
 
-        ImGui.SetNextItemWidth(180f);
+        ImGui.SetNextItemWidth(UiScale.Px(180f));
         var textScale = Config.TextScale;
         if (ImGui.SliderFloat("文字大小倍率", ref textScale, 0.6f, 2f, "%.2f"))
         {
@@ -471,7 +471,7 @@ public sealed unsafe class OptimizedEnemyList : TcModule
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("文字一律畫在整列的外側，不會蓋到原生的名稱、體力條與詠唱列。\n敵對列表若貼在畫面右緣，把這個取消改畫在左側。");
 
-        ImGui.SetNextItemWidth(180f);
+        ImGui.SetNextItemWidth(UiScale.Px(180f));
         var offset = new Vector2(Config.OffsetX, Config.OffsetY);
         if (ImGui.InputFloat2("額外偏移（X／Y）", ref offset))
         {

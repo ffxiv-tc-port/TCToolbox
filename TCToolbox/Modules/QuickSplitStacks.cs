@@ -213,7 +213,7 @@ public sealed unsafe class QuickSplitStacks : TcModule
             ImGui.AlignTextToFramePadding();
             ImGui.TextUnformatted("拆出數量");
             ImGui.SameLine();
-            ImGui.SetNextItemWidth(120f);
+            ImGui.SetNextItemWidth(UiScale.Px(120f));
             if (ImGui.InputInt("###amount", ref amountInput))
                 amountInput = Math.Clamp(amountInput, 1, max);
 

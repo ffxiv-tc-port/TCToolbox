@@ -766,8 +766,8 @@ public sealed class PluginUpdateNotice : TcModule
     private static void DrawPendingRows(List<PendingUpdate> pending)
     {
         ImGui.TableSetupColumn("插件", ImGuiTableColumnFlags.WidthStretch);
-        ImGui.TableSetupColumn("已安裝", ImGuiTableColumnFlags.WidthFixed, 110f);
-        ImGui.TableSetupColumn("可更新到", ImGuiTableColumnFlags.WidthFixed, 110f);
+        ImGui.TableSetupColumn("已安裝", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(110f));
+        ImGui.TableSetupColumn("可更新到", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(110f));
         ImGui.TableHeadersRow();
 
         foreach (var p in pending)

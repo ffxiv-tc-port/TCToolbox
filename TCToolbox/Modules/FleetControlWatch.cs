@@ -250,7 +250,7 @@ public sealed class FleetControlWatch : TcModule
     public override void DrawConfig()
     {
         var poll = Config.PollSeconds;
-        ImGui.SetNextItemWidth(240f);
+        ImGui.SetNextItemWidth(UiScale.Px(240f));
         if (ImGui.SliderInt("多久問一次（秒）##fleetControlWatchPoll", ref poll, MinPollSeconds, MaxPollSeconds))
         {
             Config.PollSeconds = poll;
@@ -265,7 +265,7 @@ public sealed class FleetControlWatch : TcModule
         }
 
         var minutes = Config.MinIntervalMinutes;
-        ImGui.SetNextItemWidth(240f);
+        ImGui.SetNextItemWidth(UiScale.Px(240f));
         if (ImGui.SliderInt("同一個來源最多多久叫一次（分鐘）##fleetControlWatchInterval", ref minutes, 1, 120))
         {
             Config.MinIntervalMinutes = minutes;
@@ -273,7 +273,7 @@ public sealed class FleetControlWatch : TcModule
         }
 
         var quiet = Config.EmergencyStopQuietSeconds;
-        ImGui.SetNextItemWidth(240f);
+        ImGui.SetNextItemWidth(UiScale.Px(240f));
         if (ImGui.SliderInt("急停之後安靜幾秒##fleetControlWatchQuiet", ref quiet, 0, 600))
         {
             Config.EmergencyStopQuietSeconds = quiet;

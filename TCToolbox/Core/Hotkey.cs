@@ -233,7 +233,7 @@ public static class HotkeyUi
             if (choices[i].Code == config.KeyCode) currentIndex = i;
         }
 
-        ImGui.SetNextItemWidth(200f);
+        ImGui.SetNextItemWidth(UiScale.Px(200f));
         if (ImGui.BeginCombo($"熱鍵##{id}-key", choices[currentIndex].Label))
         {
             for (var i = 0; i < choices.Length; i++)

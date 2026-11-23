@@ -115,11 +115,11 @@ public static class GameIcons
         var wrap = TryGet(effective);
         if (wrap != null)
         {
-            ImGui.Image(wrap.Handle, new System.Numerics.Vector2(24f, 24f));
+            ImGui.Image(wrap.Handle, UiScale.Px(24f, 24f));
             ImGui.SameLine();
         }
 
-        ImGui.SetNextItemWidth(120f);
+        ImGui.SetNextItemWidth(UiScale.Px(120f));
         var value = (int)effective;
         if (ImGui.InputInt(label, ref value))
             apply(value <= 0 ? 0u : (uint)value);

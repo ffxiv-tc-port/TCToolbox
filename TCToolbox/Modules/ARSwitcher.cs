@@ -584,7 +584,7 @@ public sealed class ARSwitcher : TcModule
             return;
 
         ImGui.TableSetupColumn("角色", ImGuiTableColumnFlags.WidthStretch);
-        ImGui.TableSetupColumn("最早回來的僱員", ImGuiTableColumnFlags.WidthFixed, 140f);
+        ImGui.TableSetupColumn("最早回來的僱員", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(140f));
         ImGui.TableHeadersRow();
 
         foreach (var row in BuildVentureRows())

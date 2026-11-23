@@ -381,7 +381,7 @@ public sealed unsafe class DiscardList : TcModule
         ImGui.Spacing();
         ImGui.Separator();
 
-        ImGui.SetNextItemWidth(200f);
+        ImGui.SetNextItemWidth(UiScale.Px(200f));
         var interval = Config.StepIntervalMs;
         if (ImGui.SliderInt("每步間隔（毫秒）", ref interval, 100, 1_000))
             Config.StepIntervalMs = Math.Clamp(interval, 0, 5_000);
@@ -401,7 +401,7 @@ public sealed unsafe class DiscardList : TcModule
         ImGui.TextUnformatted($"丟棄清單（{Config.Items.Count} 項）");
 
         // 目前清單：逐項可移除。
-        using (var child = ImRaii.Child("DiscardListItems", new Vector2(-1f, 120f), true))
+        using (var child = ImRaii.Child("DiscardListItems", new Vector2(-1f, UiScale.Px(120f)), true))
         {
             if (child)
             {
@@ -431,13 +431,13 @@ public sealed unsafe class DiscardList : TcModule
         }
 
         // 搜尋新增。
-        ImGui.SetNextItemWidth(260f);
+        ImGui.SetNextItemWidth(UiScale.Px(260f));
         if (ImGui.InputTextWithHint("##DiscardSearch", "搜尋道具名稱以新增…", ref itemSearchInput, 100))
             RecomputeSearch();
 
         if (itemSearchResults.Count > 0)
         {
-            using var child = ImRaii.Child("DiscardSearchResults", new Vector2(-1f, 140f), true);
+            using var child = ImRaii.Child("DiscardSearchResults", new Vector2(-1f, UiScale.Px(140f)), true);
             if (child)
             {
                 foreach (var item in itemSearchResults)
@@ -550,7 +550,7 @@ public sealed unsafe class DiscardList : TcModule
         }
 
         // 逐件列出，各自一顆「丟棄」按鈕。
-        using var listChild = ImRaii.Child("DiscardMatches", new Vector2(-1f, 160f), true);
+        using var listChild = ImRaii.Child("DiscardMatches", new Vector2(-1f, UiScale.Px(160f)), true);
         if (!listChild) return;
 
         for (var i = 0; i < matches.Count; i++)

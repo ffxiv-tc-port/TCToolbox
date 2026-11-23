@@ -126,7 +126,7 @@ public sealed class AutoRetarget : TcModule
 
     public override void DrawConfig()
     {
-        ImGui.SetNextItemWidth(180f);
+        ImGui.SetNextItemWidth(UiScale.Px(180f));
         var distance = Config.MaxDistance;
         if (ImGui.SliderFloat("搜尋距離（公尺）", ref distance, 5f, 55f, "%.0f"))
         {
@@ -134,7 +134,7 @@ public sealed class AutoRetarget : TcModule
             Plugin.Instance.Config.Save();
         }
 
-        ImGui.SetNextItemWidth(180f);
+        ImGui.SetNextItemWidth(UiScale.Px(180f));
         var interval = Config.PollIntervalMs;
         if (ImGui.SliderInt("檢查間隔（毫秒）", ref interval, 100, 2_000))
         {

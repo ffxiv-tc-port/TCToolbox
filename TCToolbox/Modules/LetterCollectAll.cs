@@ -534,7 +534,7 @@ public sealed unsafe class LetterCollectAll : TcModule
         ImGui.Spacing();
         ImGui.Separator();
 
-        ImGui.SetNextItemWidth(200f);
+        ImGui.SetNextItemWidth(UiScale.Px(200f));
         var interval = Config.StepIntervalMs;
         if (ImGui.SliderInt("每步間隔（毫秒）", ref interval, 100, 2_000))
             Config.StepIntervalMs = Math.Clamp(interval, 0, 10_000);

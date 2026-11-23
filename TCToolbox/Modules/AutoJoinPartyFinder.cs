@@ -289,7 +289,7 @@ public sealed unsafe class AutoJoinPartyFinder : TcModule
 
     public override void DrawConfig()
     {
-        ImGui.SetNextItemWidth(200f);
+        ImGui.SetNextItemWidth(UiScale.Px(200f));
         var delay = Config.DelayMs;
         if (ImGui.SliderInt("詳細視窗開啟後的延遲（毫秒）##pfJoinDelay", ref delay, 0, 3_000))
         {
@@ -306,7 +306,7 @@ public sealed unsafe class AutoJoinPartyFinder : TcModule
             if (SelectableKeys[i].Code == Config.CancelKeyCode) currentIndex = i;
         }
 
-        ImGui.SetNextItemWidth(200f);
+        ImGui.SetNextItemWidth(UiScale.Px(200f));
         if (ImGui.BeginCombo("取消鍵##pfJoinCancelKey", SelectableKeys[currentIndex].Label))
         {
             for (var i = 0; i < SelectableKeys.Length; i++)

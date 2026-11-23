@@ -325,8 +325,8 @@ public sealed unsafe class OptimizedFreeShop : TcModule
                 using (ImRaii.Disabled(queue.IsBusy || group.Remaining == 0))
                 {
                     var clicked = group.IconId != 0
-                                      ? GameIcons.IconButton(group.IconId, group.Name, 30f, group.Remaining == 0)
-                                      : ImGui.Button(group.Name, new Vector2(0, 30f));
+                                      ? GameIcons.IconButton(group.IconId, group.Name, UiScale.Px(30f), group.Remaining == 0)
+                                      : ImGui.Button(group.Name, new Vector2(0, UiScale.Px(30f)));
 
                     if (clicked) StartBatch(group);
                 }

@@ -300,7 +300,7 @@ public sealed unsafe class AutoCrafterGathererManual : TcModule
 
     public override void DrawConfig()
     {
-        ImGui.SetNextItemWidth(160f);
+        ImGui.SetNextItemWidth(UiScale.Px(160f));
         var poll = Config.PollSeconds;
         if (ImGui.SliderInt("檢查間隔（秒）", ref poll, 5, 120))
         {

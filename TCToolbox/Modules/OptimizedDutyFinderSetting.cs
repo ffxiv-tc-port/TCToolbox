@@ -300,7 +300,7 @@ public sealed unsafe class OptimizedDutyFinderSetting : TcModule
 
     public override void DrawConfig()
     {
-        ImGui.SetNextItemWidth(180f);
+        ImGui.SetNextItemWidth(UiScale.Px(180f));
         var size = Config.ButtonSize;
         if (ImGui.SliderFloat("按鈕大小", ref size, 20f, 48f, "%.0f"))
         {

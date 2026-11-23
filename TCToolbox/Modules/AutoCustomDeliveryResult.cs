@@ -63,7 +63,7 @@ public sealed unsafe class AutoCustomDeliveryResult : TcModule
 
     public override void DrawConfig()
     {
-        ImGui.SetNextItemWidth(180f);
+        ImGui.SetNextItemWidth(UiScale.Px(180f));
         var delay = Config.DelayMs;
         if (ImGui.SliderInt("確認間隔（毫秒）", ref delay, 200, 3_000))
         {

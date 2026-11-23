@@ -678,7 +678,7 @@ public sealed unsafe class CabinetStoreAll : TcModule
         ImGui.TextUnformatted("在收藏櫃視窗上方顯示按鈕。這裡只有節奏設定，實際操作在那顆按鈕上。");
         ImGui.Spacing();
 
-        ImGui.SetNextItemWidth(160f);
+        ImGui.SetNextItemWidth(UiScale.Px(160f));
         var interval = Config.IntervalMs;
         if (ImGui.SliderInt("每件之間的間隔（毫秒）", ref interval, 100, 2_000))
         {
@@ -693,7 +693,7 @@ public sealed unsafe class CabinetStoreAll : TcModule
                 "⚠️ 台服的速率限制沒有公開數字；調到很低而遇到斷線時請調回來。");
         }
 
-        ImGui.SetNextItemWidth(160f);
+        ImGui.SetNextItemWidth(UiScale.Px(160f));
         var timeout = Config.ConfirmTimeoutMs;
         if (ImGui.SliderInt("等待伺服器確認的上限（毫秒）", ref timeout, 1_000, 15_000))
         {

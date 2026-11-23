@@ -1195,7 +1195,7 @@ public sealed unsafe class FcActionAutoUse : TcModule
         }
 
         var threshold = Config.LowStockThreshold;
-        ImGui.SetNextItemWidth(100f);
+        ImGui.SetNextItemWidth(UiScale.Px(100f));
         if (ImGui.InputInt("庫存剩幾個以下就提醒##fcaLow", ref threshold))
         {
             Config.LowStockThreshold = Math.Clamp(threshold, 0, 15);

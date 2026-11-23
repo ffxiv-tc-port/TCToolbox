@@ -613,11 +613,11 @@ public sealed unsafe partial class WeeklyBingoAdvisor : TcModule
             ImGuiTableFlags.RowBg | ImGuiTableFlags.Borders | ImGuiTableFlags.SizingStretchProp);
         if (!table) return;
 
-        ImGui.TableSetupColumn("#", ImGuiTableColumnFlags.WidthFixed, 28f);
+        ImGui.TableSetupColumn("#", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(28f));
         ImGui.TableSetupColumn("天書項目", ImGuiTableColumnFlags.WidthStretch, 1.3f);
         ImGui.TableSetupColumn("會開啟", ImGuiTableColumnFlags.WidthStretch, 1.2f);
         ImGui.TableSetupColumn("1／2／3 條線", ImGuiTableColumnFlags.WidthStretch, 1.4f);
-        ImGui.TableSetupColumn("", ImGuiTableColumnFlags.WidthFixed, 56f);
+        ImGui.TableSetupColumn("", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(56f));
         if (withAutoDuty)
             ImGui.TableSetupColumn("AutoDuty", ImGuiTableColumnFlags.WidthStretch, 1f);
         ImGui.TableHeadersRow();

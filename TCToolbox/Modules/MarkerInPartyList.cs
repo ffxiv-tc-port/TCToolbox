@@ -180,7 +180,7 @@ public sealed unsafe class MarkerInPartyList : TcModule
 
     public override void DrawConfig()
     {
-        ImGui.SetNextItemWidth(180f);
+        ImGui.SetNextItemWidth(UiScale.Px(180f));
         var size = Config.IconSize;
         if (ImGui.SliderFloat("圖示大小", ref size, 12f, 48f, "%.0f"))
         {
@@ -188,7 +188,7 @@ public sealed unsafe class MarkerInPartyList : TcModule
             Plugin.Instance.Config.Save();
         }
 
-        ImGui.SetNextItemWidth(180f);
+        ImGui.SetNextItemWidth(UiScale.Px(180f));
         var offset = new Vector2(Config.OffsetX, Config.OffsetY);
         if (ImGui.InputFloat2("圖示偏移（X／Y）", ref offset))
         {

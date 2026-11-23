@@ -362,7 +362,7 @@ public sealed unsafe class OptimizedTargetInfo : TcModule
 
         if (Config.NativeText)
         {
-            ImGui.SetNextItemWidth(180f);
+            ImGui.SetNextItemWidth(UiScale.Px(180f));
             var nativeFontSize = Config.NativeFontSize;
             if (ImGui.SliderInt("原生文字大小", ref nativeFontSize, 10, 32))
             {
@@ -407,7 +407,7 @@ public sealed unsafe class OptimizedTargetInfo : TcModule
             Plugin.Instance.Config.Save();
         }
 
-        ImGui.SetNextItemWidth(180f);
+        ImGui.SetNextItemWidth(UiScale.Px(180f));
         var textScale = Config.TextScale;
         if (ImGui.SliderFloat("文字大小倍率", ref textScale, 0.6f, 2f, "%.2f"))
         {
@@ -428,7 +428,7 @@ public sealed unsafe class OptimizedTargetInfo : TcModule
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("勾選後，文字會隨 HUD 配置裡目標情報的縮放一起放大縮小。\n不勾＝維持原本的字級，只看上面的倍率。");
 
-        ImGui.SetNextItemWidth(180f);
+        ImGui.SetNextItemWidth(UiScale.Px(180f));
         var targetOffset = new Vector2(Config.TargetOffsetX, Config.TargetOffsetY);
         if (ImGui.InputFloat2("目標文字偏移", ref targetOffset))
         {
@@ -437,7 +437,7 @@ public sealed unsafe class OptimizedTargetInfo : TcModule
             Plugin.Instance.Config.Save();
         }
 
-        ImGui.SetNextItemWidth(180f);
+        ImGui.SetNextItemWidth(UiScale.Px(180f));
         var focusOffset = new Vector2(Config.FocusOffsetX, Config.FocusOffsetY);
         if (ImGui.InputFloat2("焦點目標文字偏移", ref focusOffset))
         {
@@ -446,7 +446,7 @@ public sealed unsafe class OptimizedTargetInfo : TcModule
             Plugin.Instance.Config.Save();
         }
 
-        ImGui.SetNextItemWidth(180f);
+        ImGui.SetNextItemWidth(UiScale.Px(180f));
         var buttonOffset = new Vector2(Config.ClearFocusButtonOffsetX, Config.ClearFocusButtonOffsetY);
         if (ImGui.InputFloat2("清除焦點按鈕偏移", ref buttonOffset))
         {

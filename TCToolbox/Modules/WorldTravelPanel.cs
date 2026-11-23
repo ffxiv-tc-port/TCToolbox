@@ -774,7 +774,7 @@ public sealed partial class WorldTravelPanel : TcModule
             return;
         }
 
-        var buttonWidth = Math.Max(120f, (ImGui.GetContentRegionAvail().X - (3 * 8f)) / 4f);
+        var buttonWidth = Math.Max(UiScale.Px(120f), (ImGui.GetContentRegionAvail().X - (3 * 8f)) / 4f);
         var column = 0;
 
         foreach (var entry in worlds)

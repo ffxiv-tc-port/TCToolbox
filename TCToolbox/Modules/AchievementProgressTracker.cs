@@ -227,7 +227,7 @@ public sealed unsafe class AchievementProgressTracker : TcModule
 
     private void DrawSearch()
     {
-        ImGui.SetNextItemWidth(240f);
+        ImGui.SetNextItemWidth(UiScale.Px(240f));
         var filter = searchFilter;
         if (ImGui.InputTextWithHint("##achievementSearch", "搜尋成就名稱…", ref filter, 64))
             searchFilter = filter;
@@ -246,7 +246,7 @@ public sealed unsafe class AchievementProgressTracker : TcModule
         }
 
         using var child = ImRaii.Child("TCToolboxAchievementSearch",
-                                       new Vector2(ImGui.GetContentRegionAvail().X, 150f), true);
+                                       new Vector2(ImGui.GetContentRegionAvail().X, UiScale.Px(150f)), true);
         if (!child) return;
 
         foreach (var (id, name, points) in searchResults)
@@ -325,8 +325,8 @@ public sealed unsafe class AchievementProgressTracker : TcModule
             return;
 
         ImGui.TableSetupColumn("成就", ImGuiTableColumnFlags.WidthStretch);
-        ImGui.TableSetupColumn("進度", ImGuiTableColumnFlags.WidthFixed, 170f);
-        ImGui.TableSetupColumn("操作", ImGuiTableColumnFlags.WidthFixed, 110f);
+        ImGui.TableSetupColumn("進度", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(170f));
+        ImGui.TableSetupColumn("操作", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(110f));
         ImGui.TableHeadersRow();
 
         TrackedAchievementEntry? removing = null;
@@ -415,7 +415,7 @@ public sealed unsafe class AchievementProgressTracker : TcModule
             Plugin.Instance.Config.Save();
         }
 
-        ImGui.SetNextItemWidth(160f);
+        ImGui.SetNextItemWidth(UiScale.Px(160f));
         var interval = Config.RequestIntervalMs;
         if (ImGui.SliderInt("每筆之間的間隔（毫秒）", ref interval, 200, 5000))
         {
@@ -426,7 +426,7 @@ public sealed unsafe class AchievementProgressTracker : TcModule
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("伺服器對成就進度查詢的速率限制未知，這個間隔刻意留得保守。");
 
-        ImGui.SetNextItemWidth(160f);
+        ImGui.SetNextItemWidth(UiScale.Px(160f));
         var timeout = Config.ResponseTimeoutMs;
         if (ImGui.SliderInt("等待回應逾時（毫秒）", ref timeout, 3000, 20000))
         {

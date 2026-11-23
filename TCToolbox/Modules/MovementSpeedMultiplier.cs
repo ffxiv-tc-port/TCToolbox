@@ -645,7 +645,7 @@ public sealed unsafe class MovementSpeedMultiplier : TcModule
         ImGui.Separator();
 
         var multiplier = ClampedConfigMultiplier();
-        ImGui.SetNextItemWidth(240f);
+        ImGui.SetNextItemWidth(UiScale.Px(240f));
         if (ImGui.SliderFloat($"倍率（{MinMultiplier:0.00}～{MaxMultiplier:0.00}）##speedMultiplier",
                 ref multiplier, MinMultiplier, MaxMultiplier, "%.2f"))
         {
@@ -700,7 +700,7 @@ public sealed unsafe class MovementSpeedMultiplier : TcModule
     private void DrawNearbyGuardOptions()
     {
         var radius = NearbyPlayerGuard.EffectiveRadius(Config.OthersNearbyRadius);
-        ImGui.SetNextItemWidth(240f);
+        ImGui.SetNextItemWidth(UiScale.Px(240f));
         if (ImGui.SliderFloat("半徑##speedNearbyRadius", ref radius, 0f, NearbyPlayerGuard.MaxRadius,
                 radius <= 0f ? "%.0f（不限距離）" : "%.0f 米"))
         {
@@ -881,7 +881,7 @@ public sealed unsafe class MovementSpeedMultiplier : TcModule
 
     private void DrawMapPicker()
     {
-        ImGui.SetNextItemWidth(240f);
+        ImGui.SetNextItemWidth(UiScale.Px(240f));
         using var combo = ImRaii.Combo("搜尋加入##speedMapPicker", "搜尋地名或副本名…");
         if (!combo) return;
 

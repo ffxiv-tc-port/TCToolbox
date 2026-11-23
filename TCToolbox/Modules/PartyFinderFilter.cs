@@ -393,7 +393,7 @@ public sealed class PartyFinderFilter : TcModule
                 ImGui.TextDisabled("各職能上限（-1＝不看這個職能）：");
                 for (var i = 0; i < 6; i++)
                 {
-                    ImGui.SetNextItemWidth(80f);
+                    ImGui.SetNextItemWidth(UiScale.Px(80f));
                     var v = Config.RoleCaps[i];
                     if (ImGui.InputInt($"{RoleLabels[i]}##roleCap{i}", ref v))
                     {
@@ -435,7 +435,7 @@ public sealed class PartyFinderFilter : TcModule
             }
 
             ImGui.SameLine();
-            ImGui.SetNextItemWidth(280f);
+            ImGui.SetNextItemWidth(UiScale.Px(280f));
             var pattern = rule.Pattern;
             if (ImGui.InputText($"##rx{i}", ref pattern, 500))
                 rule.Pattern = pattern;

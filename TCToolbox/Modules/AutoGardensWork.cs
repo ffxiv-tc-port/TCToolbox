@@ -1211,7 +1211,7 @@ public sealed unsafe partial class AutoGardensWork : TcModule
             ? "（未選擇）"
             : items.FirstOrDefault(x => x.Id == currentId).Name ?? $"#{currentId}";
 
-        ImGui.SetNextItemWidth(280f);
+        ImGui.SetNextItemWidth(UiScale.Px(280f));
         if (!ImGui.BeginCombo($"{label}##combo", current)) return;
 
         ImGui.SetNextItemWidth(-1f);

@@ -688,7 +688,7 @@ public sealed class PalacePalOnMappy : TcModule
                 + "需要 Palace Pal 有這組端點；沒有的話這個選項不會有任何作用。");
         }
 
-        ImGui.SetNextItemWidth(160f);
+        ImGui.SetNextItemWidth(UiScale.Px(160f));
         var seconds = Config.RefreshSeconds;
         if (ImGui.SliderInt("重新整理間隔（秒）", ref seconds, 1, 30))
         {

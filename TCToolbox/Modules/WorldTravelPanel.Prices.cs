@@ -146,7 +146,7 @@ public sealed partial class WorldTravelPanel
     private void DrawPriceControls()
     {
         var itemId = priceItemIdInput;
-        ImGui.SetNextItemWidth(140f);
+        ImGui.SetNextItemWidth(UiScale.Px(140f));
         if (ImGui.InputInt("道具編號##WorldTravelPriceItem", ref itemId))
             priceItemIdInput = Math.Clamp(itemId, 0, int.MaxValue);
 
@@ -327,10 +327,10 @@ public sealed partial class WorldTravelPanel
         {
             if (table)
             {
-                ImGui.TableSetupColumn("世界", ImGuiTableColumnFlags.WidthFixed, 110f);
+                ImGui.TableSetupColumn("世界", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(110f));
                 ImGui.TableSetupColumn("普通品最低", ImGuiTableColumnFlags.WidthStretch);
                 ImGui.TableSetupColumn("高品質最低", ImGuiTableColumnFlags.WidthStretch);
-                ImGui.TableSetupColumn("資料時間", ImGuiTableColumnFlags.WidthFixed, 110f);
+                ImGui.TableSetupColumn("資料時間", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(110f));
                 ImGui.TableHeadersRow();
 
                 foreach (var (id, worldName) in dcWorlds)

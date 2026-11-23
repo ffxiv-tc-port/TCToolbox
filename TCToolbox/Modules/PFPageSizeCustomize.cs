@@ -216,7 +216,7 @@ public sealed unsafe class PFPageSizeCustomize : TcModule
             return;
         }
 
-        ImGui.SetNextItemWidth(200f);
+        ImGui.SetNextItemWidth(UiScale.Px(200f));
         var pageSize = PageSize;
         if (ImGui.SliderInt("單頁筆數", ref pageSize, MinPageSize, MaxPageSize))
         {

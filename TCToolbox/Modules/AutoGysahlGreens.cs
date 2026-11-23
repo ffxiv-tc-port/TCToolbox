@@ -207,7 +207,7 @@ public sealed unsafe class AutoGysahlGreens : TcModule
 
     public override void DrawConfig()
     {
-        ImGui.SetNextItemWidth(160f);
+        ImGui.SetNextItemWidth(UiScale.Px(160f));
         var threshold = Config.ThresholdMinutes;
         if (ImGui.SliderInt("剩餘時間門檻（分鐘）", ref threshold, 1, 25))
         {

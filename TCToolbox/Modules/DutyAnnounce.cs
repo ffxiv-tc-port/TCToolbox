@@ -267,7 +267,7 @@ public sealed class DutyAnnounce : TcModule
         ImGui.Spacing();
         ImGui.Separator();
 
-        ImGui.SetNextItemWidth(200f);
+        ImGui.SetNextItemWidth(UiScale.Px(200f));
         var delay = Config.DelayMs;
         if (ImGui.SliderInt("觸發後先等（毫秒）", ref delay, 0, 10_000))
             Config.DelayMs = Math.Clamp(delay, 0, 60_000);
@@ -303,7 +303,7 @@ public sealed class DutyAnnounce : TcModule
         var channelRow = getChannel();
         var currentName = TextCommands.DisplayName(channelRow) ?? $"頻道 #{channelRow}";
 
-        ImGui.SetNextItemWidth(200f);
+        ImGui.SetNextItemWidth(UiScale.Px(200f));
         using (var combo = ImRaii.Combo($"頻道##{id}Channel", currentName))
         {
             if (combo)

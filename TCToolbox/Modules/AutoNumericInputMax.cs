@@ -149,7 +149,7 @@ public sealed unsafe class AutoNumericInputMax : TcModule
         ImGui.TextDisabled("只放大原本上限＝99 的輸入框，動一次就收手，不會一直改回去。");
 
         var maxValue = Config.MaxValue;
-        ImGui.SetNextItemWidth(120f);
+        ImGui.SetNextItemWidth(UiScale.Px(120f));
         if (ImGui.InputInt("放寬後的上限", ref maxValue))
         {
             Config.MaxValue = Math.Clamp(maxValue, DefaultCap + 1, 9999);

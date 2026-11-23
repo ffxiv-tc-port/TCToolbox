@@ -1039,7 +1039,7 @@ public sealed unsafe class RetainerBatchRetrieve : TcModule
                         ? known
                         : $"{Config.FilterKey}（這份清單目前不在 AllaganTools 的搜尋清單裡）";
 
-        ImGui.SetNextItemWidth(320f);
+        ImGui.SetNextItemWidth(UiScale.Px(320f));
         if (ImGui.BeginCombo("取回範圍##retainerBatchRetrieveScope", label))
         {
             if (ImGui.Selectable("全部（不篩選）", !UsesCraftShortage && !useCustom && Config.FilterKey.Length == 0))
@@ -1105,7 +1105,7 @@ public sealed unsafe class RetainerBatchRetrieve : TcModule
         if (useCustom)
         {
             var custom = Config.CustomFilterName;
-            ImGui.SetNextItemWidth(320f);
+            ImGui.SetNextItemWidth(UiScale.Px(320f));
             if (ImGui.InputTextWithHint("##retainerBatchRetrieveCustom", "AllaganTools 清單名稱或 key…", ref custom, 128))
             {
                 Config.CustomFilterName = custom;
@@ -1256,7 +1256,7 @@ public sealed unsafe class RetainerBatchRetrieve : TcModule
     private void DrawOptions()
     {
         var interval = Config.StepIntervalMs;
-        ImGui.SetNextItemWidth(240f);
+        ImGui.SetNextItemWidth(UiScale.Px(240f));
         if (ImGui.SliderInt("每次取回之間的間隔（毫秒）##retainerBatchRetrieveInterval", ref interval, 100, 2_000))
         {
             Config.StepIntervalMs = interval;

@@ -118,14 +118,14 @@ public sealed unsafe class SelectableRecruitmentText : TcModule
                                        ImGuiWindowFlags.AlwaysAutoResize;
 
         ImGui.SetNextWindowPos(new Vector2(anchorX + 4, anchorY), ImGuiCond.Always);
-        ImGui.SetNextWindowSizeConstraints(new Vector2(220, 0), new Vector2(360, 640));
+        ImGui.SetNextWindowSizeConstraints(new Vector2(UiScale.Px(220), 0), UiScale.Px(360, 640));
 
         if (ImGui.Begin("###TCToolboxSelectableRecruitmentText", flags))
         {
             ImGui.TextDisabled("招募說明（可反白複製）");
 
             var lines = Math.Clamp(currentText.Split('\n').Length + 1, 3, 14);
-            var size = new Vector2(340, ImGui.GetTextLineHeight() * lines);
+            var size = new Vector2(UiScale.Px(340), ImGui.GetTextLineHeight() * lines);
             var buffer = currentText;
             ImGui.InputTextMultiline("##pfDescCopy", ref buffer, 4096, size, ImGuiInputTextFlags.ReadOnly);
 

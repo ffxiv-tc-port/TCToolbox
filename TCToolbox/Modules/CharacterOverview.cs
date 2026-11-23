@@ -748,7 +748,7 @@ public sealed unsafe class CharacterOverview : TcModule
             ImGui.TableSetupScrollFreeze(0, 1);
             foreach (var (name, _, width) in Columns)
             {
-                if (width > 0) ImGui.TableSetupColumn(name, ImGuiTableColumnFlags.WidthFixed, width);
+                if (width > 0) ImGui.TableSetupColumn(name, ImGuiTableColumnFlags.WidthFixed, UiScale.Px(width));
                 else ImGui.TableSetupColumn(name, ImGuiTableColumnFlags.WidthStretch);
             }
 

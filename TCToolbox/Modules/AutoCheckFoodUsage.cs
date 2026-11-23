@@ -350,7 +350,7 @@ public sealed unsafe class AutoCheckFoodUsage : TcModule
 
         ImGui.Separator();
         var threshold = Config.RefreshThresholdSeconds;
-        ImGui.SetNextItemWidth(120f);
+        ImGui.SetNextItemWidth(UiScale.Px(120f));
         if (ImGui.InputInt("剩餘幾秒內就補充", ref threshold))
         {
             Config.RefreshThresholdSeconds = Math.Clamp(threshold, 0, 3600);
@@ -383,7 +383,7 @@ public sealed unsafe class AutoCheckFoodUsage : TcModule
     {
         ImGui.TextDisabled("加入食物：");
         ImGui.SameLine();
-        ImGui.SetNextItemWidth(240f);
+        ImGui.SetNextItemWidth(UiScale.Px(240f));
         var previewName = pendingFoodId == 0 ? "（挑一個食物）" : FoodName(pendingFoodId);
         using (var combo = ImRaii.Combo("##FoodPick", previewName))
         {
@@ -465,7 +465,7 @@ public sealed unsafe class AutoCheckFoodUsage : TcModule
 
     private void DrawJobMultiSelect(FoodPreset preset)
     {
-        ImGui.SetNextItemWidth(240f);
+        ImGui.SetNextItemWidth(UiScale.Px(240f));
         var preview = preset.Jobs.Count == 0 ? "所有職業" : $"限 {preset.Jobs.Count} 個職業";
         using var combo = ImRaii.Combo("限定職業##job", preview);
         if (!combo) return;
@@ -496,7 +496,7 @@ public sealed unsafe class AutoCheckFoodUsage : TcModule
 
     private void DrawZoneMultiSelect(FoodPreset preset)
     {
-        ImGui.SetNextItemWidth(240f);
+        ImGui.SetNextItemWidth(UiScale.Px(240f));
         var preview = preset.Zones.Count == 0 ? "所有區域" : $"限 {preset.Zones.Count} 個區域";
         using var combo = ImRaii.Combo("限定區域##zone", preview);
         if (!combo) return;
@@ -548,7 +548,7 @@ public sealed unsafe class AutoCheckFoodUsage : TcModule
 
     private void DrawConditionMultiSelect(string label, string id, HashSet<uint> target)
     {
-        ImGui.SetNextItemWidth(240f);
+        ImGui.SetNextItemWidth(UiScale.Px(240f));
         using var combo = ImRaii.Combo(label + id, $"已選 {target.Count} 個");
         if (!combo) return;
 

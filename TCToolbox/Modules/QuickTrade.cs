@@ -389,7 +389,7 @@ public sealed unsafe class QuickTrade : TcModule
             if (SelectableKeys[i].Code == Config.ModifierKeyCode) currentIndex = i;
         }
 
-        ImGui.SetNextItemWidth(180f);
+        ImGui.SetNextItemWidth(UiScale.Px(180f));
         if (ImGui.BeginCombo("觸發鍵", SelectableKeys[currentIndex].Label))
         {
             for (var i = 0; i < SelectableKeys.Length; i++)

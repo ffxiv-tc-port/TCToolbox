@@ -199,7 +199,7 @@ public sealed class LoginCommands : TcModule
 
         ImGui.Spacing();
 
-        ImGui.SetNextItemWidth(200f);
+        ImGui.SetNextItemWidth(UiScale.Px(200f));
         var initialDelay = Config.InitialDelayMs;
         if (ImGui.SliderInt("登入後先等（毫秒）", ref initialDelay, 0, 30_000))
             Config.InitialDelayMs = Math.Clamp(initialDelay, 0, 120_000);
@@ -209,7 +209,7 @@ public sealed class LoginCommands : TcModule
             ImGui.SetTooltip("從「角色已經站在地圖上」那一刻起再等這麼久才開始跑第一條。\n" +
                              "太短的話有些插件還沒載入完，它們的指令會被當成不存在而失敗。");
 
-        ImGui.SetNextItemWidth(200f);
+        ImGui.SetNextItemWidth(UiScale.Px(200f));
         var interval = Config.IntervalMs;
         if (ImGui.SliderInt("每條之間隔（毫秒）", ref interval, 100, 5_000))
             Config.IntervalMs = Math.Clamp(interval, 0, 60_000);

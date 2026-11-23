@@ -397,7 +397,7 @@ public sealed unsafe class AutoMateriaRetrieveAll : TcModule
         ImGui.TextDisabled("關閉時模組仍然掛著但不會接手，等同只保留遊戲原本的行為。");
 
         var delay = Config.DelayMs;
-        ImGui.SetNextItemWidth(200f);
+        ImGui.SetNextItemWidth(UiScale.Px(200f));
         if (ImGui.SliderInt("每顆之間的間隔（毫秒）##materiaRetrieveAllDelay", ref delay, 200, 3000))
         {
             Config.DelayMs = Math.Clamp(delay, 200, 3000);

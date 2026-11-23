@@ -141,7 +141,7 @@ public sealed unsafe class AutoRefreshPartyFinder : TcModule
 
     public override void DrawConfig()
     {
-        ImGui.SetNextItemWidth(200f);
+        ImGui.SetNextItemWidth(UiScale.Px(200f));
         var interval = IntervalSeconds;
         if (ImGui.SliderInt("刷新間隔（秒）", ref interval, MinIntervalSeconds, MaxIntervalSeconds))
         {

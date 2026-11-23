@@ -223,7 +223,7 @@ public sealed class QueueCombatTeleport : TcModule
 
         ImGui.TextDisabled("戰鬥中從清單挑目的地會排隊，戰鬥結束後自動傳送；不在戰鬥中則立即傳送。");
 
-        ImGui.SetNextItemWidth(160f);
+        ImGui.SetNextItemWidth(UiScale.Px(160f));
         var delay = Config.DelayMs;
         if (ImGui.SliderInt("脫戰後延遲（毫秒）", ref delay, 0, 5000))
         {
@@ -245,7 +245,7 @@ public sealed class QueueCombatTeleport : TcModule
     {
         if (!windowOpen) return;
 
-        ImGui.SetNextWindowSize(new Vector2(420, 460), ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowSize(UiScale.Px(420, 460), ImGuiCond.FirstUseEver);
         if (ImGui.Begin($"{DisplayName}###TCToolboxQueueCombatTeleport", ref windowOpen))
             DrawContent();
         ImGui.End();

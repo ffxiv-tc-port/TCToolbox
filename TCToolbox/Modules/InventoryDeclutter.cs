@@ -623,7 +623,7 @@ public sealed class InventoryDeclutter : TcModule
         }
 
         ImGui.Spacing();
-        ImGui.SetNextItemWidth(200f);
+        ImGui.SetNextItemWidth(UiScale.Px(200f));
         var seconds = Math.Max(1, Config.SegmentTimeoutMs / 1_000);
         if (ImGui.SliderInt("單段時間上限（秒）##declutterTimeout", ref seconds, 60, 900))
         {

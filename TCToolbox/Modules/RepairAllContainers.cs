@@ -247,7 +247,7 @@ public sealed unsafe class RepairAllContainers : TcModule
 
     public override void DrawConfig()
     {
-        ImGui.SetNextItemWidth(160f);
+        ImGui.SetNextItemWidth(UiScale.Px(160f));
         var interval = Config.StepIntervalMs;
         if (ImGui.SliderInt("每個容器之間的間隔（毫秒）", ref interval, 0, 2000))
         {

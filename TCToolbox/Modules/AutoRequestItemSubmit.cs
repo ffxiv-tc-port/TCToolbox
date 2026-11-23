@@ -655,7 +655,7 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
 
     public override void DrawConfig()
     {
-        ImGui.SetNextItemWidth(180f);
+        ImGui.SetNextItemWidth(UiScale.Px(180f));
         var delay = Config.DelayMs;
         if (ImGui.SliderInt("動作間隔（毫秒）", ref delay, 200, 3_000))
         {
@@ -666,7 +666,7 @@ public sealed unsafe class AutoRequestItemSubmit : TcModule
         using (ImRaii.PushIndent())
             ImGui.TextDisabled("每填一格／按一次鈕之間的最短間隔，同時也是最短反應時間。");
 
-        ImGui.SetNextItemWidth(240f);
+        ImGui.SetNextItemWidth(UiScale.Px(240f));
         var preferenceIndex = (int)Config.QualityPreference;
         if (ImGui.Combo("品質偏好", ref preferenceIndex, QualityPreferenceLabels, QualityPreferenceLabels.Length))
         {

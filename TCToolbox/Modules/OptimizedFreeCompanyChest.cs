@@ -231,7 +231,7 @@ public sealed unsafe class OptimizedFreeCompanyChest : TcModule
         var current = Config.DefaultPage;
         var preview = IsSelectable(current) ? DescribePage(current) : "不切換（維持遊戲預設）";
 
-        ImGui.SetNextItemWidth(220f);
+        ImGui.SetNextItemWidth(UiScale.Px(220f));
         using (var combo = ImRaii.Combo("開啟時切換到", preview))
         {
             if (combo)

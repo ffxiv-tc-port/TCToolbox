@@ -954,7 +954,7 @@ public sealed unsafe partial class AutoGardensWork
 
         using var indent = ImRaii.PushIndent();
 
-        ImGui.SetNextItemWidth(220f);
+        ImGui.SetNextItemWidth(UiScale.Px(220f));
         var seconds = Config.AutoLoopIntervalSeconds;
         if (ImGui.SliderInt("重跑間隔（秒）", ref seconds, AutoLoopMinSeconds, 600))
         {
@@ -1079,7 +1079,7 @@ public sealed unsafe partial class AutoGardensWork
     {
         if (current < 0 || current >= labels.Length) current = 0;
 
-        ImGui.SetNextItemWidth(280f);
+        ImGui.SetNextItemWidth(UiScale.Px(280f));
         var open = ImGui.BeginCombo($"{label}##gardenPolicy", labels[current]);
 
         if (tooltip != null && ImGui.IsItemHovered()) ImGui.SetTooltip(tooltip);

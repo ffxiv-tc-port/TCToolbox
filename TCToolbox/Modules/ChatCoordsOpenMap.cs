@@ -248,7 +248,7 @@ public sealed class ChatCoordsOpenMap : TcModule
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("戰鬥中被彈出地圖很干擾；關掉這格的話副本裡也會照開。");
 
-        ImGui.SetNextItemWidth(160f);
+        ImGui.SetNextItemWidth(UiScale.Px(160f));
         var dedupe = Config.DedupeSeconds;
         if (ImGui.SliderInt("重複座標的冷卻（秒）", ref dedupe, 0, 60))
         {
@@ -263,7 +263,7 @@ public sealed class ChatCoordsOpenMap : TcModule
 
         using var indent = ImRaii.PushIndent();
         using var child = ImRaii.Child("TCToolboxCoordsChannels",
-                                       new Vector2(ImGui.GetContentRegionAvail().X, 220f), true);
+                                       new Vector2(ImGui.GetContentRegionAvail().X, UiScale.Px(220f)), true);
         if (!child) return;
 
         foreach (var (type, _) in Channels)

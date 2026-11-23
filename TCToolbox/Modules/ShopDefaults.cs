@@ -313,7 +313,7 @@ public sealed unsafe class ShopDefaults : TcModule
         var current = Config.GrandCompanyDefaultTab;
         var index = IsSelectableTab(current) ? current + 1 : 0;
 
-        ImGui.SetNextItemWidth(280f);
+        ImGui.SetNextItemWidth(UiScale.Px(280f));
         if (ImGui.Combo("軍票商店預設分頁", ref index, labels, labels.Length))
         {
             Config.GrandCompanyDefaultTab = index <= 0 ? NoDefaultTab : index - 1;

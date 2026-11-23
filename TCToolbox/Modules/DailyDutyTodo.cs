@@ -1096,7 +1096,7 @@ public sealed class DailyDutyTodo : TcModule
         var chosen = Config.TreasureMapItemId;
         var preview = chosen == 0 ? "（還沒選）" : IsMapChoice(chosen) ? FindMapName(chosen) : $"道具 {chosen}（?）";
 
-        ImGui.SetNextItemWidth(260f * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(UiScale.Px(260f));
         using (var combo = ImRaii.Combo("「交給 GBR 採一張」要採的寶物地圖##DailyDutyTodoMap", preview))
         {
             if (combo)

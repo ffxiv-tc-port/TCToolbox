@@ -210,7 +210,7 @@ public sealed unsafe class AutoHideBanners : TcModule
     {
         ImGui.TextDisabled("勾起來＝該橫幅與其音效都不再出現。");
 
-        ImGui.SetNextItemWidth(220f);
+        ImGui.SetNextItemWidth(UiScale.Px(220f));
         var filter = searchFilter;
         if (ImGui.InputTextWithHint("##bannerSearch", "搜尋名稱或編號…", ref filter, 64))
             searchFilter = filter;
@@ -240,7 +240,7 @@ public sealed unsafe class AutoHideBanners : TcModule
         }
 
         using var child = ImRaii.Child("TCToolboxBannerList",
-                                       new Vector2(ImGui.GetContentRegionAvail().X, 420f), true);
+                                       new Vector2(ImGui.GetContentRegionAvail().X, UiScale.Px(420f)), true);
         if (!child) return;
 
         var matched = 0;
@@ -314,7 +314,7 @@ public sealed unsafe class AutoHideBanners : TcModule
         using (ImRaii.PushIndent())
         {
             // 橫幅原圖是 2560x720 的寬幅；縮到約 360px 寬就足以看清字樣
-            var width = Math.Min(360f, ImGui.GetContentRegionAvail().X);
+            var width = Math.Min(UiScale.Px(360f), ImGui.GetContentRegionAvail().X);
             var height = width * wrap.Height / Math.Max(1, wrap.Width);
             var tint = hidden ? new Vector4(1f, 0.5f, 0.5f, 0.75f) : new Vector4(1f, 1f, 1f, 1f);
 

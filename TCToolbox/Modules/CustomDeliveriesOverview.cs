@@ -463,11 +463,11 @@ public sealed class CustomDeliveriesOverview : TcModule
         var wrap = GameIcons.TryGet(current);
         if (wrap != null)
         {
-            ImGui.Image(wrap.Handle, new Vector2(24f, 24f));
+            ImGui.Image(wrap.Handle, UiScale.Px(24f, 24f));
             ImGui.SameLine();
         }
 
-        ImGui.SetNextItemWidth(120f);
+        ImGui.SetNextItemWidth(UiScale.Px(120f));
         var value = (int)current;
         if (ImGui.InputInt("地圖圖示編號", ref value))
         {
@@ -498,7 +498,7 @@ public sealed class CustomDeliveriesOverview : TcModule
     {
         if (!windowOpen) return;
 
-        ImGui.SetNextWindowSize(new Vector2(560, 380), ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowSize(UiScale.Px(560, 380), ImGuiCond.FirstUseEver);
         // 標題引用 DisplayName；### 之後的 ID 保持原字面值，視窗位置／大小的存檔才不會被重置。
         if (ImGui.Begin($"{DisplayName}###TCToolboxCustomDeliveries", ref windowOpen))
             DrawContent();
@@ -547,9 +547,9 @@ public sealed class CustomDeliveriesOverview : TcModule
 
         ImGui.TableSetupScrollFreeze(0, 1);
         ImGui.TableSetupColumn("老主顧", ImGuiTableColumnFlags.WidthStretch);
-        ImGui.TableSetupColumn("滿意度", ImGuiTableColumnFlags.WidthFixed, 64f);
-        ImGui.TableSetupColumn("等級進度", ImGuiTableColumnFlags.WidthFixed, 130f);
-        ImGui.TableSetupColumn("本週交易", ImGuiTableColumnFlags.WidthFixed, 72f);
+        ImGui.TableSetupColumn("滿意度", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(64f));
+        ImGui.TableSetupColumn("等級進度", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(130f));
+        ImGui.TableSetupColumn("本週交易", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(72f));
         ImGui.TableHeadersRow();
 
         foreach (var npc in npcs)

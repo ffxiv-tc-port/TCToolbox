@@ -280,7 +280,7 @@ public sealed unsafe class DeepDungeonChestTarget : TcModule
         if (HotkeyUi.Draw("DeepDungeonChestTarget", Config.Hotkey))
             Plugin.Instance.Config.Save();
 
-        ImGui.SetNextItemWidth(180f);
+        ImGui.SetNextItemWidth(UiScale.Px(180f));
         var distance = Config.MaxDistance;
         if (ImGui.SliderFloat("搜尋距離（公尺）", ref distance, 5f, 100f, "%.0f"))
         {
@@ -337,7 +337,7 @@ public sealed unsafe class DeepDungeonChestTarget : TcModule
                     Plugin.Instance.Config.Save();
                 }
 
-                ImGui.SetNextItemWidth(180f);
+                ImGui.SetNextItemWidth(UiScale.Px(180f));
                 var ticks = Config.AutoPollTicks;
                 if (ImGui.SliderInt("檢查間隔（幀）", ref ticks, 1, 120))
                 {

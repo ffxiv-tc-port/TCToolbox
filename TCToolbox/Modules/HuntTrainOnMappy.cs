@@ -553,7 +553,7 @@ public sealed class HuntTrainOnMappy : TcModule
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("預設不顯示，地圖上只留還沒打的。打開的話已擊殺的目標會用另一顆圖示畫出來，可以看出列車的進度。");
 
-        ImGui.SetNextItemWidth(160f);
+        ImGui.SetNextItemWidth(UiScale.Px(160f));
         var seconds = Config.RefreshSeconds;
         if (ImGui.SliderInt("同步間隔（秒）", ref seconds, 1, 60))
         {
@@ -682,14 +682,14 @@ public sealed class HuntTrainOnMappy : TcModule
 
         if (!ImGui.BeginTable("##huntTrainRows", 4,
                 ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.ScrollY,
-                new Vector2(0f, 220f)))
+                new Vector2(0f, UiScale.Px(220f))))
             return;
 
         ImGui.TableSetupScrollFreeze(0, 1);
         ImGui.TableSetupColumn("目標", ImGuiTableColumnFlags.WidthStretch);
         ImGui.TableSetupColumn("區域", ImGuiTableColumnFlags.WidthStretch);
-        ImGui.TableSetupColumn("座標", ImGuiTableColumnFlags.WidthFixed, 110f);
-        ImGui.TableSetupColumn("前往", ImGuiTableColumnFlags.WidthFixed, 64f);
+        ImGui.TableSetupColumn("座標", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(110f));
+        ImGui.TableSetupColumn("前往", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(64f));
         ImGui.TableHeadersRow();
 
         for (var i = 0; i < uiSnapshot.Count; i++)

@@ -281,7 +281,7 @@ public sealed unsafe class LargerIMECandidates : TcModule
 
     public override void DrawConfig()
     {
-        ImGui.SetNextItemWidth(200f);
+        ImGui.SetNextItemWidth(UiScale.Px(200f));
         var scale = Config.Scale;
         if (ImGui.SliderFloat("候選字放大倍率", ref scale, MinScale, MaxScale, "%.1f 倍"))
         {

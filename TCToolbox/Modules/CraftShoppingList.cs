@@ -1011,7 +1011,7 @@ public sealed class CraftShoppingList : TcModule
                 ? name
                 : string.IsNullOrEmpty(current) ? "（未選擇）" : $"（清單已不存在：{current}）";
 
-            ImGui.SetNextItemWidth(280f);
+            ImGui.SetNextItemWidth(UiScale.Px(280f));
             using (var combo = ImRaii.Combo($"製作清單##{InternalName}-List", label))
             {
                 if (combo)
@@ -1050,7 +1050,7 @@ public sealed class CraftShoppingList : TcModule
         else
         {
             var custom = Config.CustomListName;
-            ImGui.SetNextItemWidth(280f);
+            ImGui.SetNextItemWidth(UiScale.Px(280f));
             if (ImGui.InputText($"清單名稱或 key##{InternalName}-Custom", ref custom, 128))
             {
                 Config.CustomListName = custom;
@@ -1265,12 +1265,12 @@ public sealed class CraftShoppingList : TcModule
         if (!table) return;
 
         ImGui.TableSetupColumn("材料", ImGuiTableColumnFlags.WidthStretch);
-        ImGui.TableSetupColumn("需要", ImGuiTableColumnFlags.WidthFixed, 54f);
-        ImGui.TableSetupColumn("持有", ImGuiTableColumnFlags.WidthFixed, 54f);
-        ImGui.TableSetupColumn("缺口", ImGuiTableColumnFlags.WidthFixed, 54f);
+        ImGui.TableSetupColumn("需要", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(54f));
+        ImGui.TableSetupColumn("持有", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(54f));
+        ImGui.TableSetupColumn("缺口", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(54f));
         ImGui.TableSetupColumn("來源", ImGuiTableColumnFlags.WidthStretch);
-        ImGui.TableSetupColumn("價格", ImGuiTableColumnFlags.WidthFixed, 84f);
-        ImGui.TableSetupColumn("操作", ImGuiTableColumnFlags.WidthFixed, 128f);
+        ImGui.TableSetupColumn("價格", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(84f));
+        ImGui.TableSetupColumn("操作", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(128f));
         ImGui.TableSetupScrollFreeze(0, 1);
         ImGui.TableHeadersRow();
 

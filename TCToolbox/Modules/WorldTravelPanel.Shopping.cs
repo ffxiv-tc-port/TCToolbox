@@ -293,9 +293,9 @@ public sealed partial class WorldTravelPanel
 
         ImGui.TableSetupColumn("清單", ImGuiTableColumnFlags.WidthStretch, 0.8f);
         ImGui.TableSetupColumn("材料", ImGuiTableColumnFlags.WidthStretch, 1.2f);
-        ImGui.TableSetupColumn("數量", ImGuiTableColumnFlags.WidthFixed, 50f);
+        ImGui.TableSetupColumn("數量", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(50f));
         ImGui.TableSetupColumn("價格", ImGuiTableColumnFlags.WidthStretch, 1f);
-        ImGui.TableSetupColumn(string.Empty, ImGuiTableColumnFlags.WidthFixed, 130f);
+        ImGui.TableSetupColumn(string.Empty, ImGuiTableColumnFlags.WidthFixed, UiScale.Px(130f));
         ImGui.TableHeadersRow();
 
         foreach (var row in shoppingHere)

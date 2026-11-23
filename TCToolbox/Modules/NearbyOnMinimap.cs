@@ -447,7 +447,7 @@ public sealed unsafe class NearbyOnMinimap : TcModule
                 ImGui.SetTooltip("預設開啟。關掉的話已經共鳴過的也會畫出來。");
         }
 
-        ImGui.SetNextItemWidth(180f);
+        ImGui.SetNextItemWidth(UiScale.Px(180f));
         var distance = Config.MaxDistance;
         if (ImGui.SliderFloat("搜尋距離（公尺）", ref distance, 5f, NearbyObjectListModule.MaxDistanceCap, "%.0f"))
         {
@@ -462,7 +462,7 @@ public sealed unsafe class NearbyOnMinimap : TcModule
                 + "所以距離放大等於「邊緣會多一圈指向用的點」。嫌吵就調小。");
         }
 
-        ImGui.SetNextItemWidth(180f);
+        ImGui.SetNextItemWidth(UiScale.Px(180f));
         var refresh = Config.RefreshMilliseconds;
         if (ImGui.SliderInt("重新整理間隔（毫秒）", ref refresh, 100, 3000))
         {

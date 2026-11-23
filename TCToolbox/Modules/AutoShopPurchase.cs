@@ -186,7 +186,7 @@ public sealed unsafe class AutoShopPurchase : TcModule
         ImGui.TableSetupColumn("視窗");
         ImGui.TableSetupColumn("路徑");
         ImGui.TableSetupColumn("對象");
-        ImGui.TableSetupColumn("操作", ImGuiTableColumnFlags.WidthFixed, 140f);
+        ImGui.TableSetupColumn("操作", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(140f));
         ImGui.TableHeadersRow();
 
         AutoShopPurchasePreset? toRemove = null;

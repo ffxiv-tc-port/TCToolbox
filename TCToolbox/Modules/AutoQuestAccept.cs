@@ -113,7 +113,7 @@ public sealed unsafe class AutoQuestAccept : TcModule
 
     public override void DrawConfig()
     {
-        ImGui.SetNextItemWidth(180f);
+        ImGui.SetNextItemWidth(UiScale.Px(180f));
         // 顯示的是實際生效的值；存檔裡比下限小的舊值不主動改寫，使用者動了滑桿才存新值。
         var delay = EffectiveDelayMs(Config.DelayMs);
         if (ImGui.SliderInt("接受前的延遲（毫秒）", ref delay, MinDelayMs, 3_000))

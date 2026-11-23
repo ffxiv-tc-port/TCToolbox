@@ -209,7 +209,7 @@ public sealed class FateTracker : TcModule
     {
         if (!windowOpen) return;
 
-        ImGui.SetNextWindowSize(new Vector2(620, 340), ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowSize(UiScale.Px(620, 340), ImGuiCond.FirstUseEver);
         // 標題引用 DisplayName；### 之後的 ID 保持原字面值，視窗位置／大小的存檔才不會被重置。
         if (ImGui.Begin($"{DisplayName}###TCToolboxFateTracker", ref windowOpen))
             DrawContent();
@@ -484,11 +484,11 @@ public sealed class FateTracker : TcModule
 
         ImGui.TableSetupScrollFreeze(0, 1);
         ImGui.TableSetupColumn("名稱", ImGuiTableColumnFlags.WidthStretch);
-        ImGui.TableSetupColumn("等級", ImGuiTableColumnFlags.WidthFixed, 48f);
-        ImGui.TableSetupColumn("進度", ImGuiTableColumnFlags.WidthFixed, 96f);
-        ImGui.TableSetupColumn("剩餘時間", ImGuiTableColumnFlags.WidthFixed, 68f);
-        ImGui.TableSetupColumn("距離", ImGuiTableColumnFlags.WidthFixed, 60f);
-        ImGui.TableSetupColumn("操作", ImGuiTableColumnFlags.WidthFixed, 56f);
+        ImGui.TableSetupColumn("等級", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(48f));
+        ImGui.TableSetupColumn("進度", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(96f));
+        ImGui.TableSetupColumn("剩餘時間", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(68f));
+        ImGui.TableSetupColumn("距離", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(60f));
+        ImGui.TableSetupColumn("操作", ImGuiTableColumnFlags.WidthFixed, UiScale.Px(56f));
         ImGui.TableHeadersRow();
 
         foreach (var fate in snapshot)

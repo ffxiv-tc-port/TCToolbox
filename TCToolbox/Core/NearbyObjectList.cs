@@ -442,7 +442,7 @@ public abstract unsafe class NearbyObjectListModule : TcModule
             windowTitle = $"{DisplayName} ({rows.Count}){WindowId}";
         }
 
-        ImGui.SetNextWindowSize(new Vector2(440, 360) * ImGuiHelpers.GlobalScale, ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowSize(UiScale.Px(440, 360), ImGuiCond.FirstUseEver);
         if (ImGui.Begin(windowTitle, ref windowOpen))
             DrawWindowBody();
         ImGui.End();
@@ -492,7 +492,7 @@ public abstract unsafe class NearbyObjectListModule : TcModule
         foreach (var column in columns)
         {
             if (column.Width > 0)
-                ImGui.TableSetupColumn(column.Header, ImGuiTableColumnFlags.WidthFixed, column.Width * ImGuiHelpers.GlobalScale);
+                ImGui.TableSetupColumn(column.Header, ImGuiTableColumnFlags.WidthFixed, UiScale.Px(column.Width));
             else
                 ImGui.TableSetupColumn(column.Header, ImGuiTableColumnFlags.WidthStretch);
         }
@@ -583,7 +583,7 @@ public abstract unsafe class NearbyObjectListModule : TcModule
         if (ImGui.Checkbox("戰鬥中隱藏資訊列項目", ref hide))
             Plugin.Instance.Config.Save();
 
-        ImGui.SetNextItemWidth(200f * ImGuiHelpers.GlobalScale);
+        ImGui.SetNextItemWidth(UiScale.Px(200f));
         ref var distance = ref MaxDistanceField;
         if (ImGui.SliderFloat("半徑（米）", ref distance, 5f, MaxDistanceCap, "%.0f"))
         {

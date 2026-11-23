@@ -340,7 +340,7 @@ public sealed class FleetEmergencyStop : TcModule
     private static void DrawCooldownSetting()
     {
         var seconds = Config.EmergencyStopCooldownSeconds;
-        ImGui.SetNextItemWidth(200f);
+        ImGui.SetNextItemWidth(UiScale.Px(200f));
         if (ImGui.SliderInt(
                 "急停後暫停無人值守流程（秒）##FleetEmergencyStopCooldown",
                 ref seconds,
@@ -375,7 +375,7 @@ public sealed class FleetEmergencyStop : TcModule
         using (ImRaii.PushColor(ImGuiCol.ButtonHovered, BigButtonHoverColor))
         {
             clicked = ImGui.Button("全部停止##FleetEmergencyStopRun",
-                new Vector2(ImGui.GetContentRegionAvail().X, 40f));
+                new Vector2(ImGui.GetContentRegionAvail().X, UiScale.Px(40f)));
         }
 
         if (ImGui.IsItemHovered())

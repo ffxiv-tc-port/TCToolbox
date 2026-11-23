@@ -494,7 +494,7 @@ public sealed unsafe class AutoClaimPVPRewards : TcModule
 
     public override void DrawConfig()
     {
-        ImGui.SetNextItemWidth(200f);
+        ImGui.SetNextItemWidth(UiScale.Px(200f));
         var stopAt = Config.StopAtTrophyCrystals;
         if (ImGui.SliderInt("戰利水晶到達此數量就停止", ref stopAt, 1000, 20000))
         {
