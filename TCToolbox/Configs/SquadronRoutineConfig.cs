@@ -12,6 +12,12 @@ public sealed class SquadronRoutineConfig
 
     /// <summary>顯示「替我選今天的任務並派遣」按鈕；預設關。</summary>
     public bool AutoDeployEnabled { get; set; }
+
+    /// <summary>顯示「本角色一鍵：傳送→進軍營→派遣→綜合訓練」按鈕；預設關。</summary>
+    public bool OneKeyEnabled { get; set; }
+
+    /// <summary>一鍵流程走到訓練清單就停手，訓練由使用者自己選（不替你按綜合訓練）。</summary>
+    public bool OneKeyStopAtTrainingList { get; set; }
 }
 
 /// <summary>一個角色的預定歸隊時間（唯讀解析派遣確認框得來）。</summary>

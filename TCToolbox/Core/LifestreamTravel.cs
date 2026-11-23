@@ -134,7 +134,44 @@ internal static class LifestreamTravel
     private static readonly Lazy<ICallGateSubscriber<object>> AbortGate =
         new(() => Svc.PluginInterface.GetIpcSubscriber<object>("Lifestream.Abort"));
 
+    // ── 傳送面板我的最愛 ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// 📌 <c>[EzIPC] public int TeleportToFavoriteV2(uint id, byte subIndex)</c>，回 <c>IpcQueueResult</c> 的 int 值
+    /// （0 已排入、1 已在目的地、2 以上＝什麼都沒排）。舊版 Lifestream 沒有這個端點（<see cref="IpcNotReadyError"/>）。
+    /// </summary>
+    private static readonly Lazy<ICallGateSubscriber<uint, byte, int>> TeleportToFavoriteV2Gate =
+        new(() => Svc.PluginInterface.GetIpcSubscriber<uint, byte, int>("Lifestream.TeleportToFavoriteV2"));
+
+    /// <summary>📌 <c>[EzIPC] public bool TeleportToFavorite(uint id, byte subIndex)</c>：false＝什麼都沒排。</summary>
+    private static readonly Lazy<ICallGateSubscriber<uint, byte, bool>> TeleportToFavoriteGate =
+        new(() => Svc.PluginInterface.GetIpcSubscriber<uint, byte, bool>("Lifestream.TeleportToFavorite"));
+
+    private static readonly Lazy<ICallGateSubscriber<bool>> IsBusyGate =
+        new(() => Svc.PluginInterface.GetIpcSubscriber<bool>("Lifestream.IsBusy"));
+
     // ── 查詢 ──────────────────────────────────────────────────────────────────
+
+    /// <summary>Lifestream 的任務佇列或自動移動還在跑嗎。回 <see langword="false"/>＝問不到（沒載入／端點擲例外）。</summary>
+    public static bool TryGetIsBusy(out bool busy)
+    {
+        try
+        {
+            busy = IsBusyGate.Value.InvokeFunc();
+            return true;
+        }
+        catch (IpcError)
+        {
+            busy = false;
+            return false;
+        }
+        catch (TargetInvocationException ex)
+        {
+            LogFault(ex, "Lifestream.IsBusy");
+            busy = false;
+            return false;
+        }
+    }
 
     /// <summary>這個 World 名字在 Lifestream 的「同 DC 可前往」清單裡嗎（跨界傳送）。</summary>
     /// <remarks>⚠️ 打不通時回 <see langword="false"/>：沒有 Lifestream 就哪裡都去不了，語意上是對的。</remarks>
@@ -204,6 +241,54 @@ internal static class LifestreamTravel
     /// <summary>請 Lifestream 帶角色回自宅（公寓）。⚠️ 人在別的 World 時會先傳回原始 World。</summary>
     public static bool TryTeleportToApartment(out bool accepted)
         => InvokeFunc(TeleportToApartmentGate, "Lifestream.TeleportToApartment", out accepted);
+
+    /// <summary>照傳送面板「我的最愛」那一項出發（含自訂落點），和使用者在面板上點它一樣。</summary>
+    /// <param name="result">
+    /// <c>IpcQueueResult</c> 的 int 值。舊版 Lifestream 沒有 V2 端點時改用舊端點：排入回 0、沒排回 5（原因只在 Lifestream 的記錄）。
+    /// </param>
+    /// <param name="legacy">走的是舊端點。</param>
+    /// <returns>IPC 呼叫本身是否送達（<see langword="false"/>＝Lifestream 沒載入、兩支端點都打不通或擲例外）。</returns>
+    public static bool TryTeleportToFavorite(uint id, byte subIndex, out int result, out bool legacy)
+    {
+        legacy = false;
+        result = -1;
+        try
+        {
+            result = TeleportToFavoriteV2Gate.Value.InvokeFunc(id, subIndex);
+            return true;
+        }
+        catch (IpcNotReadyError)
+        {
+            // 舊版沒有 V2：退回舊端點（同樣只有「排了／沒排」兩種答案）。
+        }
+        catch (IpcError ex)
+        {
+            Svc.Log.Information($"[LifestreamTravel] 呼叫 Lifestream.TeleportToFavoriteV2 失敗：{ex.GetType().Name}：{ex.Message}");
+            return false;
+        }
+        catch (TargetInvocationException ex)
+        {
+            LogFault(ex, "Lifestream.TeleportToFavoriteV2");
+            return false;
+        }
+
+        legacy = true;
+        try
+        {
+            result = TeleportToFavoriteGate.Value.InvokeFunc(id, subIndex) ? 0 : 5;
+            return true;
+        }
+        catch (IpcError ex)
+        {
+            Svc.Log.Information($"[LifestreamTravel] 呼叫 Lifestream.TeleportToFavorite 失敗：{ex.GetType().Name}：{ex.Message}");
+            return false;
+        }
+        catch (TargetInvocationException ex)
+        {
+            LogFault(ex, "Lifestream.TeleportToFavorite");
+            return false;
+        }
+    }
 
     /// <summary>叫 Lifestream 把手上的行程整個中止。</summary>
     /// <returns>IPC 呼叫本身是否送達。</returns>

@@ -34,10 +34,11 @@ namespace TCToolbox.Modules;
 /// 🔴 只按兩樣東西：說話者相符的對話框、選單裡整句相等的那一項（中止項絕不會相等）。
 /// 確認框、結算視窗、別的選項一律停手交還使用者；派遣確認框只讀不按——唯一例外是使用者按下
 /// 「替我選今天的任務並派遣」：那時只按任務清單（切分頁、選列、任務開始）與任務名整句相符、YesAlready 已讓開的派遣確認框。
+/// 「本角色一鍵」另外只按訓練窗的綜合訓練鈕與整句「開始綜合訓練。」的確認框；進軍營的確認框不按（交給使用者的 YesAlready 規則）。
 /// 🔴 每一步重新取窗與物件（只存 BaseId 與領地編號），不跨幀保存任何原生指標；只在框架執行緒上動手。
 /// 載入、登入、進區都不會自己開始：只有按鈕。
 /// </remarks>
-public sealed unsafe class SquadronRoutine : TcModule
+public sealed unsafe partial class SquadronRoutine : TcModule
 {
     public override string InternalName => "SquadronRoutine";
 
@@ -47,7 +48,8 @@ public sealed unsafe class SquadronRoutine : TcModule
         "在軍營裡按一下，自己走到分隊軍曹（或會議板）旁邊互動，打開分隊任務清單（或訓練清單）後就停下來，" +
         "任務、隊員與訓練都由你自己選。遇到確認框、結算視窗或任何沒預期的選項都會停手。" +
         "另外會只讀記下派遣確認框上的預定歸隊時間（不會替你按是或否），在這裡列出各角色何時歸隊。" +
-        "設定裡可啟用「替我選今天的任務並派遣」（預設關）：用遊戲預填的隊員，替你選任務並派遣。";
+        "設定裡可啟用「替我選今天的任務並派遣」（預設關）：用遊戲預填的隊員，替你選任務並派遣。" +
+        "也可啟用「本角色一鍵」（預設關）：用 Lifestream 傳送到軍營入口、進軍營、派遣，再到會議板做綜合訓練。";
 
     public override ModuleCategory Category => ModuleCategory.Company;
 
@@ -63,6 +65,9 @@ public sealed unsafe class SquadronRoutine : TcModule
 
         /// <summary>打開任務清單後替使用者選任務並派遣（用遊戲預填的隊員）。</summary>
         AutoDeploy = 3,
+
+        /// <summary>本角色一鍵：傳送→進軍營→派遣→綜合訓練（見 SquadronRoutine.OneKey.cs）。</summary>
+        OneKey = 4,
     }
 
     /// <summary>三座軍營：領地、分隊軍曹（ENpcResident）、會議板（EObjName）。台服 7.30 EXD 與 Level 表實查。</summary>
@@ -120,6 +125,15 @@ public sealed unsafe class SquadronRoutine : TcModule
         public string GoalLabel = string.Empty;
         public bool AllowBlankSpeaker;
 
+        /// <summary>目標清單一打開就收工（v1 兩顆按鈕）；<see langword="false"/>＝接著做後面的步驟。</summary>
+        public bool StopAtGoal = true;
+
+        /// <summary>這一段要請 YesAlready 讓開、鎖住 TextAdvance。一鍵流程在城裡（傳送、進門）時刻意不鎖：進門確認框交給使用者的 YesAlready 規則。</summary>
+        public bool LeasesOn = true;
+
+        /// <summary>目前這一段所在的地方（停手訊息用）。</summary>
+        public string PlaceLabel = "軍營";
+
         public bool NavIssued;
         public DateTime WalkDeadline;
         public DateTime LastProgressAt;
@@ -131,6 +145,9 @@ public sealed unsafe class SquadronRoutine : TcModule
 
         /// <summary>只有 <see cref="Goal.AutoDeploy"/> 才有。</summary>
         public AutoRun? Auto;
+
+        /// <summary>只有 <see cref="Goal.OneKey"/> 才有。</summary>
+        public OneKeyRun? One;
     }
 
     /// <summary>「替我選今天的任務並派遣」這一輪的狀態（只存數值與旗標，不存任何原生指標）。</summary>
@@ -271,6 +288,7 @@ public sealed unsafe class SquadronRoutine : TcModule
         }
 
         barracksNames = string.Join("／", names);
+        LoadOneKeyAnchors();
 
         Svc.Log.Information(
             $"[{InternalName}] 遊戲資料：軍曹選項「{officerMenuText}」、會議板選項「{trainingMenuText}」、" +
@@ -354,7 +372,7 @@ public sealed unsafe class SquadronRoutine : TcModule
             if (Config.Returns.Remove(cid)) Plugin.Instance.Config.Save();
         }
 
-        if (queue.IsBusy)
+        if (queue.IsBusy && run is { LeasesOn: true })
         {
             RenewLeases();
             TextAdvanceLock.Acquire(InternalName);
@@ -381,6 +399,7 @@ public sealed unsafe class SquadronRoutine : TcModule
 
         nextAvailabilityCheckUtc = now.AddMilliseconds(500);
         blockedReason = queue.IsBusy ? "正在進行中" : GetStartBlockedReason();
+        oneKeyBlockedReason = queue.IsBusy ? "正在進行中" : Config.OneKeyEnabled ? OneKeyBlockedReason() : null;
     }
 
     #endregion
@@ -388,11 +407,12 @@ public sealed unsafe class SquadronRoutine : TcModule
     #region 開始與結束
 
     /// <returns><c>null</c>＝可以開始；否則是一句給使用者看的理由。只在框架執行緒呼叫。</returns>
-    private string? GetStartBlockedReason()
+    /// <param name="requireBarracks"><see langword="false"/>＝一鍵流程：不必已在軍營（傳送與進門由流程處理）。</param>
+    private string? GetStartBlockedReason(bool requireBarracks = true)
     {
         if (AutomationGate.GetManualBasicBlockedReason() is { } basic) return basic;
 
-        if (!TryGetBarracks(out _))
+        if (requireBarracks && !TryGetBarracks(out _))
             return $"要先進入軍營（{(barracksNames.Length > 0 ? barracksNames : "國防聯軍的軍營")}）才能用；傳送到軍營不在這個功能裡。";
 
         if (Svc.Condition[ConditionFlag.InCombat]) return "戰鬥中。";
@@ -440,6 +460,12 @@ public sealed unsafe class SquadronRoutine : TcModule
     {
         if (queue.IsBusy) return;
 
+        if (goal == Goal.OneKey)
+        {
+            TryStartOneKey();
+            return;
+        }
+
         if (GetStartBlockedReason() is { } reason)
         {
             lastSummary = $"沒有開始：{reason}";
@@ -476,7 +502,11 @@ public sealed unsafe class SquadronRoutine : TcModule
             return;
         }
 
-        if (goal == Goal.AutoDeploy) r.Auto = new AutoRun(diagTables);
+        if (goal == Goal.AutoDeploy)
+        {
+            r.Auto = new AutoRun(diagTables);
+            r.StopAtGoal = false;
+        }
 
         run = r;
         talkLease.Reset();
@@ -511,6 +541,8 @@ public sealed unsafe class SquadronRoutine : TcModule
 
         if (r is { NavIssued: true } && (ExternalNav.IsVnavmeshPathRunning() || ExternalNav.IsVnavmeshPathfindInProgress()))
             NavStop.RequestStop();
+
+        if (r?.One is { TravelSent: true, TravelDone: false }) AbortOurTravel();
 
         lastSummary = summary;
         Svc.Log.Information(
@@ -651,13 +683,17 @@ public sealed unsafe class SquadronRoutine : TcModule
         switch (decision.Kind)
         {
             case SquadronActionKind.Done:
-                if (r.Goal == Goal.AutoDeploy)
+                if (!r.StopAtGoal)
                 {
-                    Svc.Log.Information($"[{InternalName}] 分隊任務清單已打開，開始選今天的任務（用遊戲預填的隊員）。");
+                    Svc.Log.Information(r.GoalAddon == ExpeditionAddon
+                        ? $"[{InternalName}] 分隊任務清單已打開，開始選今天的任務（用遊戲預填的隊員）。"
+                        : $"[{InternalName}] {r.GoalLabel}已打開，接著選綜合訓練。");
                     return true;
                 }
 
-                EndRun($"已打開{r.GoalLabel}，請自己選{(r.Goal == Goal.Expedition ? "任務與隊員" : "訓練")}。", true, true);
+                EndRun(r.Goal == Goal.OneKey
+                    ? $"{r.One?.DeploySummary}{r.GoalLabel}已打開，訓練請自己選（設定為不替你選訓練）。"
+                    : $"已打開{r.GoalLabel}，請自己選{(r.Goal == Goal.Expedition ? "任務與隊員" : "訓練")}。", true, true);
                 return true;
 
             case SquadronActionKind.Stop:
@@ -702,7 +738,7 @@ public sealed unsafe class SquadronRoutine : TcModule
 
         if (Svc.ClientState.TerritoryType != r.Territory)
         {
-            problem = "已經離開軍營";
+            problem = $"已經離開{r.PlaceLabel}";
             return false;
         }
 
@@ -776,9 +812,10 @@ public sealed unsafe class SquadronRoutine : TcModule
         UiHelper.TryFireCallback(addon, true, kind, arg, default(AtkValue), default(AtkValue), default(AtkValue), default(AtkValue));
 
     /// <returns><c>null</c>＝可以開始；否則是一句理由。</returns>
-    private string? AutoDeployBlockedReason()
+    /// <param name="requireToggle"><see langword="false"/>＝一鍵流程呼叫（它有自己的開關）。</param>
+    private string? AutoDeployBlockedReason(bool requireToggle = true)
     {
-        if (!Config.AutoDeployEnabled) return "要先勾選啟用「替我選今天的任務並派遣」。";
+        if (requireToggle && !Config.AutoDeployEnabled) return "要先勾選啟用「替我選今天的任務並派遣」。";
         if (!diagTables.HasMissions) return "讀不到分隊任務表，無法核對任務清單。";
         if (deployFragments.Count < 3) return "讀不到派遣確認框的文字樣板，無法核對確認框。";
         if (startedPrefix.Length == 0) return "讀不到「開始了…」訊息的文字樣板，無法確認有沒有派出去。";
@@ -933,7 +970,15 @@ public sealed unsafe class SquadronRoutine : TcModule
         if (cid != 0 && Config.Returns.TryGetValue(cid, out var record) && record.Confirmed && record.SeenUtc >= a.DispatchAt &&
             SquadronFlow.NormalizeEntry(record.Mission) == SquadronFlow.NormalizeEntry(a.Picked!.Name))
         {
-            EndRun($"已派遣「{record.Mission}」，預定 {record.ReturnUtc.ToLocalTime():MM/dd HH:mm} 歸隊。", true, true);
+            var summary = $"已派遣「{record.Mission}」，預定 {record.ReturnUtc.ToLocalTime():MM/dd HH:mm} 歸隊。";
+            if (r.One is { } one)
+            {
+                one.DeploySummary = summary;
+                Svc.Log.Information($"[{InternalName}] 一鍵｜{summary}接著去會議板做訓練。");
+                return true;
+            }
+
+            EndRun(summary, true, true);
             return true;
         }
 
@@ -946,6 +991,12 @@ public sealed unsafe class SquadronRoutine : TcModule
     /// <summary>派遣確認框的 PreSetup：YesAlready 在 PostSetup 才按，這一刻請它讓開、記下結果；確認不了就不按。</summary>
     private void OnYesnoPreSetup(AddonEvent type, AddonArgs args)
     {
+        if (run?.One is { TrainSent: true, TrainConfirmPressed: false } one)
+        {
+            OnTrainingYesnoPreSetup(one);
+            return;
+        }
+
         if (run?.Auto is not { DispatchSent: true, ConfirmPressed: false } a) return;
 
         try
@@ -1057,6 +1108,9 @@ public sealed unsafe class SquadronRoutine : TcModule
             if (run?.Auto is { DispatchSent: true, ConfirmPressed: false } auto &&
                 type is XivChatType.SystemMessage or XivChatType.SystemError or XivChatType.ErrorMessage)
                 auto.LastSystemMessage = message.TextValue;
+
+            if (run?.One is { TrainSent: true, TrainOutcome: SquadronTrainingMessage.Other } one)
+                OnTrainingChat(one, type, message.TextValue);
 
             if (pendingStart is not { } pending || startedPrefix.Length == 0) return;
 
@@ -1398,6 +1452,8 @@ public sealed unsafe class SquadronRoutine : TcModule
                 "走到會議板旁邊互動，選單裡只按「打開訓練選單」（整句相同才按），訓練清單一打開就停手。");
             if (Config.AutoDeployEnabled)
                 DrawStartButton(Goal.AutoDeploy, "替我選今天的任務並派遣###squadronAuto", AutoDeployTooltip, AutoDeployBlockedReason());
+            if (Config.OneKeyEnabled)
+                DrawOneKeyButton();
         }
 
         var autoDeploy = Config.AutoDeployEnabled;
@@ -1408,6 +1464,7 @@ public sealed unsafe class SquadronRoutine : TcModule
         }
 
         ImGui.TextDisabled("用遊戲預填的 4 名隊員替你選任務並派遣；只在你按下按鈕時執行，可隨時按停止。");
+        DrawOneKeySettings();
 
         if (lastSummary.Length > 0) ImGui.TextDisabled($"上次結果：{lastSummary}");
 
@@ -1421,9 +1478,12 @@ public sealed unsafe class SquadronRoutine : TcModule
         "選定後按「任務開始」，確認框上的任務名整句相符、YesAlready 已讓開才按「是」。\n" +
         "不換隊員、不做訓練、不看特殊任務；任何一項讀值對不上都停手，清單留給你自己選。";
 
-    private void DrawStartButton(Goal goal, string label, string tooltip, string? extraReason = null)
+    private void DrawStartButton(Goal goal, string label, string tooltip, string? extraReason = null) =>
+        DrawButtonCore(goal, label, tooltip, blockedReason ?? extraReason);
+
+    /// <param name="reason"><c>null</c>＝可以按；否則按鈕停用、說明框寫這一句。</param>
+    private void DrawButtonCore(Goal goal, string label, string tooltip, string? reason)
     {
-        var reason = blockedReason ?? extraReason;
         var clicked = false;
         using (ImRaii.Disabled(reason != null))
         {
