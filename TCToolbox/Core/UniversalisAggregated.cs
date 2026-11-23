@@ -2,7 +2,6 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -25,16 +24,14 @@ internal sealed record AggregatedBatch(
 /// <remarks>
 /// 🔴 紅線：純顯示。只送 HTTP GET，網址只有世界編號與物品編號（不送角色名等任何個資）；每一次都必須是使用者當下按的，這裡不排程。
 /// 🔴 抓取跑在背景執行緒、不碰 Dalamud 服務（<c>Svc.Log</c> 是 Serilog，執行緒安全）；結果經佇列交給主執行緒，主執行緒用 <see cref="TryTake"/> 取走。
-/// 遇 429／5xx／連線失敗退避重試（有 Retry-After 就照它），其他狀態碼不重試；請求之間固定間隔，不平行。
+/// 退避重試走 <see cref="UniversalisRetry"/>；請求之間固定間隔，不平行。
 /// </remarks>
 internal sealed class UniversalisAggregated : IDisposable
 {
     /// <summary>聚合端點一次最多 100 件。</summary>
     public const int BatchSize = 100;
 
-    private const int MaxRetries = 3;
     private const int PaceMs = 300;
-    private const int MaxBackoffMs = 60_000;
     private const int HttpTimeoutSeconds = 20;
     private const int ResponseSizeLimitBytes = 8 * 1024 * 1024;
 
@@ -116,39 +113,14 @@ internal sealed class UniversalisAggregated : IDisposable
     private async Task<AggregatedBatch> FetchWithRetry(uint worldId, uint[] items, CancellationToken token)
     {
         var url = $"https://universalis.app/api/v2/aggregated/{worldId}/{string.Join(',', items)}";
-        string error = "未知錯誤";
-        for (var attempt = 0; attempt <= MaxRetries; attempt++)
-        {
-            int? retryAfterMs = null;
-            try
-            {
-                using var response = await http.GetAsync(url, token).ConfigureAwait(false);
-                if (response.IsSuccessStatusCode)
-                {
-                    var payload = await response.Content.ReadAsByteArrayAsync(token).ConfigureAwait(false);
-                    var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                    return VentureValueMath.TryParseAggregated(payload, worldId, out var parsed, out var failed)
-                        ? new AggregatedBatch(worldId, items, parsed, failed, now, null)
-                        : Failure(worldId, items, "回應形狀不對");
-                }
+        var (payload, error) = await UniversalisRetry.GetAsync(
+            http, url, "[VentureValue]", $"世界 {worldId}，{items.Length} 件", token).ConfigureAwait(false);
+        if (payload == null) return Failure(worldId, items, error ?? "未知錯誤");
 
-                var code = (int)response.StatusCode;
-                error = $"HTTP {code}";
-                if (code != (int)HttpStatusCode.TooManyRequests && code < 500) return Failure(worldId, items, error);
-                if (response.Headers.RetryAfter?.Delta is { } delta) retryAfterMs = (int)Math.Min(delta.TotalMilliseconds, MaxBackoffMs);
-            }
-            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !token.IsCancellationRequested)
-            {
-                error = $"{ex.GetType().Name}：{ex.Message}";
-            }
-
-            if (attempt == MaxRetries) break;
-            var waitMs = retryAfterMs ?? Math.Min(2000 << attempt, MaxBackoffMs);
-            Svc.Log.Information($"[VentureValue] Universalis {error}，{waitMs / 1000.0:0.#} 秒後重試（世界 {worldId}，{items.Length} 件，第 {attempt + 1} 次）");
-            await Task.Delay(waitMs, token).ConfigureAwait(false);
-        }
-
-        return Failure(worldId, items, error);
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        return VentureValueMath.TryParseAggregated(payload, worldId, out var parsed, out var failed)
+            ? new AggregatedBatch(worldId, items, parsed, failed, now, null)
+            : Failure(worldId, items, "回應形狀不對");
     }
 
     private static AggregatedBatch Failure(uint worldId, uint[] items, string error) =>

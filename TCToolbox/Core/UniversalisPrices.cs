@@ -40,6 +40,7 @@ internal sealed record PriceFetchResult(
 /// 不自動換世界，也不會自己排程——每一次查詢都必須是使用者當下按下去的。
 /// 🔴 抓取跑在背景執行緒，<b>不碰任何 Dalamud 服務</b>（<c>Svc.Log</c> 是 Serilog，執行緒安全）。
 /// 結果用 <see cref="Interlocked.Exchange{T}"/> 交給主執行緒，主執行緒在 <see cref="Consume"/> 取走。
+/// 退避重試走 <see cref="UniversalisRetry"/>，與 <see cref="UniversalisAggregated"/> 同一套。
 /// 📌 一次 DC 查詢就夠：Universalis 的資料中心端點把掛單<b>照單價升冪</b>排好並附上每一筆的
 /// <c>worldID</c>，所以逐世界取最小值就是各世界最低價，不必對八個世界各送一次。
 /// </remarks>
@@ -129,10 +130,15 @@ internal sealed class UniversalisPrices : IDisposable
             var url = $"https://universalis.app/api/v2/{Uri.EscapeDataString(dcName)}/{itemId}"
                       + $"?listings={ListingCap}&entries=0";
 
-            using var response = await http.GetAsync(url, token).ConfigureAwait(false);
-            response.EnsureSuccessStatusCode();
+            var (payload, error) = await UniversalisRetry.GetAsync(
+                http, url, "[UniversalisPrices]", $"道具 {itemId}／{dcName}", token).ConfigureAwait(false);
+            if (payload == null)
+            {
+                LogFailure(itemId, dcName, error ?? "未知錯誤");
+                Interlocked.Exchange(ref incoming, Failure(itemId, dcName, error ?? "未知錯誤"));
+                return;
+            }
 
-            var payload = await response.Content.ReadAsByteArrayAsync(token).ConfigureAwait(false);
             Interlocked.Exchange(ref incoming, Parse(itemId, dcName, payload));
         }
         // 🔴 判準是「我們的 token 被取消了」，不是例外型別：HttpClient 的 Timeout 也擲
@@ -144,20 +150,23 @@ internal sealed class UniversalisPrices : IDisposable
         }
         catch (Exception ex)
         {
-            // 失敗只寫一次：使用者連按時不要洗版。UI 上照樣每次都看得到失敗原因。
-            var now = Environment.TickCount64;
-            if (now - Volatile.Read(ref lastFailLogAt) >= FailLogIntervalMs)
-            {
-                Volatile.Write(ref lastFailLogAt, now);
-                Svc.Log.Information($"[UniversalisPrices] 查價失敗（道具 {itemId}／{dcName}）：{ex.GetType().Name} {ex.Message}");
-            }
-
+            LogFailure(itemId, dcName, $"{ex.GetType().Name} {ex.Message}");
             Interlocked.Exchange(ref incoming, Failure(itemId, dcName, $"{ex.GetType().Name}：{ex.Message}"));
         }
         finally
         {
             Interlocked.Exchange(ref inFlight, 0);
         }
+    }
+
+    /// <summary>失敗只寫一次：使用者連按時不要洗版。UI 上照樣每次都看得到失敗原因。</summary>
+    private void LogFailure(uint itemId, string dcName, string reason)
+    {
+        var now = Environment.TickCount64;
+        if (now - Volatile.Read(ref lastFailLogAt) < FailLogIntervalMs) return;
+
+        Volatile.Write(ref lastFailLogAt, now);
+        Svc.Log.Information($"[UniversalisPrices] 查價失敗（道具 {itemId}／{dcName}）：{reason}");
     }
 
     private static PriceFetchResult Failure(uint itemId, string dcName, string error) =>
