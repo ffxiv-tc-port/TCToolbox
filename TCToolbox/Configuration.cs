@@ -138,6 +138,7 @@ public sealed partial class Configuration : IPluginConfiguration
     public FcActionAutoUseConfig FcActionAutoUse { get; set; } = new();
     public NearbyInteractablesConfig NearbyInteractables { get; set; } = new();
     public NearbyEnemiesConfig NearbyEnemies { get; set; } = new();
+    public VentureValueAdvisorConfig VentureValueAdvisor { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
 }
