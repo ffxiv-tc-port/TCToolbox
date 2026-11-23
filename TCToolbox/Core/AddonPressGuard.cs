@@ -77,6 +77,11 @@ internal static unsafe class AddonPressGuard
         "GrandCompanyExchange",
         "TripleTriadCoinExchange",
         "_Notification",
+
+        // 國防聯軍分隊：切分頁、選列、反選再正選都不關窗，同一組參數回頭再送是流程本身。
+        // 🔴 它們關閉時會被銷毀（不是常駐窗），絕不能放進 PersistentAddons。
+        "GcArmyExpedition",
+        "GcArmyMemberList",
     };
 
     /// <summary>

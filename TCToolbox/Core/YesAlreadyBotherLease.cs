@@ -61,6 +61,14 @@ internal sealed class YesAlreadyBotherLease
         return Last != YesAlreadyIpc.BotherPause.Failed;
     }
 
+    /// <summary>不管上一次的結果多新都重問一次（給視窗 PreSetup 用：那一刻的答案才算數）。</summary>
+    public bool RenewNow()
+    {
+        Last = pause(feature, PauseMs);
+        renewedAt = tickMs();
+        return Last != YesAlreadyIpc.BotherPause.Failed;
+    }
+
     /// <summary>忘掉上一次的結果（新的一輪開始／模組停用）。</summary>
     public void Reset()
     {

@@ -9,6 +9,9 @@ public sealed class SquadronRoutineConfig
     /// <summary>角色 ContentId → 最近一次看到的派遣確認框解析結果。</summary>
     /// <remarks>初始式刻意留空：Dalamud 對集合欄位是併入，放了東西使用者就刪不掉。</remarks>
     public Dictionary<ulong, SquadronReturnRecord> Returns { get; set; } = [];
+
+    /// <summary>顯示「替我選今天的任務並派遣」按鈕；預設關。</summary>
+    public bool AutoDeployEnabled { get; set; }
 }
 
 /// <summary>一個角色的預定歸隊時間（唯讀解析派遣確認框得來）。</summary>

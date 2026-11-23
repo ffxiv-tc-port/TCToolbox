@@ -32,7 +32,8 @@ namespace TCToolbox.Modules;
 /// </summary>
 /// <remarks>
 /// 🔴 只按兩樣東西：說話者相符的對話框、選單裡整句相等的那一項（中止項絕不會相等）。
-/// 確認框、結算視窗、別的選項一律停手交還使用者；派遣確認框只讀不按。
+/// 確認框、結算視窗、別的選項一律停手交還使用者；派遣確認框只讀不按——唯一例外是使用者按下
+/// 「替我選今天的任務並派遣」：那時只按任務清單（切分頁、選列、任務開始）與任務名整句相符、YesAlready 已讓開的派遣確認框。
 /// 🔴 每一步重新取窗與物件（只存 BaseId 與領地編號），不跨幀保存任何原生指標；只在框架執行緒上動手。
 /// 載入、登入、進區都不會自己開始：只有按鈕。
 /// </remarks>
@@ -45,7 +46,8 @@ public sealed unsafe class SquadronRoutine : TcModule
     public override string Description =>
         "在軍營裡按一下，自己走到分隊軍曹（或會議板）旁邊互動，打開分隊任務清單（或訓練清單）後就停下來，" +
         "任務、隊員與訓練都由你自己選。遇到確認框、結算視窗或任何沒預期的選項都會停手。" +
-        "另外會只讀記下派遣確認框上的預定歸隊時間（不會替你按是或否），在這裡列出各角色何時歸隊。";
+        "另外會只讀記下派遣確認框上的預定歸隊時間（不會替你按是或否），在這裡列出各角色何時歸隊。" +
+        "設定裡可啟用「替我選今天的任務並派遣」（預設關）：用遊戲預填的隊員，替你選任務並派遣。";
 
     public override ModuleCategory Category => ModuleCategory.Company;
 
@@ -58,6 +60,9 @@ public sealed unsafe class SquadronRoutine : TcModule
         None = 0,
         Expedition = 1,
         Training = 2,
+
+        /// <summary>打開任務清單後替使用者選任務並派遣（用遊戲預填的隊員）。</summary>
+        AutoDeploy = 3,
     }
 
     /// <summary>三座軍營：領地、分隊軍曹（ENpcResident）、會議板（EObjName）。台服 7.30 EXD 與 Level 表實查。</summary>
@@ -123,6 +128,28 @@ public sealed unsafe class SquadronRoutine : TcModule
         public DateTime LastActionAt;
         public SquadronMenuState Menu;
         public int TalkPages;
+
+        /// <summary>只有 <see cref="Goal.AutoDeploy"/> 才有。</summary>
+        public AutoRun? Auto;
+    }
+
+    /// <summary>「替我選今天的任務並派遣」這一輪的狀態（只存數值與旗標，不存任何原生指標）。</summary>
+    private sealed class AutoRun(SquadronTables tables)
+    {
+        public readonly SquadronAutoScan Scan = new(tables);
+        public SquadronRowRead? Picked;
+
+        /// <summary>「任務開始」一輪只送一次。</summary>
+        public bool DispatchSent;
+        public DateTime DispatchAt;
+
+        /// <summary>送出派遣後看到幾次確認框 PreSetup，以及最後一次在 PreSetup 當下請 YesAlready 讓開的結果。</summary>
+        public int YesnoSetups;
+        public YesAlreadyIpc.BotherPause? YesnoPause;
+        public bool YesnoSeen;
+        public bool ConfirmPressed;
+        public DateTime ConfirmAt;
+        public string LastSystemMessage = string.Empty;
     }
 
     private readonly TaskQueue queue = new() { Owner = "SquadronRoutine" };
@@ -194,6 +221,7 @@ public sealed unsafe class SquadronRoutine : TcModule
         NavStop.Acquire();
         queue.OnTimeout = step => EndRun($"步驟「{step}」逾時，已停手", false, true);
         Svc.Framework.Update += OnUpdate;
+        Svc.AddonLifecycle.RegisterListener(AddonEvent.PreSetup, UiHelper.SelectYesnoAddonName, OnYesnoPreSetup);
         Svc.AddonLifecycle.RegisterListener(AddonEvent.PostSetup, UiHelper.SelectYesnoAddonName, OnYesnoSetup);
         Svc.Chat.ChatMessage += OnChatMessage;
     }
@@ -202,6 +230,7 @@ public sealed unsafe class SquadronRoutine : TcModule
     {
         Svc.Chat.ChatMessage -= OnChatMessage;
         Svc.AddonLifecycle.UnregisterListener(AddonEvent.PostSetup, UiHelper.SelectYesnoAddonName, OnYesnoSetup);
+        Svc.AddonLifecycle.UnregisterListener(AddonEvent.PreSetup, UiHelper.SelectYesnoAddonName, OnYesnoPreSetup);
         Svc.Framework.Update -= OnUpdate;
 
         if (queue.IsBusy || run != null) EndRun("模組已停用", false, false);
@@ -418,8 +447,15 @@ public sealed unsafe class SquadronRoutine : TcModule
             return;
         }
 
+        if (goal == Goal.AutoDeploy && AutoDeployBlockedReason() is { } autoReason)
+        {
+            lastSummary = $"沒有開始：{autoReason}";
+            Svc.Chat.PrintError($"[TC Toolbox] 國防聯軍分隊：{autoReason}");
+            return;
+        }
+
         TryGetBarracks(out var barracks);
-        var r = goal == Goal.Expedition
+        var r = goal is Goal.Expedition or Goal.AutoDeploy
             ? new Run
             {
                 Goal = goal, Territory = barracks.Territory, BaseId = barracks.Officer, Kind = ObjectKind.EventNpc,
@@ -440,6 +476,8 @@ public sealed unsafe class SquadronRoutine : TcModule
             return;
         }
 
+        if (goal == Goal.AutoDeploy) r.Auto = new AutoRun(diagTables);
+
         run = r;
         talkLease.Reset();
         menuLease.Reset();
@@ -448,6 +486,13 @@ public sealed unsafe class SquadronRoutine : TcModule
         queue.Enqueue($"走到{r.TargetName}旁", () => WalkStep(r), 30_000);
         queue.Enqueue($"和{r.TargetName}互動", () => InteractStep(r), 5_000);
         queue.Enqueue($"等{r.GoalLabel}打開", () => WaitStep(r), 30_000);
+        if (goal == Goal.AutoDeploy)
+        {
+            queue.Enqueue("選今天的任務", () => PickStep(r), 60_000);
+            queue.Enqueue("按任務開始", () => DeployStep(r), 10_000);
+            queue.Enqueue("確認派遣", () => ConfirmStep(r), 10_000);
+            queue.Enqueue("等開始訊息", () => StartedStep(r), 15_000);
+        }
 
         Svc.Log.Information($"[{InternalName}] 開始：前往「{r.TargetName}」（領地 {r.Territory}），目標選項「{r.MenuText}」→ {r.GoalAddon}。");
     }
@@ -606,6 +651,12 @@ public sealed unsafe class SquadronRoutine : TcModule
         switch (decision.Kind)
         {
             case SquadronActionKind.Done:
+                if (r.Goal == Goal.AutoDeploy)
+                {
+                    Svc.Log.Information($"[{InternalName}] 分隊任務清單已打開，開始選今天的任務（用遊戲預填的隊員）。");
+                    return true;
+                }
+
                 EndRun($"已打開{r.GoalLabel}，請自己選{(r.Goal == Goal.Expedition ? "任務與隊員" : "訓練")}。", true, true);
                 return true;
 
@@ -715,6 +766,204 @@ public sealed unsafe class SquadronRoutine : TcModule
 
     #endregion
 
+    #region 替我選今天的任務並派遣
+
+    // 每一步都在同一幀重新取窗、判 ready 再讀再送，送出一律走 UiHelper.TryFireCallback（AddonPressGuard）。
+    // AtkValues 只經 SquadronDiag.ReadCells（字串格不解參考），NumberArray 只經 ReadExpeditionNa（截到 Size）。
+
+    /// <summary>清單的 callback 形狀照遊戲自己送的：(種類, 參數, Undefined×4)。</summary>
+    private static bool SendListEvent(AtkUnitBase* addon, int kind, int arg) =>
+        UiHelper.TryFireCallback(addon, true, kind, arg, default(AtkValue), default(AtkValue), default(AtkValue), default(AtkValue));
+
+    /// <returns><c>null</c>＝可以開始；否則是一句理由。</returns>
+    private string? AutoDeployBlockedReason()
+    {
+        if (!Config.AutoDeployEnabled) return "要先勾選啟用「替我選今天的任務並派遣」。";
+        if (!diagTables.HasMissions) return "讀不到分隊任務表，無法核對任務清單。";
+        if (deployFragments.Count < 3) return "讀不到派遣確認框的文字樣板，無法核對確認框。";
+        if (startedPrefix.Length == 0) return "讀不到「開始了…」訊息的文字樣板，無法確認有沒有派出去。";
+        return null;
+    }
+
+    private static string? UnexpectedWindow(bool allowYesno)
+    {
+        foreach (var name in UnexpectedAddons)
+        {
+            if (UiHelper.IsAnyAddonReady(name)) return $"出現了 {name} 視窗";
+        }
+
+        if (!allowYesno && UiHelper.IsAnyAddonReady(UiHelper.SelectYesnoAddonName)) return "出現了確認框";
+        return null;
+    }
+
+    private static SquadronExpeditionNa? ReadNaSnapshot(out string problem)
+    {
+        Span<int> buffer = stackalloc int[SquadronDiag.NumberArrayReadLength];
+        var length = ReadExpeditionNa(buffer, out var size, out problem);
+        if (length == 0) return null;
+
+        var verdict = new SquadronVerdict();
+        var na = SquadronDiag.ParseExpeditionNa(buffer[..length], size, verdict);
+        if (na == null) problem = string.Join("；", verdict.Bad);
+        return na;
+    }
+
+    private void FlushScanLog(AutoRun a)
+    {
+        foreach (var line in a.Scan.Log) Svc.Log.Information($"[{InternalName}] 自動派遣｜{line}");
+        a.Scan.Log.Clear();
+    }
+
+    private bool? PickStep(Run r)
+    {
+        var a = r.Auto!;
+        if (Svc.ClientState.TerritoryType != r.Territory) return Stop("已經離開軍營");
+        if (UnexpectedWindow(false) is { } window) return Stop(window);
+
+        var addon = UiHelper.FindReadyAddon(ExpeditionAddon);
+        if (addon == null) return Stop("分隊任務清單被關掉了");
+
+        SquadronListRead? list = null;
+        if (TryReadCells(addon, out var count, out var listProblem))
+            list = SquadronAutoPick.ReadList(new ReadOnlySpan<SquadronCell>(diagCells, 0, count), diagTables, a.Scan.WantsTabCount, out listProblem);
+
+        var na = ReadNaSnapshot(out var naProblem);
+        var now = diagClock.ElapsedMilliseconds;
+        var action = a.Scan.Tick(list, listProblem, na, naProblem, now);
+        FlushScanLog(a);
+
+        switch (action.Kind)
+        {
+            case SquadronScanKind.Stop:
+                return Stop(action.Reason);
+
+            case SquadronScanKind.Done:
+                a.Picked = a.Scan.Picked;
+                Svc.Log.Information($"[{InternalName}] 自動派遣｜清單上已選中 {a.Picked!.Describe()}，接著按任務開始（共送了 {a.Scan.Sends} 次清單操作）。");
+                return true;
+
+            case SquadronScanKind.SelectTab:
+            case SquadronScanKind.SelectRow:
+                var kind = action.Kind == SquadronScanKind.SelectTab ? 11 : 12;
+                if (SendListEvent(addon, kind, action.Arg))
+                {
+                    a.Scan.Sent(now);
+                    Svc.Log.Information($"[{InternalName}] 自動派遣｜送出 ({kind}, {action.Arg})：{(kind == 11 ? "切分頁" : "選本頁第 " + action.Arg + " 列")}。");
+                }
+
+                return false;
+
+            default:
+                return false;
+        }
+    }
+
+    private bool? DeployStep(Run r)
+    {
+        var a = r.Auto!;
+        var picked = a.Picked!;
+        if (Svc.ClientState.TerritoryType != r.Territory) return Stop("已經離開軍營");
+
+        if (!a.DispatchSent)
+        {
+            if (UnexpectedWindow(false) is { } window) return Stop(window);
+
+            var addon = UiHelper.FindReadyAddon(ExpeditionAddon);
+            if (addon == null) return Stop("分隊任務清單被關掉了");
+
+            HashSet<int>? variants = null;
+            var now = SquadronAutoPick.ReadRow(ReadNaSnapshot(out var naProblem), picked.Id, picked.Tab, picked.Row, diagTables, ref variants, out var problem);
+            if (now == null) return Stop($"按任務開始前再讀一次不符：{(problem.Length > 0 ? problem : naProblem)}");
+            if (!now.Eligible || now.Tier != picked.Tier || now.Total != picked.Total)
+                return Stop($"按任務開始前值變了（選定時 {picked.Describe()}；現在 {now.Describe()}）");
+
+            // 任務開始會叫出確認框，YesAlready（含 Alt 強制鍵）要先確定讓開。
+            if (!LeasesExclusive) return Stop(LeaseDetail);
+            if (!UiHelper.TryFireCallback(addon, true, 14)) return false;
+
+            a.DispatchSent = true;
+            a.DispatchAt = DateTime.UtcNow;
+            Svc.Log.Information($"[{InternalName}] 自動派遣｜送出 (14)：任務開始「{picked.Name}」（這一輪只送這一次）。");
+            return false;
+        }
+
+        if (UnexpectedWindow(true) is { } other) return Stop(other);
+        if (UiHelper.IsAnyAddonReady(UiHelper.SelectYesnoAddonName)) return true;
+
+        if (DateTime.UtcNow - a.DispatchAt > TimeSpan.FromSeconds(5))
+            return Stop("按了任務開始，5 秒內沒有出現確認框" +
+                        (a.LastSystemMessage.Length > 0 ? $"（系統訊息：{a.LastSystemMessage}）" : string.Empty));
+
+        return false;
+    }
+
+    private bool? ConfirmStep(Run r)
+    {
+        var a = r.Auto!;
+        if (Svc.ClientState.TerritoryType != r.Territory) return Stop("已經離開軍營");
+        if (UnexpectedWindow(true) is { } window) return Stop(window);
+        if (a.YesnoSetups > 1) return Stop("按了任務開始後出現了不只一個確認框，不按");
+
+        var yesno = UiHelper.FindReadyAddon(UiHelper.SelectYesnoAddonName);
+        if (yesno == null) return a.YesnoSeen ? Stop("確認框收掉了（可能你自己按了是或否）") : false;
+
+        a.YesnoSeen = true;
+        if (a.YesnoPause is not { } pause || pause == YesAlreadyIpc.BotherPause.Failed)
+            return Stop($"確認框出現的那一刻確認不了 YesAlready 已經讓開（{a.YesnoPause?.ToString() ?? "沒看到這扇確認框的 PreSetup"}），不按");
+        if (!confirmLease.IsExclusive) return Stop(LeaseDetail);
+
+        var text = UiHelper.GetSelectYesnoText(yesno);
+        if (text.Length == 0 || AddonPrompt.LooksMidUpdate(text)) return false;
+
+        if (!SquadronAutoPick.ConfirmMatches(text, deployFragments, a.Picked!.Name, DateTime.Now, out var why))
+            return Stop($"確認框對不上（{why}），不按：「{text.ReplaceLineEndings(" ")}」");
+
+        if (!UiHelper.TryFireCallback(yesno, true, 0)) return false;
+
+        a.ConfirmPressed = true;
+        a.ConfirmAt = DateTime.UtcNow;
+        Svc.Log.Information($"[{InternalName}] 自動派遣｜確認框「{text.ReplaceLineEndings(" ")}」與選定任務相符（YesAlready：{pause}），已按「是」。");
+        return true;
+    }
+
+    private bool? StartedStep(Run r)
+    {
+        var a = r.Auto!;
+        var cid = Svc.PlayerState.ContentId;
+        if (cid != 0 && Config.Returns.TryGetValue(cid, out var record) && record.Confirmed && record.SeenUtc >= a.DispatchAt &&
+            SquadronFlow.NormalizeEntry(record.Mission) == SquadronFlow.NormalizeEntry(a.Picked!.Name))
+        {
+            EndRun($"已派遣「{record.Mission}」，預定 {record.ReturnUtc.ToLocalTime():MM/dd HH:mm} 歸隊。", true, true);
+            return true;
+        }
+
+        if (DateTime.UtcNow - a.ConfirmAt > TimeSpan.FromSeconds(10))
+            return Stop("按了「是」，但 10 秒內沒看到「開始了…」訊息；請看一下有沒有派出去");
+
+        return false;
+    }
+
+    /// <summary>派遣確認框的 PreSetup：YesAlready 在 PostSetup 才按，這一刻請它讓開、記下結果；確認不了就不按。</summary>
+    private void OnYesnoPreSetup(AddonEvent type, AddonArgs args)
+    {
+        if (run?.Auto is not { DispatchSent: true, ConfirmPressed: false } a) return;
+
+        try
+        {
+            a.YesnoSetups++;
+            confirmLease.RenewNow();
+            a.YesnoPause = confirmLease.Last;
+            Svc.Log.Information($"[{InternalName}] 自動派遣｜確認框 PreSetup（第 {a.YesnoSetups} 扇）：請 YesAlready 暫停「SelectYesno」→ {confirmLease.Last}。");
+        }
+        catch (Exception ex)
+        {
+            a.YesnoPause = YesAlreadyIpc.BotherPause.Failed;
+            Svc.Log.Information($"[{InternalName}] 自動派遣｜確認框 PreSetup 時請 YesAlready 讓開失敗（{ex.Message}），這扇不按。");
+        }
+    }
+
+    #endregion
+
     #region 派遣確認框（只讀）
 
     private void OnYesnoSetup(AddonEvent type, AddonArgs args)
@@ -805,6 +1054,10 @@ public sealed unsafe class SquadronRoutine : TcModule
     {
         try
         {
+            if (run?.Auto is { DispatchSent: true, ConfirmPressed: false } auto &&
+                type is XivChatType.SystemMessage or XivChatType.SystemError or XivChatType.ErrorMessage)
+                auto.LastSystemMessage = message.TextValue;
+
             if (pendingStart is not { } pending || startedPrefix.Length == 0) return;
 
             if (DateTime.UtcNow - pending.SeenUtc > ConfirmWindow)
@@ -1143,7 +1396,18 @@ public sealed unsafe class SquadronRoutine : TcModule
                 "分隊任務清單一打開就停手，任務與隊員由你自己選。");
             DrawStartButton(Goal.Training, "帶我到會議板並打開訓練清單###squadronBoard",
                 "走到會議板旁邊互動，選單裡只按「打開訓練選單」（整句相同才按），訓練清單一打開就停手。");
+            if (Config.AutoDeployEnabled)
+                DrawStartButton(Goal.AutoDeploy, "替我選今天的任務並派遣###squadronAuto", AutoDeployTooltip, AutoDeployBlockedReason());
         }
+
+        var autoDeploy = Config.AutoDeployEnabled;
+        if (ImGui.Checkbox("啟用「替我選今天的任務並派遣」按鈕##squadronAutoToggle", ref autoDeploy))
+        {
+            Config.AutoDeployEnabled = autoDeploy;
+            Plugin.Instance.Config.Save();
+        }
+
+        ImGui.TextDisabled("用遊戲預填的 4 名隊員替你選任務並派遣；只在你按下按鈕時執行，可隨時按停止。");
 
         if (lastSummary.Length > 0) ImGui.TextDisabled($"上次結果：{lastSummary}");
 
@@ -1151,9 +1415,15 @@ public sealed unsafe class SquadronRoutine : TcModule
         DrawReturns();
     }
 
-    private void DrawStartButton(Goal goal, string label, string tooltip)
+    private const string AutoDeployTooltip =
+        "走到分隊軍曹旁邊打開分隊任務清單，用遊戲預填的 4 名隊員逐一點看簡單、普通分頁的任務：\n" +
+        "重要任務三項全達標就選它，否則選至少兩項達標、等級最高的一般任務（同級比成功率、再比經驗值）。\n" +
+        "選定後按「任務開始」，確認框上的任務名整句相符、YesAlready 已讓開才按「是」。\n" +
+        "不換隊員、不做訓練、不看特殊任務；任何一項讀值對不上都停手，清單留給你自己選。";
+
+    private void DrawStartButton(Goal goal, string label, string tooltip, string? extraReason = null)
     {
-        var reason = blockedReason;
+        var reason = blockedReason ?? extraReason;
         var clicked = false;
         using (ImRaii.Disabled(reason != null))
         {
