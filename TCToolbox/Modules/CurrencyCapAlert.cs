@@ -121,6 +121,9 @@ public sealed unsafe class CurrencyCapAlert : TcModule
     /// <summary>資訊列說明裡最多列出幾位其他角色。</summary>
     private const int OtherSealsPreviewCount = 12;
 
+    /// <summary>聊天連結文字的 UIColor 列號，與 GatherBuddy Reborn 的聊天連結同色。</summary>
+    private const ushort ExchangeLinkColor = 500;
+
     private static readonly System.Numerics.Vector4 OtherSealsNearCapColor = new(1f, 0.5f, 0.4f, 1f);
     private static readonly System.Numerics.Vector4 OtherSealsNormalColor = new(0.8f, 0.8f, 0.8f, 1f);
 
@@ -150,6 +153,15 @@ public sealed unsafe class CurrencyCapAlert : TcModule
     private readonly List<CurrencySnapshot> dtrNearCap = [];
     private readonly List<uint> dtrHeldUnreadable = [];
     private int dtrOthersNear;
+    private bool dtrExchange;
+
+    /// <summary>InventoryTools 的兌換排行能不能開；每次輪詢更新，點下去那一刻另外即時再判一次。</summary>
+    private bool exchangeAvailable;
+
+    /// <summary>聊天提醒尾端「開啟兌換排行」連結的編號（本插件內唯一）。</summary>
+    private const uint ExchangeChatLinkId = 0xCCA1;
+
+    private DalamudLinkPayload? exchangeChatLink;
 
     protected override void OnEnable()
     {
@@ -163,20 +175,34 @@ public sealed unsafe class CurrencyCapAlert : TcModule
         ResetOtherSeals();
         pendingSwitch = null;
         itemTexts.Clear();
+        exchangeAvailable = false;
         InvalidateDtr();
 
         dtrEntry = Svc.DtrBar.Get("TC Toolbox 貨幣上限");
         dtrEntry.Shown = false;
         dtrEntry.Text = TcDtr.IconText(DtrIcon, "?");
         dtrEntry.Tooltip = "TC Toolbox — 貨幣上限警示";
-        dtrEntry.OnClick = TcDtr.Click(null);
+        dtrEntry.OnClick = TcDtr.Click(OnDtrLeftClick);
+
+        // 同編號重複註冊會擲，先移除一次。
+        Svc.Chat.RemoveChatLinkHandler(ExchangeChatLinkId);
+        exchangeChatLink = Svc.Chat.AddChatLinkHandler(ExchangeChatLinkId, (_, _) => CurrencyExchangeLink.TryOpen());
 
         Svc.Framework.Update += OnUpdate;
+    }
+
+    /// <summary>左鍵：開得了兌換排行就開，開不了照舊開關設定。</summary>
+    private static void OnDtrLeftClick()
+    {
+        if (!CurrencyExchangeLink.TryOpen()) Plugin.Instance.ToggleMainWindow();
     }
 
     protected override void OnDisable()
     {
         Svc.Framework.Update -= OnUpdate;
+
+        Svc.Chat.RemoveChatLinkHandler(ExchangeChatLinkId);
+        exchangeChatLink = null;
 
         TcDtr.Remove(ref dtrEntry);
 
@@ -188,6 +214,7 @@ public sealed unsafe class CurrencyCapAlert : TcModule
         ResetOtherSeals();
         pendingSwitch = null;
         itemTexts.Clear();
+        exchangeAvailable = false;
         InvalidateDtr();
     }
 
@@ -203,6 +230,8 @@ public sealed unsafe class CurrencyCapAlert : TcModule
 
         // 貨幣數量變化很慢（打完一場副本才動一次），兩秒一次綽綽有餘。
         if (!Throttle.Pass("CurrencyCapAlert-Poll", 2_000)) return;
+
+        exchangeAvailable = CurrencyExchangeLink.IsAvailable();
 
         // 沒登入時整個藏起來：那不是「不知道」，是「這時候本來就沒有貨幣可談」。
         if (Svc.Objects.LocalPlayer == null)
@@ -614,6 +643,7 @@ public sealed unsafe class CurrencyCapAlert : TcModule
     private bool DtrIsCurrent(DtrContent content, int othersNear)
     {
         if (Config.ShowOtherCharacterSeals || dtrContent != content || dtrOthersNear != othersNear) return false;
+        if (dtrExchange != exchangeAvailable) return false;
         if (dtrNearCap.Count != nearCap.Count || dtrHeldUnreadable.Count != heldUnreadable.Count) return false;
         for (var i = 0; i < nearCap.Count; i++)
         {
@@ -632,6 +662,7 @@ public sealed unsafe class CurrencyCapAlert : TcModule
     {
         dtrContent = content;
         dtrOthersNear = othersNear;
+        dtrExchange = exchangeAvailable;
         dtrNearCap.Clear();
         dtrNearCap.AddRange(nearCap);
         dtrHeldUnreadable.Clear();
@@ -653,8 +684,7 @@ public sealed unsafe class CurrencyCapAlert : TcModule
             dtrEntry.Text = TcDtr.IconText(DtrIcon, "?");
             dtrEntry.Tooltip =
                 "TC Toolbox — 貨幣上限警示\n讀不到貨幣資料，目前無法判斷有沒有快滿的貨幣。\n" +
-                "（剛登入時會有短暫的這個狀態，屬正常。）" + BuildOtherSealsTooltip() +
-                "\n\n左鍵／右鍵：開啟／關閉 TC Toolbox 設定";
+                "（剛登入時會有短暫的這個狀態，屬正常。）" + BuildOtherSealsTooltip() + DtrClickHint();
             RememberDtr(DtrContent.Unreadable, othersNear);
             return;
         }
@@ -699,10 +729,14 @@ public sealed unsafe class CurrencyCapAlert : TcModule
         }
 
         sb.Append(BuildOtherSealsTooltip());
-        sb.Append("\n\n左鍵／右鍵：開啟／關閉 TC Toolbox 設定");
+        sb.Append(DtrClickHint());
         dtrEntry.Tooltip = sb.ToString();
         RememberDtr(DtrContent.List, othersNear);
     }
+
+    private string DtrClickHint() => exchangeAvailable
+        ? "\n\n左鍵：開啟／關閉 InventoryTools「貨幣兌換價值排行」（最滿的貨幣排在最前面）\n右鍵：開啟／關閉 TC Toolbox 設定"
+        : "\n\n左鍵／右鍵：開啟／關閉 TC Toolbox 設定";
 
     /// <summary>
     /// 邊緣觸發的聊天提醒：只在「這一次剛跨過門檻」時印一則。
@@ -726,8 +760,16 @@ public sealed unsafe class CurrencyCapAlert : TcModule
             if (!announced.Add(c.ItemId)) continue;
 
             var what = c.IsWeekly ? "本週取得量" : "持有量";
-            Svc.Chat.Print(
-                $"[TC Toolbox] 「{c.Name}」{what}已達 {c.Count} / {c.MaxCount}，還可再收 {c.Remaining}。");
+            var message = new SeStringBuilder()
+                .AddText($"[TC Toolbox] 「{c.Name}」{what}已達 {c.Count} / {c.MaxCount}，還可再收 {c.Remaining}。");
+            if (exchangeAvailable && exchangeChatLink != null)
+            {
+                message.Add(exchangeChatLink)
+                    .AddUiForeground(ExchangeLinkColor).AddText("［開啟兌換排行］").AddUiForegroundOff()
+                    .Add(RawPayload.LinkTerminator);
+            }
+
+            Svc.Chat.Print(message.Build());
             Svc.Log.Information(
                 $"[{InternalName}] 跨過門檻：{c.Name}（{c.ItemId}） {c.Count}/{c.MaxCount}");
         }
@@ -780,6 +822,20 @@ public sealed unsafe class CurrencyCapAlert : TcModule
                 "從沒在 AutoRetainer 的記錄下登入過的角色顯示「?」，不會顯示成 0。\n" +
                 "快滿的判準與上面的門檻相同；有的話資訊列會亮，數字寫成「目前角色+其他角色」。\n" +
                 "需要安裝 AutoRetainer。只顯示，不會自己切換角色。");
+        }
+
+        if (exchangeAvailable)
+        {
+            if (ImGui.Button("開啟貨幣兌換價值排行##currencyCapExchange"))
+                CurrencyExchangeLink.TryOpen();
+
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip(
+                    "開啟 InventoryTools 的「貨幣兌換價值排行」：選一種貨幣，看能換的東西每 1 單位值多少 Gil。\n" +
+                    "清單預設把最滿的貨幣排在最前面；視窗已開著時再按一次會關閉。\n" +
+                    "資訊列警示左鍵、聊天提醒尾端的連結也能開。InventoryTools 沒載入時不顯示這顆按鈕。");
+            }
         }
 
         ImGui.Separator();
