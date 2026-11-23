@@ -1,5 +1,6 @@
 using System.Numerics;
 using Dalamud.Interface.Windowing;
+using TCToolbox.Core;
 using TCToolbox.Modules;
 
 namespace TCToolbox.Windows;
@@ -21,11 +22,12 @@ public sealed class DailyDutyTodoWindow : Window
         : base("DailyDuty 未完成任務###TCToolboxDailyDutyTodo")
     {
         this.module = module;
-        SizeConstraints = new WindowSizeConstraints
-        {
-            MinimumSize = new Vector2(360, 180),
-            MaximumSize = new Vector2(float.MaxValue, float.MaxValue),
-        };
+    }
+
+    public override void PreDraw()
+    {
+        SizeConstraints = UiScale.MinWindowSize(360, 180);
+        base.PreDraw();
     }
 
     public override void Draw() => module.DrawPanel();

@@ -1,5 +1,6 @@
 using System.Numerics;
 using Dalamud.Interface.Windowing;
+using TCToolbox.Core;
 using TCToolbox.Modules;
 
 namespace TCToolbox.Windows;
@@ -21,11 +22,12 @@ public sealed class WeeklyBingoAdvisorWindow : Window
         : base("天書奇談換格建議###TCToolboxWeeklyBingoAdvisor")
     {
         this.module = module;
-        SizeConstraints = new WindowSizeConstraints
-        {
-            MinimumSize = new Vector2(620, 320),
-            MaximumSize = new Vector2(float.MaxValue, float.MaxValue),
-        };
+    }
+
+    public override void PreDraw()
+    {
+        SizeConstraints = UiScale.MinWindowSize(620, 320);
+        base.PreDraw();
     }
 
     public override void Draw() => module.DrawPanel();

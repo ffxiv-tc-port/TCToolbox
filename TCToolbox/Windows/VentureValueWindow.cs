@@ -1,5 +1,6 @@
 using System.Numerics;
 using Dalamud.Interface.Windowing;
+using TCToolbox.Core;
 using TCToolbox.Modules;
 
 namespace TCToolbox.Windows;
@@ -17,11 +18,12 @@ public sealed class VentureValueWindow : Window
         : base("僱員探險收益###TCToolboxVentureValue")
     {
         this.module = module;
-        SizeConstraints = new WindowSizeConstraints
-        {
-            MinimumSize = new Vector2(640, 240),
-            MaximumSize = new Vector2(float.MaxValue, float.MaxValue),
-        };
+    }
+
+    public override void PreDraw()
+    {
+        SizeConstraints = UiScale.MinWindowSize(640, 240);
+        base.PreDraw();
     }
 
     public override void OnOpen() => module.OnWindowOpened();

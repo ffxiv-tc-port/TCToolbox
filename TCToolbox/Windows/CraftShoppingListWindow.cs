@@ -1,6 +1,7 @@
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
+using TCToolbox.Core;
 using TCToolbox.Modules;
 
 namespace TCToolbox.Windows;
@@ -22,11 +23,12 @@ public sealed class CraftShoppingListWindow : Window
         : base("製作清單缺料與採買###TCToolboxCraftShoppingList")
     {
         this.module = module;
-        SizeConstraints = new WindowSizeConstraints
-        {
-            MinimumSize = new Vector2(820, 360),
-            MaximumSize = new Vector2(float.MaxValue, float.MaxValue),
-        };
+    }
+
+    public override void PreDraw()
+    {
+        SizeConstraints = UiScale.MinWindowSize(820, 360);
+        base.PreDraw();
     }
 
     public override void Draw()

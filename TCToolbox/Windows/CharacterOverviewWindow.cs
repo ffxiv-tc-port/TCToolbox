@@ -1,5 +1,6 @@
 using System.Numerics;
 using Dalamud.Interface.Windowing;
+using TCToolbox.Core;
 using TCToolbox.Modules;
 
 namespace TCToolbox.Windows;
@@ -17,11 +18,12 @@ public sealed class CharacterOverviewWindow : Window
         : base("角色總覽###TCToolboxCharacterOverview")
     {
         this.module = module;
-        SizeConstraints = new WindowSizeConstraints
-        {
-            MinimumSize = new Vector2(560, 200),
-            MaximumSize = new Vector2(float.MaxValue, float.MaxValue),
-        };
+    }
+
+    public override void PreDraw()
+    {
+        SizeConstraints = UiScale.MinWindowSize(560, 200);
+        base.PreDraw();
     }
 
     public override void OnOpen() => module.OnWindowOpened();

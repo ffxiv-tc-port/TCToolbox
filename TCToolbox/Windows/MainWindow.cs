@@ -16,11 +16,12 @@ public sealed class MainWindow : Window
     public MainWindow(Plugin plugin) : base("TC Toolbox###TCToolboxMain")
     {
         this.plugin = plugin;
-        SizeConstraints = new WindowSizeConstraints
-        {
-            MinimumSize = new Vector2(560, 320),
-            MaximumSize = new Vector2(float.MaxValue, float.MaxValue),
-        };
+    }
+
+    public override void PreDraw()
+    {
+        SizeConstraints = UiScale.MinWindowSize(560, 320);
+        base.PreDraw();
     }
 
     public override void Draw()
@@ -326,7 +327,7 @@ public sealed class MainWindow : Window
         var clearWidth = ImGui.CalcTextSize("清除").X + (ImGui.GetStyle().FramePadding.X * 2);
         var summaryWidth = ImGui.CalcTextSize("符合 999 項").X;
         var spacing = ImGui.GetStyle().ItemSpacing.X;
-        ImGui.SetNextItemWidth(Math.Max(120f, ImGui.GetContentRegionAvail().X - clearWidth - summaryWidth - (spacing * 2)));
+        ImGui.SetNextItemWidth(Math.Max(UiScale.Px(120f), ImGui.GetContentRegionAvail().X - clearWidth - summaryWidth - (spacing * 2)));
 
         if (ImGui.InputTextWithHint("##tctsearch", "搜尋模組名稱、說明或分類", searchBuffer))
             ApplySearch(ReadSearchBuffer());
