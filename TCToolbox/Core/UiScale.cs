@@ -9,6 +9,7 @@ namespace TCToolbox.Core;
 /// 寫死的設計像素依目前字級換算：值 × <c>ImGui.GetFontSize()</c> ÷ Dalamud 出廠字級。
 /// <c>GetFontSize()</c> 已含全域縮放，所以不再乘 GlobalScale；出廠字級時 <c>Px(x)</c>＝x×GlobalScale。
 /// 只在繪製期間呼叫（量的是當下推入的字型）；負值（-1＝填滿）與 0 不要傳進來。
+/// 只用在自己的獨立視窗與設定頁；貼在原生視窗旁、位置照原生視窗算的按鈕與面板維持寫死像素。
 /// </summary>
 public static class UiScale
 {

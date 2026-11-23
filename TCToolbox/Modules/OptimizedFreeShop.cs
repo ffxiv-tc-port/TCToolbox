@@ -324,9 +324,10 @@ public sealed unsafe class OptimizedFreeShop : TcModule
 
                 using (ImRaii.Disabled(queue.IsBusy || group.Remaining == 0))
                 {
+                    // 刻意不跟字級放大（不走 UiScale）：這排按鈕貼在原生視窗上方、位置照原生視窗算，放大會擋到它。
                     var clicked = group.IconId != 0
-                                      ? GameIcons.IconButton(group.IconId, group.Name, UiScale.Px(30f), group.Remaining == 0)
-                                      : ImGui.Button(group.Name, new Vector2(0, UiScale.Px(30f)));
+                                      ? GameIcons.IconButton(group.IconId, group.Name, 30f, group.Remaining == 0)
+                                      : ImGui.Button(group.Name, new Vector2(0, 30f));
 
                     if (clicked) StartBatch(group);
                 }
