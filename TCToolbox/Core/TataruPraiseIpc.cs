@@ -101,4 +101,30 @@ internal static class TataruPraiseIpc
             Svc.Log.Information($"[TataruPraise] 呼叫失敗（{reason}）：{ex.Message}");
         }
     }
+
+    /// <summary><c>Func&lt;string, bool&gt;</c>：直接念指定的句子（總開關關著時對方回 false）。</summary>
+    private const string TagSpeak = "TataruPraise.Speak";
+
+    private static readonly Lazy<ICallGateSubscriber<string, bool>> SpeakGate =
+        new(() => Svc.PluginInterface.GetIpcSubscriber<string, bool>(TagSpeak));
+
+    /// <summary>請塔塔露念一句指定的話。對方沒裝或關著時是安靜的 no-op。</summary>
+    /// <param name="text">🔴 一定要帶中文標點（對方語音合成服務的要求）。</param>
+    /// <param name="reason">寫進記錄用的來源描述。</param>
+    internal static void TrySpeak(string text, string reason)
+    {
+        try
+        {
+            var accepted = SpeakGate.Value.InvokeFunc(text);
+            Svc.Log.Information($"[TataruPraise] {reason}：Speak 回傳 {accepted}。");
+        }
+        catch (IpcNotReadyError)
+        {
+            // 對方沒安裝／沒載入：正常狀態，不寫 log。
+        }
+        catch (Exception ex)
+        {
+            Svc.Log.Information($"[TataruPraise] 呼叫失敗（{reason}）：{ex.Message}");
+        }
+    }
 }

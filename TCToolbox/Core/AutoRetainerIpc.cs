@@ -73,6 +73,14 @@ internal static class AutoRetainerIpc
         /// <summary>軍票這一組的記錄時間。null＝從沒讀到。</summary>
         public DateTime? GCSealsUpdatedAt = null;
 
+        /// <summary>背包空格。<see cref="uint.MaxValue"/>＝對方沒有這個欄位（不是「滿了」）。</summary>
+        public uint InventorySpace = uint.MaxValue;
+
+        /// <summary>勾選給 AutoRetainer 派遣的潛水艇／飛空艇名稱。<see langword="null"/>＝對方沒有這個欄位。</summary>
+        public HashSet<string>? EnabledSubs = null;
+
+        public HashSet<string>? EnabledAirships = null;
+
         /// <summary>初始值就是「不知道」，對方舊版沒有這些欄位時也落在這裡而不是 0。</summary>
         public SealsState Seals =>
             GCSealsUpdatedAt == null || GCSealsMax < 0 ? SealsState.Unknown
@@ -270,6 +278,93 @@ internal static class AutoRetainerIpc
             return false;
         }
     }
+
+    // ── 各角色的僱員探險與潛水艇／飛空艇返航時間（一次問全部） ──────────────
+
+    // 🔴 型別逐字照提供端的 CharacterTimerList：全是 CoreLib 型別 ⇒ 兩邊同一個 Type、不走 JSON。
+    //    元素名不影響型別；要改形狀只能等對方開新名字的端點，這裡不能就地改。
+    private static readonly Lazy<ICallGateSubscriber<List<(ulong, string, string, string,
+        (string, ulong, bool, uint, long)[], (string, uint)[], (string, uint)[])>?>> CharacterTimersGate =
+        new(() => Svc.PluginInterface.GetIpcSubscriber<List<(ulong, string, string, string,
+            (string, ulong, bool, uint, long)[], (string, uint)[], (string, uint)[])>?>("AutoRetainer.GetCharacterTimersV1"));
+
+    /// <summary>一位僱員的探險（時間是 Unix 秒）。</summary>
+    internal readonly record struct RetainerTimer(string Name, bool HasVenture, long VentureEndsAt);
+
+    /// <summary>一艘潛水艇／飛空艇（Unix 秒；0＝停在船塢）。</summary>
+    internal readonly record struct VesselTimer(string Name, uint ReturnTime);
+
+    /// <summary>一個角色的計時資料（值複本；陣列為 <see langword="null"/>＝對方沒有這份資料）。</summary>
+    internal sealed record CharacterTimers(
+        ulong Cid, string Name, string World, RetainerTimer[]? Retainers, VesselTimer[]? Airships, VesselTimer[]? Submarines);
+
+    /// <summary><c>GetCharacterTimersV1</c> 問不到的原因。</summary>
+    internal enum TimersFailure
+    {
+        None = 0,
+
+        /// <summary>沒有這個端點（未安裝、未載入或版本太舊）。</summary>
+        NoEndpoint,
+
+        /// <summary>對方回 <see langword="null"/>：這次沒答案（它自己的框架閘門逾時），不是沒有角色。</summary>
+        NoAnswer,
+
+        /// <summary>呼叫本身失敗（型別對不上或對方擲例外）。</summary>
+        Failed,
+    }
+
+    private static bool loggedTimersFailure;
+
+    /// <summary>一次問出所有已登錄角色的僱員探險與潛水艇／飛空艇返航時間。</summary>
+    /// <remarks>⚠️ 只在框架執行緒上、節流後呼叫（提供端要走訪它自己的角色清單）。</remarks>
+    public static List<CharacterTimers>? GetCharacterTimers(out TimersFailure failure, out string error)
+    {
+        List<(ulong, string, string, string, (string, ulong, bool, uint, long)[], (string, uint)[], (string, uint)[])>? raw;
+        try
+        {
+            raw = CharacterTimersGate.Value.InvokeFunc();
+        }
+        catch (IpcNotReadyError ex)
+        {
+            failure = TimersFailure.NoEndpoint;
+            error = ex.GetType().Name;
+            return null;
+        }
+        catch (Exception ex) when (IsIpcFailure(ex))
+        {
+            if (!loggedTimersFailure)
+            {
+                loggedTimersFailure = true;
+                Svc.Log.Information($"[AutoRetainerIpc] GetCharacterTimersV1 呼叫失敗（{ex.GetType().Name}）：{ex.Message}");
+            }
+
+            failure = TimersFailure.Failed;
+            error = ex.GetType().Name;
+            return null;
+        }
+
+        if (raw == null)
+        {
+            failure = TimersFailure.NoAnswer;
+            error = "對方這次沒有回答";
+            return null;
+        }
+
+        var result = new List<CharacterTimers>(raw.Count);
+        foreach (var (cid, name, world, _, retainers, airships, submarines) in raw)
+        {
+            result.Add(new CharacterTimers(cid, name ?? string.Empty, world ?? string.Empty,
+                retainers == null ? null : Array.ConvertAll(retainers, r => new RetainerTimer(r.Item1 ?? string.Empty, r.Item3, r.Item5)),
+                ToVessels(airships), ToVessels(submarines)));
+        }
+
+        failure = TimersFailure.None;
+        error = string.Empty;
+        return result;
+    }
+
+    private static VesselTimer[]? ToVessels((string, uint)[]? src) =>
+        src == null ? null : Array.ConvertAll(src, v => new VesselTimer(v.Item1 ?? string.Empty, v.Item2));
 
     // ── 僱員道具取回（AutoRetainer.PluginState，手動觸發） ────────────────────
 

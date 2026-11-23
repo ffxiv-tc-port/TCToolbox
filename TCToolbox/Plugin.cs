@@ -133,6 +133,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new VentureValueAdvisor());
         Modules.Add(new ExpertDeliveryUnlock());
         Modules.Add(new SquadronRoutine());
+        Modules.Add(new CharacterOverview());
 
         // ④ 介面 · 雜項
         Modules.Add(new AutoHideBanners());
