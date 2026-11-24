@@ -258,11 +258,24 @@ public sealed class ConfigBackupEngine
         var head = data[..Math.Min(HeadProbeBytes, data.Length)];
         if (head.IndexOfAnyExcept((byte)0) < 0) return ConfigFileStatus.Nul;
 
-        if (ext == ".json" && !IsStructurallyCompleteJson(data)) return ConfigFileStatus.BadJson;
+        if (ext == ".json" && !LooksBinary(data) && !IsStructurallyCompleteJson(data)) return ConfigFileStatus.BadJson;
 
         if (shrinkChecked && IsShrunk(data.Length, referenceSize)) return ConfigFileStatus.Shrunk;
 
         return ConfigFileStatus.Ok;
+    }
+
+    /// <summary>
+    /// 副檔名是 .json、內容卻不是文字 JSON（GatherBuddyReborn 把 MessagePack 存成 .json）：第一個非空白位元組
+    /// 既不是 NUL、也不是 JSON 值或註解的開頭。開頭是 NUL 不算二進位，照舊交給結構檢查判成受損。
+    /// </summary>
+    public static bool LooksBinary(ReadOnlySpan<byte> d)
+    {
+        var i = d.Length >= 3 && d[0] == 0xEF && d[1] == 0xBB && d[2] == 0xBF ? 3 : 0;
+        while (i < d.Length && d[i] is (byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n') i++;
+        if (i >= d.Length || d[i] == 0) return false;
+        return d[i] is not ((byte)'{' or (byte)'[' or (byte)'"' or (byte)'-' or (>= (byte)'0' and <= (byte)'9')
+            or (byte)'t' or (byte)'f' or (byte)'n' or (byte)'N' or (byte)'I' or (byte)'/');
     }
 
     public static bool IsShrunk(long size, long referenceSize) =>
