@@ -26,8 +26,11 @@ public sealed partial class Configuration : IPluginConfiguration
     /// <para>
     /// v5 → v6：預設開啟寶藏鑑定紀錄（只讀、只寫 log；見 <see cref="DefaultOnModulesV6"/>）。
     /// </para>
+    /// <para>
+    /// v6 → v7：預設開啟插件設定自動備份（見 <see cref="DefaultOnModulesV7"/>）。
+    /// </para>
     /// </remarks>
-    public const int CurrentVersion = 6;
+    public const int CurrentVersion = 7;
 
     public int Version { get; set; } = 1;
 
@@ -140,6 +143,7 @@ public sealed partial class Configuration : IPluginConfiguration
     public NearbyEnemiesConfig NearbyEnemies { get; set; } = new();
     public VentureValueAdvisorConfig VentureValueAdvisor { get; set; } = new();
     public CharacterOverviewConfig CharacterOverview { get; set; } = new();
+    public PluginConfigBackupConfig PluginConfigBackup { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
 }

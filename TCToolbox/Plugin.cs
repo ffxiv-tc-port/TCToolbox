@@ -165,6 +165,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new WorldTravelPanel());
         Modules.Add(new PluginUpdateNotice());
         Modules.Add(new DailyDutyTodo());
+        Modules.Add(new PluginConfigBackup());
 
         // 🔴 一定要在模組 Enable() 之前：同一個 AddonLifecycle 事件的監聽器是依註冊順序在同一次派送裡逐一呼叫的，
         //    守衛排在模組之後的話，模組在自己的 PostSetup 處理常式裡按下、登記完位址，緊接著守衛就把那筆紀錄清掉。

@@ -6,6 +6,7 @@ using Dalamud.Interface.Components;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
 using TCToolbox.Core;
+using TCToolbox.Modules;
 
 namespace TCToolbox.Windows;
 
@@ -28,6 +29,7 @@ public sealed class MainWindow : Window
     {
         ImGui.TextDisabled("台服雜項 QoL 模組集。每個模組獨立開關（預設關閉），變更即時生效並自動存檔。");
         DrawHotkeyConflicts();
+        if (PluginConfigBackup.BannerText is { } backupBanner) ImGui.TextColored(NoticeWarnColor, backupBanner);
         ImGui.Separator();
         ImGui.Spacing();
 

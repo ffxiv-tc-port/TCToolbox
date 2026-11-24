@@ -23,6 +23,7 @@ public sealed partial class Configuration
         // 播種只屬於 v3 → v4：之後的升級再播一次，會把使用者自己關掉的模組重新打開。
         var seeded = from < 4 ? SeedDefaultOnModules(DefaultOnModules) : [];
         if (from < 6) seeded.AddRange(SeedDefaultOnModules(DefaultOnModulesV6));
+        if (from < 7) seeded.AddRange(SeedDefaultOnModules(DefaultOnModulesV7));
         var speed = from < 5
             ? MigrateSpeedWhitelistToTerritories(DutySupportData.GetTerritoryType)
             : [];
@@ -73,6 +74,12 @@ public sealed partial class Configuration
     private static readonly string[] DefaultOnModulesV6 =
     [
         Modules.AppraisalDiagnostics.ModuleInternalName,
+    ];
+
+    /// <summary>v7 起預設開著的模組。不碰遊戲狀態，只讀插件設定檔、把備份寫到插件設定資料夾以外。</summary>
+    private static readonly string[] DefaultOnModulesV7 =
+    [
+        Modules.PluginConfigBackup.ModuleInternalName,
     ];
 
     /// <summary>把 <paramref name="names"/> 寫進 <see cref="EnabledModules"/>，回傳真的加進去的名字。</summary>
