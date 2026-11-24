@@ -144,6 +144,7 @@ public sealed partial class Configuration : IPluginConfiguration
     public VentureValueAdvisorConfig VentureValueAdvisor { get; set; } = new();
     public CharacterOverviewConfig CharacterOverview { get; set; } = new();
     public PluginConfigBackupConfig PluginConfigBackup { get; set; } = new();
+    public FrontlineObjectivePanelConfig FrontlineObjectivePanel { get; set; } = new();
 
     public void Save() => Svc.PluginInterface.SavePluginConfig(this);
 }

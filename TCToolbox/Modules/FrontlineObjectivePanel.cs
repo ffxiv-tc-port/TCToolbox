@@ -16,7 +16,7 @@ namespace TCToolbox.Modules;
 /// 刻意不自己掛 ActorControl hook：委派參數個數跟 CS 世代綁定，全艦隊只留 BMR 一處，跳世代時才不會漏改一份而傳錯參數。
 /// 狀態語意全在 <see cref="FrontlineObjectiveTracker"/>（純類別，離線探針直接重放錄影驗）。
 /// </remarks>
-public sealed class FrontlineObjectivePanel : TcModule
+public sealed partial class FrontlineObjectivePanel : TcModule
 {
     public const string ModuleInternalName = "FrontlineObjectivePanel";
 
@@ -27,7 +27,7 @@ public sealed class FrontlineObjectivePanel : TcModule
     public override string DisplayName => "前線目標面板";
 
     public override string Description =>
-        "紛爭前線（塵封秘岩、榮譽野、昂薩哈凱爾、周邊遺跡群）的目標清單：快要可用的倒數、可契約、已占領與即將失效、石文剩餘點數、冰的 HP，附距離、方向與俯視小圖。"
+        "紛爭前線（塵封秘岩、榮譽野、昂薩哈凱爾、周邊遺跡群）的目標清單：快要可用的倒數、可契約、已占領與即將失效、石文剩餘點數、冰的 HP，附距離、方向與俯視小圖；可另外把目標疊在遊戲的小地圖上（預設關）。"
         + "資料由 BossModReborn 轉發（需要它載入）。只顯示，不選目標、不移動、不施放。";
 
     public override ModuleCategory Category => ModuleCategory.Combat;
@@ -59,9 +59,9 @@ public sealed class FrontlineObjectivePanel : TcModule
     private readonly FrontlineObjectiveTracker tracker = new();
     private ICallGateSubscriber<uint, uint, uint, uint, uint, uint, object>? subscriber;
 
+    private static FrontlineObjectivePanelConfig Config => Plugin.Instance.Config.FrontlineObjectivePanel;
+
     private bool windowOpen = true;
-    private bool showMap = true;
-    private bool showIdle;
     private bool previewOutside;
     private uint lastSeenTerritory = uint.MaxValue;
 
@@ -79,6 +79,7 @@ public sealed class FrontlineObjectivePanel : TcModule
         loggedFirstEvent = false;
         loggedForeign = false;
         lastSeenTerritory = uint.MaxValue;
+        ResetMinimapMatchState(uint.MaxValue);
         subscriber = Svc.PluginInterface.GetIpcSubscriber<uint, uint, uint, uint, uint, uint, object>(IpcName);
         subscriber.Subscribe(OnDirectorUpdate);
         Svc.PluginInterface.UiBuilder.Draw += DrawWindow;
@@ -126,6 +127,14 @@ public sealed class FrontlineObjectivePanel : TcModule
     {
         if (ImGui.Button(previewOutside ? "關閉面板預覽" : "在前線外也打開面板（預覽）"))
             previewOutside = !previewOutside;
+        var overlay = Config.MinimapOverlay;
+        if (ImGui.Checkbox("疊在小地圖上", ref overlay))
+        {
+            Config.MinimapOverlay = overlay;
+            Plugin.Instance.Config.Save();
+        }
+
+        UiHelperTooltip("在遊戲的小地圖上畫出各目標：進度環、狀態色與短倒數；預告或推估中的是淡色、已確認的是實色。\n在小地圖範圍外的目標夾在圓邊、畫成指向它的箭頭。\n只在紛爭前線裡畫；小地圖被關掉或讀不到時不畫。");
         ImGui.TextDisabled("進入紛爭前線時面板會自己打開；關掉後下次進場再打開。");
         ImGui.TextDisabled("需要 BossModReborn 載入；只顯示，不選目標、不移動、不施放。");
     }
@@ -153,12 +162,15 @@ public sealed class FrontlineObjectivePanel : TcModule
             lastSeenTerritory = territory;
             loggedFirstEvent = false;
             loggedForeign = false;
+            ResetMinimapMatchState(territory);
             if (FrontlineObjectiveTracker.MapOf(territory) != FrontlineMap.None)
                 windowOpen = true;
         }
 
         var inFrontline = FrontlineObjectiveTracker.MapOf(territory) != FrontlineMap.None;
-        if (!(inFrontline && windowOpen) && !previewOutside)
+        var showWindow = (inFrontline && windowOpen) || previewOutside;
+        var showOverlay = inFrontline && Config.MinimapOverlay;
+        if (!showWindow && !showOverlay)
             return;
 
         // 先在鎖內抄完要畫的東西，鎖外才碰 ImGui。
@@ -195,6 +207,12 @@ public sealed class FrontlineObjectivePanel : TcModule
         Vector2? playerPos = player is null ? null : new Vector2(player.Position.X, player.Position.Z);
         var playerRot = player?.Rotation ?? 0f;
 
+        if (showOverlay)
+            DrawMinimapOverlay(territory, rows, playerPos, events);
+
+        if (!showWindow)
+            return;
+
         ImGui.SetNextWindowSize(UiScale.Px(460, 360), ImGuiCond.FirstUseEver);
         var open = true;
         if (ImGui.Begin($"{DisplayName}###TCToolboxFrontlineObjectives", ref open))
@@ -206,7 +224,13 @@ public sealed class FrontlineObjectivePanel : TcModule
                 DrawRows(rows, playerPos);
                 if (bounds is { } b)
                 {
-                    ImGui.Checkbox("俯視小圖", ref showMap);
+                    var showMap = Config.ShowMap;
+                    if (ImGui.Checkbox("俯視小圖", ref showMap))
+                    {
+                        Config.ShowMap = showMap;
+                        Plugin.Instance.Config.Save();
+                    }
+
                     if (showMap)
                         DrawMiniMap(rows, b, playerPos, playerRot);
                 }
@@ -280,7 +304,12 @@ public sealed class FrontlineObjectivePanel : TcModule
         if (map == FrontlineMap.FieldsOfGlory)
         {
             ImGui.SameLine();
-            ImGui.Checkbox("顯示待機中的冰", ref showIdle);
+            var showIdle = Config.ShowIdle;
+            if (ImGui.Checkbox("顯示待機中的冰", ref showIdle))
+            {
+                Config.ShowIdle = showIdle;
+                Plugin.Instance.Config.Save();
+            }
         }
     }
 
@@ -296,6 +325,7 @@ public sealed class FrontlineObjectivePanel : TcModule
                 ImGui.TableSetupColumn("進度");
                 ImGui.TableSetupColumn("距離");
                 ImGui.TableHeadersRow();
+                var showIdle = Config.ShowIdle;
                 foreach (var v in rows)
                 {
                     if (v.Phase == FrontlineObjectivePhase.Idle && !showIdle)
@@ -412,32 +442,13 @@ public sealed class FrontlineObjectivePanel : TcModule
             if (v.Position is not { } p)
                 continue;
             var s = ToScreen(p);
-            var alpha = v.Confirmed ? 1f : PossibleAlpha;
             if (v.Phase is FrontlineObjectivePhase.Idle)
             {
                 dl.AddCircleFilled(s, radius * 0.35f, ImGui.GetColorU32(WithAlpha(EndedColor, 0.6f)));
                 continue;
             }
 
-            var col = ImGui.GetColorU32(WithAlpha(PhaseColor(v), alpha));
-            dl.AddCircle(s, radius + 1f, outline, 0, 3f);
-            if (v.Phase == FrontlineObjectivePhase.Unknown)
-            {
-                dl.AddCircle(s, radius, ImGui.GetColorU32(UnknownColor), 0, 1.5f);
-            }
-            else
-            {
-                dl.AddCircle(s, radius, ImGui.GetColorU32(WithAlpha(EndedColor, 0.5f)), 0, 2f);
-                // 進度環：從正上方順時針，長度＝剩餘比例。
-                var f = v.Fraction ?? 1f;
-                if (f > 0.01f)
-                {
-                    dl.PathArcTo(s, radius, -MathF.PI / 2, -MathF.PI / 2 + (MathF.Tau * Math.Clamp(f, 0f, 1f)), 24);
-                    dl.PathStroke(col, ImDrawFlags.None, 2.5f);
-                }
-
-                dl.AddCircleFilled(s, radius * 0.45f, col);
-            }
+            DrawObjectiveMarker(dl, s, radius, v, outline);
 
             if (hover && Vector2.DistanceSquared(mouse, s) <= (radius + 3) * (radius + 3))
                 hovered = v;
@@ -458,6 +469,29 @@ public sealed class FrontlineObjectivePanel : TcModule
 
         if (hovered != null)
             ImGui.SetTooltip($"{hovered.Name}：{hovered.Status}\n{hovered.Detail}");
+    }
+
+    /// <summary>一個目標的圖示：外框＋進度環（從正上方順時針，長度＝剩餘比例）＋實心點；淡色＝預告或推估中。面板俯視小圖與小地圖疊加共用。</summary>
+    private static void DrawObjectiveMarker(ImDrawListPtr dl, Vector2 s, float radius, FrontlineObjectiveView v, uint outline)
+    {
+        var alpha = v.Confirmed ? 1f : PossibleAlpha;
+        var col = ImGui.GetColorU32(WithAlpha(PhaseColor(v), alpha));
+        dl.AddCircle(s, radius + 1f, outline, 0, 3f);
+        if (v.Phase == FrontlineObjectivePhase.Unknown)
+        {
+            dl.AddCircle(s, radius, ImGui.GetColorU32(UnknownColor), 0, 1.5f);
+            return;
+        }
+
+        dl.AddCircle(s, radius, ImGui.GetColorU32(WithAlpha(EndedColor, 0.5f)), 0, 2f);
+        var f = v.Fraction ?? 1f;
+        if (f > 0.01f)
+        {
+            dl.PathArcTo(s, radius, -MathF.PI / 2, -MathF.PI / 2 + (MathF.Tau * Math.Clamp(f, 0f, 1f)), 24);
+            dl.PathStroke(col, ImDrawFlags.None, 2.5f);
+        }
+
+        dl.AddCircleFilled(s, radius * 0.45f, col);
     }
 
     private static Vector4 PhaseColor(FrontlineObjectiveView v)

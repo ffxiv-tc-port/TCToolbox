@@ -152,7 +152,7 @@ public sealed class FrontlineObjectiveTracker
         }
         else if (Map == FrontlineMap.Secure)
         {
-            foreach (var (placeName, _) in SecurePoints)
+            foreach (var (placeName, _, _) in SecurePoints)
                 securePoints[placeName] = (-1, false);
         }
     }
@@ -537,15 +537,17 @@ public sealed class FrontlineObjectiveTracker
     {
         foreach (var (placeName, (team, known)) in securePoints)
         {
-            var name = SecureName(placeName) ?? $"據點 #{placeName}";
+            var info = SecureInfo(placeName);
+            var name = info?.Name ?? $"據點 #{placeName}";
+            var pos = info?.Pos;
             var key = $"P{placeName:D5}";
             const string more = "本圖只解出據點擁有者；無人機、截擊系統與占領進度尚未支援。";
             if (!known && !SawMatchStart)
-                list.Add(new(key, name, FrontlineObjectivePhase.Unknown, -1, -1, null, null, false, false, null, "?", "比賽中途才開始收資料，載入後這個據點還沒換手。" + more));
+                list.Add(new(key, name, FrontlineObjectivePhase.Unknown, -1, -1, null, null, false, false, pos, "?", "比賽中途才開始收資料，載入後這個據點還沒換手。" + more));
             else if (team >= 0)
-                list.Add(new(key, name, FrontlineObjectivePhase.Owned, team, -1, null, null, false, true, null, $"{TeamName(team)}占領", more));
+                list.Add(new(key, name, FrontlineObjectivePhase.Owned, team, -1, null, null, false, true, pos, $"{TeamName(team)}占領", more));
             else
-                list.Add(new(key, name, FrontlineObjectivePhase.Available, -1, -1, null, null, false, true, null, "中立", more));
+                list.Add(new(key, name, FrontlineObjectivePhase.Available, -1, -1, null, null, false, true, pos, "中立", more));
         }
     }
 
@@ -567,12 +569,12 @@ public sealed class FrontlineObjectiveTracker
 
     private static OvooInfo? OvooBySeq(int seq) => Array.Find(Ovoos, o => o.Seq == seq);
 
-    private static string? SecureName(uint placeName)
+    private static (string Name, Vector2 Pos)? SecureInfo(uint placeName)
     {
-        foreach (var (id, name) in SecurePoints)
+        foreach (var (id, name, pos) in SecurePoints)
         {
             if (id == placeName)
-                return name;
+                return (name, pos);
         }
 
         return null;
@@ -586,6 +588,7 @@ public sealed class FrontlineObjectiveTracker
             FrontlineMap.SealRock => Array.ConvertAll(Stones, s => s.Pos),
             FrontlineMap.FieldsOfGlory => Array.ConvertAll(Ices, i => i.Pos ?? Vector2.Zero),
             FrontlineMap.OnsalHakair => Array.ConvertAll(Ovoos, o => o.Pos),
+            FrontlineMap.Secure => Array.ConvertAll(SecurePoints, p => p.Pos),
             _ => [],
         };
         var min = new Vector2(float.MaxValue);
@@ -660,16 +663,18 @@ public sealed class FrontlineObjectiveTracker
         new(13, 3424, "無垢的大地13", new(-94.0f, 88.0f)),
     ];
 
-    private static readonly (uint PlaceName, string Name)[] SecurePoints =
+    // 座標＝Frontline01 每個 PlaceName 前面那三個佈局實例在 l1p3 佈局檔（planmap／bg）裡的位置（三者一致）；
+    // 另與 MapMarker 的地名標籤位置、錄影裡占領當下的人潮位置對過。
+    private static readonly (uint PlaceName, string Name, Vector2 Pos)[] SecurePoints =
     [
-        (1369, "黑渦團前哨"),
-        (1367, "雙蛇黨前哨"),
-        (1368, "不滅隊前哨"),
-        (2578, "亞拉戈市場遺跡北側"),
-        (2579, "亞拉戈市場遺跡南側"),
-        (2580, "亞拉戈太陽神殿東側"),
-        (2581, "亞拉戈太陽神殿西側"),
-        (2582, "亞拉戈莊園遺跡南側"),
-        (2583, "亞拉戈莊園遺跡北側"),
+        (1369, "黑渦團前哨", new(-126.6f, 73.1f)),
+        (1367, "雙蛇黨前哨", new(0.0f, -140.0f)),
+        (1368, "不滅隊前哨", new(129.0f, 74.5f)),
+        (2578, "亞拉戈市場遺跡北側", new(134.4f, -134.8f)),
+        (2579, "亞拉戈市場遺跡南側", new(184.4f, -48.2f)),
+        (2580, "亞拉戈太陽神殿東側", new(49.5f, 183.8f)),
+        (2581, "亞拉戈太陽神殿西側", new(-50.5f, 183.8f)),
+        (2582, "亞拉戈莊園遺跡南側", new(-183.9f, -49.0f)),
+        (2583, "亞拉戈莊園遺跡北側", new(-133.9f, -135.6f)),
     ];
 }
