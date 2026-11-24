@@ -90,6 +90,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new OptimizedTargetInfo());
         Modules.Add(new AutoRetarget());
         Modules.Add(new NearbyEnemies());
+        Modules.Add(new FrontlineObjectivePanel());
         Modules.Add(new DeepDungeonChestTarget());
         Modules.Add(new AppraisalDiagnostics());
         Modules.Add(new AutoCheckFoodUsage());
