@@ -98,6 +98,7 @@ public sealed class Plugin : IDalamudPlugin
         Modules.Add(new AutoPlayerCommend());
         Modules.Add(new DutyAnnounce());
         Modules.Add(new AutoClaimPVPRewards());
+        Modules.Add(new PvpFrontlineRecords());
         Modules.Add(new OptimizedDutyFinderSetting());
         Modules.Add(new WeeklyBingoClickToOpen());
         Modules.Add(new WeeklyBingoAdvisor());
