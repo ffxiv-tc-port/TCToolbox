@@ -36,8 +36,8 @@ public sealed class PluginUpdateNotice : TcModule
     private const string FeedUrl =
         "https://raw.githubusercontent.com/ffxiv-tc-port/DalamudPluginsTC/main/repo.json";
 
-    /// <summary>檢查間隔的可設定範圍（分鐘）。</summary>
-    public const int MinIntervalMinutes = 30;
+    /// <summary>檢查間隔的可設定範圍（分鐘）。下限 5＝raw.githubusercontent 的快取時間，再短也只會拿到同一份。</summary>
+    public const int MinIntervalMinutes = 5;
 
     /// <summary>檢查間隔的可設定範圍（分鐘）。</summary>
     public const int MaxIntervalMinutes = 180;
@@ -51,10 +51,11 @@ public sealed class PluginUpdateNotice : TcModule
     private const int HttpTimeoutSeconds = 20;
 
     /// <summary>401／403／404 的簡短原因；配套說明是 <see cref="TokenHintDetail"/>。</summary>
-    private const string TokenHintReason = "需要 GitHub 權杖";
+    private const string TokenHintReason = "插件倉庫拒絕存取";
 
     private const string TokenHintDetail =
-        "台服插件倉庫已轉為私有：請在 Dalamud 設定的「試驗性功能」分頁填入有讀取權限的 GitHub 存取權杖。";
+        "台服插件倉庫是公開的，不需要 GitHub 存取權杖。若曾在 Dalamud 設定的「試驗性功能」分頁填過權杖，" +
+        "它過期或被撤銷時可能讓讀取失敗，請更新或清空；沒填過的話多半是 GitHub 暫時異常，之後會自動重試。";
 
     private const int FeedSizeLimitBytes = 8 * 1024 * 1024;
 
@@ -163,7 +164,7 @@ public sealed class PluginUpdateNotice : TcModule
 
         cts = new CancellationTokenSource();
 
-        // 🔴 外掛庫的 repo 是私有的：要帶上使用者在 Dalamud 設定的 GitHub 權杖才讀得到。
+        // 插件倉庫已公開、不必權杖；沿用這個工廠＝使用者在 Dalamud 填了權杖就照樣帶上（行為不變）。
         //    這個工廠回的是新實例、由呼叫端負責釋放，所以逾時與大小上限照樣設在它身上。
         http = Svc.PluginInterface.CreateGitHubHttpClient();
         http.Timeout = TimeSpan.FromSeconds(HttpTimeoutSeconds);
@@ -665,7 +666,7 @@ public sealed class PluginUpdateNotice : TcModule
     {
         OperationCanceledException => "逾時",
 
-        // 沒權杖（或權杖沒權限）時 raw 端點回的是 404 而不是 401。
+        // raw 端點對「拒絕存取」常回 404 而不是 401，三者一起判。
         HttpRequestException
         {
             StatusCode: HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
