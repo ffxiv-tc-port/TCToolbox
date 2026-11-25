@@ -77,6 +77,7 @@ internal sealed class UniversalisPrices : IDisposable
 
     public UniversalisPrices()
     {
+        Stats = new UniversalisRequestStats("[WorldTravelPanel]", Environment.TickCount64);
         cts = new CancellationTokenSource();
         http = new HttpClient
         {
@@ -90,6 +91,8 @@ internal sealed class UniversalisPrices : IDisposable
 
     /// <summary>最近一次查價的結果（<c>null</c>＝還沒查過）。<b>只在主執行緒讀寫。</b></summary>
     public PriceFetchResult? Latest { get; private set; }
+
+    public UniversalisRequestStats Stats { get; }
 
     /// <summary>有一次查詢還在路上。</summary>
     public bool IsFetching => Volatile.Read(ref inFlight) != 0;
@@ -107,6 +110,7 @@ internal sealed class UniversalisPrices : IDisposable
 
         if (Interlocked.CompareExchange(ref inFlight, 1, 0) != 0) return false;
 
+        Stats.Query(itemId);
         var token = tokenSource.Token;
         _ = Task.Run(() => RunFetch(itemId, dcName, token), token);
         return true;
@@ -131,15 +135,19 @@ internal sealed class UniversalisPrices : IDisposable
                       + $"?listings={ListingCap}&entries=0";
 
             var (payload, error) = await UniversalisRetry.GetAsync(
-                http, url, "[UniversalisPrices]", $"道具 {itemId}／{dcName}", token).ConfigureAwait(false);
+                http, url, "[UniversalisPrices]", $"道具 {itemId}／{dcName}", token, Stats.Attempt).ConfigureAwait(false);
             if (payload == null)
             {
+                Stats.Failed();
                 LogFailure(itemId, dcName, error ?? "未知錯誤");
                 Interlocked.Exchange(ref incoming, Failure(itemId, dcName, error ?? "未知錯誤"));
                 return;
             }
 
-            Interlocked.Exchange(ref incoming, Parse(itemId, dcName, payload));
+            var parsed = Parse(itemId, dcName, payload);
+            if (parsed.Error == null) Stats.Succeeded();
+            else Stats.Failed();
+            Interlocked.Exchange(ref incoming, parsed);
         }
         // 🔴 判準是「我們的 token 被取消了」，不是例外型別：HttpClient 的 Timeout 也擲
         //    OperationCanceledException，只看型別會把逾時當成停用而不回報結果。
@@ -150,6 +158,7 @@ internal sealed class UniversalisPrices : IDisposable
         }
         catch (Exception ex)
         {
+            Stats.Failed();
             LogFailure(itemId, dcName, $"{ex.GetType().Name} {ex.Message}");
             Interlocked.Exchange(ref incoming, Failure(itemId, dcName, $"{ex.GetType().Name}：{ex.Message}"));
         }

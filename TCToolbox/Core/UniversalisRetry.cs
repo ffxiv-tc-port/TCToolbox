@@ -18,9 +18,11 @@ internal static class UniversalisRetry
 
     /// <param name="logPrefix">重試記錄行開頭，例如 <c>[VentureValue]</c>。</param>
     /// <param name="logContext">重試記錄行括號裡的查詢描述。</param>
+    /// <param name="onAttempt">每送出一次 GET 前呼叫（參數 0＝第一次，之後是重試）；在背景執行緒上。</param>
     /// <returns>成功＝回應本文、<c>Error</c> 為 null；失敗＝<c>Payload</c> 為 null、<c>Error</c> 是可直接顯示的原因。</returns>
     public static async Task<(byte[]? Payload, string? Error)> GetAsync(
-        HttpClient http, string url, string logPrefix, string logContext, CancellationToken token)
+        HttpClient http, string url, string logPrefix, string logContext, CancellationToken token,
+        Action<int>? onAttempt = null)
     {
         var error = "未知錯誤";
         for (var attempt = 0; attempt <= MaxRetries; attempt++)
@@ -28,6 +30,7 @@ internal static class UniversalisRetry
             int? retryAfterMs = null;
             try
             {
+                onAttempt?.Invoke(attempt);
                 using var response = await http.GetAsync(url, token).ConfigureAwait(false);
                 if (response.IsSuccessStatusCode)
                     return (await response.Content.ReadAsByteArrayAsync(token).ConfigureAwait(false), null);

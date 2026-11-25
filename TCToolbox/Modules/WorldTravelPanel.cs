@@ -230,6 +230,8 @@ public sealed partial class WorldTravelPanel : TcModule
 
         Svc.Commands.RemoveHandler(Command);
 
+        if (prices?.Stats.TryFlush(Environment.TickCount64, force: true) is { } summary) Svc.Log.Information(summary);
+
         // 🔴 先收 HttpClient 再清狀態：進行中的查詢會被取消，結果丟掉不要。
         prices?.Dispose();
         prices = null;
@@ -285,6 +287,7 @@ public sealed partial class WorldTravelPanel : TcModule
 
         // 🔴 要在閒置檢查之前：查價結果是使用者按下去才有的，不能因為他把面板關掉就丟失。
         prices?.Consume();
+        if (prices?.Stats.TryFlush(Environment.TickCount64) is { } summary) Svc.Log.Information(summary);
 
         var now = Environment.TickCount64;
         if (now - lastUiTick > IdleStopMs) return;
