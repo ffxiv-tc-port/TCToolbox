@@ -135,9 +135,60 @@ internal enum FcConfirmMatch
     Exact,
 }
 
+/// <summary>遊戲拒絕「使用特效」時回的訊息分類。零值＝不是這幾則。</summary>
+internal enum FcUseRejection
+{
+    None = 0,
+
+    /// <summary>LogMessage 1918「使用公會特效失敗。」（遊戲沒給原因）。</summary>
+    UseFailed,
+
+    /// <summary>LogMessage 1920「無法發動更多公會特效了。」</summary>
+    LimitReached,
+
+    /// <summary>LogMessage 1921「同類特效正在發動中。」</summary>
+    SameKindActive,
+
+    /// <summary>LogMessage 1919「沒有「使用公會特效」的許可權。」或 Addon 3425。</summary>
+    NoPermission,
+}
+
+/// <param name="Text">展開後的整句；比對時整句相等才算。</param>
+/// <param name="Source">出處（「LogMessage 1920」），寫 log 用。</param>
+internal readonly record struct FcRejectionTemplate(FcUseRejection Kind, string Text, string Source);
+
 internal static class FcActionText
 {
     public static string Clean(string? text) => (text ?? string.Empty).ReplaceLineEndings(string.Empty);
+
+    /// <summary>整句相等（兩邊都去換行、去頭尾空白）才算命中；不做子字串比對。</summary>
+    public static FcUseRejection ClassifyRejection(string? message, IReadOnlyList<FcRejectionTemplate> templates, out FcRejectionTemplate hit)
+    {
+        hit = default;
+        var text = Clean(message).Trim();
+        if (text.Length == 0) return FcUseRejection.None;
+
+        foreach (var t in templates)
+        {
+            var want = Clean(t.Text).Trim();
+            if (t.Kind == FcUseRejection.None || want.Length == 0) continue;
+            if (!string.Equals(text, want, StringComparison.Ordinal)) continue;
+
+            hit = t;
+            return t.Kind;
+        }
+
+        return FcUseRejection.None;
+    }
+
+    public static string DescribeRejection(FcUseRejection kind) => kind switch
+    {
+        FcUseRejection.UseFailed => "使用公會特效失敗（遊戲沒給原因）",
+        FcUseRejection.LimitReached => "同時生效的公會特效已達上限",
+        FcUseRejection.SameKindActive => "同類特效正在生效中",
+        FcUseRejection.NoPermission => "沒有使用公會特效的許可權",
+        _ => "不明",
+    };
 
     /// <param name="prefix">Addon 2877 placeholder 前的文字（「確定要使用「」）。</param>
     /// <param name="suffix">Addon 2877 placeholder 後的文字（「」特效嗎？」）。</param>
@@ -426,6 +477,24 @@ internal sealed class FcActionSequence
         Stop($"中止於「{StepName}」：{reason}", nowMs);
     }
 
+    /// <summary>
+    /// 遊戲回了拒絕訊息。只有正在處理某個特效（等選單／確認框／生效）時才算它的失敗並整輪停止；
+    /// 其他步驟只記一行。回 <see langword="true"/>＝這一輪因此停止。
+    /// </summary>
+    public bool GameRejected(FcUseRejection kind, string detail, long nowMs)
+    {
+        var label = FcActionText.DescribeRejection(kind);
+        if (kind == FcUseRejection.None || phase is not (Phase.WaitingMenu or Phase.WaitingConfirm or Phase.WaitingStatus))
+        {
+            log($"收到遊戲訊息「{label}」（{detail}），這時在「{StepName}」，只記錄");
+            return false;
+        }
+
+        if (!Failed.Contains(current.Name)) Failed.Add(current.Name);
+        Stop($"「{current.Name}」被遊戲拒絕：{label}（{detail}）；不重試，整輪停止", nowMs);
+        return true;
+    }
+
     /// <summary>上一個指令這一幀沒送出去（守衛擋下、視窗剛好不在）：退回前一步，隔一下再送。</summary>
     public void Rejected(string reason, long nowMs)
     {
@@ -528,7 +597,7 @@ internal sealed class FcActionSequence
                     Failed.Add(current.Name);
                     return Stop(
                         $"按了「是」，{StatusTimeoutMs / 1000} 秒內身上沒出現狀態 {current.StatusId}"
-                        + "（可能被遊戲拒絕，例如同時生效的特效已滿）；不重試，整輪停止", nowMs);
+                        + "，也沒比對到遊戲的失敗訊息；不重試，整輪停止", nowMs);
                 }
 
                 return FcCommand.None;

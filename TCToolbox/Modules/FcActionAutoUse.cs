@@ -4,6 +4,8 @@ using System.Linq;
 using System.Text;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Conditions;
+using Dalamud.Game.Text;
+using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Memory;
 using Dalamud.Plugin.Services;
@@ -57,6 +59,14 @@ public sealed unsafe class FcActionAutoUse : TcModule
     /// <summary>「確定要使用「&lt;CompanyAction 名稱&gt;」特效嗎？」。</summary>
     private const uint ConfirmAddonRow = 2877;
 
+    private const uint UseFailedLogRow = 1918;
+    private const uint NoPermissionLogRow = 1919;
+    private const uint LimitReachedLogRow = 1920;
+    private const uint SameKindLogRow = 1921;
+
+    /// <summary>「沒有使用公會特效的許可權。」。</summary>
+    private const uint NoPermissionAddonRow = 3425;
+
     /// <summary>公會視窗切到「特效」分頁的 callback 值（照 AutoRetainer 上游）。</summary>
     private const uint ActionTabValue = 4;
 
@@ -94,6 +104,10 @@ public sealed unsafe class FcActionAutoUse : TcModule
     private string lastResult = string.Empty;
     private int recordedStableReads;
 
+    private List<FcRejectionTemplate> rejectionTemplates = [];
+    private string lastRejection = string.Empty;
+    private string lastRejectionDetail = string.Empty;
+
     private readonly FcStatusWatch statusWatch = new();
     private long lastPollAt;
     private ulong sessionCid;
@@ -128,6 +142,8 @@ public sealed unsafe class FcActionAutoUse : TcModule
         Svc.ClientState.Login += OnLogin;
         Svc.ClientState.Logout += OnLogout;
         Svc.Framework.Update += OnUpdate;
+        Svc.Chat.ChatMessage += OnChatMessage;
+        Svc.Toasts.ErrorToast += OnErrorToast;
 
         // 刻意不在這裡補跑：啟用模組或熱載入時人已經在遊戲裡，那不是「登入」。
     }
@@ -137,6 +153,8 @@ public sealed unsafe class FcActionAutoUse : TcModule
         Svc.ClientState.Login -= OnLogin;
         Svc.ClientState.Logout -= OnLogout;
         Svc.Framework.Update -= OnUpdate;
+        Svc.Chat.ChatMessage -= OnChatMessage;
+        Svc.Toasts.ErrorToast -= OnErrorToast;
 
         if (sequence != null)
             Log($"模組停用，中止「{runLabel}」（停在「{sequence.StepName}」；已開的視窗留給你）");
@@ -402,7 +420,10 @@ public sealed unsafe class FcActionAutoUse : TcModule
         confirmLease.Reset();
         var now = Environment.TickCount64;
         var companyWasOpen = UiHelper.IsAddonReady(CompanyAddon);
-        Log($"{label}：開始");
+        var templateProblems = new List<string>();
+        rejectionTemplates = LoadRejectionTemplates(templateProblems);
+        Log($"{label}：開始（失敗訊息樣板 {rejectionTemplates.Count} 則"
+            + (templateProblems.Count > 0 ? $"；不比對：{string.Join("；", templateProblems)}" : string.Empty) + "）");
         sequence = new FcActionSequence(targets, useText, prefix, suffix, companyWasOpen, now, Log);
     }
 
@@ -1019,6 +1040,85 @@ public sealed unsafe class FcActionAutoUse : TcModule
     private static string AddonText(uint rowId) =>
         Svc.Data.GetExcelSheet<Addon>().GetRowOrDefault(rowId)?.Text.ExtractText() ?? string.Empty;
 
+    private void OnChatMessage(XivChatType type, int timestamp, ref SeString sender, ref SeString message, ref bool isHandled)
+    {
+        if (sequence != null) HandleGameMessage(message, $"聊天類型 {(int)type}");
+    }
+
+    private void OnErrorToast(ref SeString message, ref bool isHandled)
+    {
+        if (sequence != null) HandleGameMessage(message, "畫面錯誤提示");
+    }
+
+    /// <summary>只在流程跑著時比對；只讀，不攔、不改訊息。</summary>
+    private void HandleGameMessage(SeString message, string channel)
+    {
+        try
+        {
+            var run = sequence;
+            if (run == null || rejectionTemplates.Count == 0) return;
+
+            var text = message.TextValue;
+            var kind = FcActionText.ClassifyRejection(text, rejectionTemplates, out var hit);
+            if (kind == FcUseRejection.None) return;
+
+            var label = FcActionText.DescribeRejection(kind);
+            var detail = $"{hit.Source}，{channel}";
+            Log($"收到遊戲訊息「{FcActionText.Clean(text)}」＝{label}（{detail}）");
+            run.GameRejected(kind, detail, Environment.TickCount64);
+
+            var who = Svc.PlayerState.CharacterName;
+            lastRejection = $"{DateTime.Now:MM/dd HH:mm}{(who.Length > 0 ? $" {who}" : string.Empty)}：{label}";
+            lastRejectionDetail = $"遊戲原文：{FcActionText.Clean(text)}\n出處：{detail}";
+        }
+        catch (Exception ex)
+        {
+            if (Throttle.Pass("FcActionAutoUse-GameMessage", 60_000))
+                Svc.Log.Warning($"{LogTag} 比對遊戲訊息出錯（{ex.GetType().Name}：{ex.Message}），這則略過");
+        }
+    }
+
+    /// <summary>使用特效被拒時遊戲會回的整句；讀不出來的那則不比對（只少一種精確原因，流程照舊靠逾時收尾）。</summary>
+    private static List<FcRejectionTemplate> LoadRejectionTemplates(List<string> problems)
+    {
+        var result = new List<FcRejectionTemplate>();
+
+        void Add(FcUseRejection kind, string source, string text, string problem)
+        {
+            if (text.Length > 0) result.Add(new FcRejectionTemplate(kind, text, source));
+            else problems.Add($"{source}（{problem}）");
+        }
+
+        foreach (var (kind, row) in new[]
+                 {
+                     (FcUseRejection.UseFailed, UseFailedLogRow),
+                     (FcUseRejection.LimitReached, LimitReachedLogRow),
+                     (FcUseRejection.SameKindActive, SameKindLogRow),
+                     (FcUseRejection.NoPermission, NoPermissionLogRow),
+                 })
+        {
+            var text = RenderLogMessage(row, out var problem);
+            Add(kind, $"LogMessage {row}", text, problem);
+        }
+
+        Add(FcUseRejection.NoPermission, $"Addon {NoPermissionAddonRow}", AddonText(NoPermissionAddonRow).Trim(), "讀不到");
+        return result;
+    }
+
+    private static string RenderLogMessage(uint rowId, out string problem)
+    {
+        var row = Svc.Data.GetExcelSheet<LogMessage>().GetRowOrDefault(rowId);
+        if (row == null)
+        {
+            problem = "讀不到";
+            return string.Empty;
+        }
+
+        return FcRejectionRender.Render(row.Value.Text,
+            id => Svc.Data.GetExcelSheet<FCAuthority>().GetRowOrDefault(id)?.Name.ExtractText() ?? string.Empty,
+            out problem);
+    }
+
     /// <summary>Addon 2877 拆成 placeholder 前後兩段；形狀不是「文字＋巨集＋文字」就不用（fail-closed）。</summary>
     private static bool TryGetConfirmTemplate(out string prefix, out string suffix, out string problem)
     {
@@ -1123,6 +1223,12 @@ public sealed unsafe class FcActionAutoUse : TcModule
         ImGui.SameLine();
         if (running) ImGui.TextDisabled($"執行中：{sequence!.StepName}");
         else if (lastResult.Length > 0) ImGui.TextDisabled(lastResult);
+
+        if (lastRejection.Length > 0)
+        {
+            ImGui.TextDisabled($"上次被遊戲拒絕：{lastRejection}");
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip(lastRejectionDetail);
+        }
 
         DrawUpkeepSettings();
         DrawOtherCharacters(cid);

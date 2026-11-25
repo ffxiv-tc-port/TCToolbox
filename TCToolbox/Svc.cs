@@ -24,6 +24,7 @@ public sealed class Svc
     [PluginService] public static IGameGui GameGui { get; private set; } = null!;
     [PluginService] public static ITargetManager Targets { get; private set; } = null!;
     [PluginService] public static IChatGui Chat { get; private set; } = null!;
+    [PluginService] public static IToastGui Toasts { get; private set; } = null!;
     [PluginService] public static IPluginLog Log { get; private set; } = null!;
     [PluginService] public static ITextureProvider Textures { get; private set; } = null!;
     [PluginService] public static IGameInteropProvider Hooks { get; private set; } = null!;
