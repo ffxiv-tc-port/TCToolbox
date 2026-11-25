@@ -3,7 +3,7 @@
   "Name": "TC Toolbox",
   "InternalName": "TCToolbox",
   "AssemblyVersion": "7.20.0.0",
-  "Description": "台服自製 QoL 工具箱，內含上百個獨立模組，分成「背包・裝備」「戰鬥・小隊」「公會・生活」「介面・雜項」四類，可在設定視窗逐一開關。預設只開啟 3 個純顯示或只寫紀錄的模組，其餘預設關閉。涵蓋背包整理與搬移、公會合建交料、陸行鳥餵食、園圃作業、隊伍招募輔助、周邊玩家與敵人清單等。指令 /tctoolbox 開啟設定視窗。",
+  "Description": "台服自製的工具箱，把許多獨立的小功能做成模組，在設定視窗逐一開關。只有少數純顯示、只寫紀錄或備份設定的模組預設開啟，其餘預設關閉。\n- 背包・裝備：按住指定鍵右鍵搬移物品、快速交易、背包一鍵清倉、僱員批次取回、製作清單缺料與採買\n- 戰鬥・小隊：隊員招募的過濾、排序與自動刷新，F.A.T.E. 總覽與導航，天書奇談換格建議，紛爭前線目標面板與戰績\n- 公會・生活：角色總覽、公會合建素材一鍵全交、公會特效自動使用、自動園圃作業、自動餵食陸行鳥\n- 介面・雜項：周邊玩家統計、換世界與副本區面板、DailyDuty 未完成任務清單、插件設定自動備份\n- 急停模組：開啟後可用熱鍵或 /tcstopall 把所有會自己動的插件一次叫停\n- 指令 /tctoolbox 開啟設定視窗",
   "ApplicableVersion": "any",
   "RepoUrl": "https://github.com/ffxiv-tc-port/TCToolbox",
   "Tags": [
@@ -16,7 +16,7 @@
   "LoadSync": false,
   "LoadPriority": 0,
   "IconUrl": "https://raw.githubusercontent.com/ffxiv-tc-port/DalamudPluginsTC/main/icons/TCToolbox.png",
-  "Punchline": "台服 QoL 模組集：背包、戰鬥小隊、公會生活、介面雜項，每個模組獨立開關。",
+  "Punchline": "台服自製工具箱：背包、戰鬥、公會與介面的小功能模組。",
   "AcceptsFeedback": false,
   "DalamudApiLevel": 13
 }
