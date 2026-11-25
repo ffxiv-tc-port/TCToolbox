@@ -54,7 +54,7 @@ public sealed class PluginUpdateNotice : TcModule
     private const string TokenHintReason = "需要 GitHub 權杖";
 
     private const string TokenHintDetail =
-        "台服插件庫已轉為私有：請在 Dalamud 設定的「試驗性功能」分頁填入有讀取權限的 GitHub 存取權杖。";
+        "台服插件倉庫已轉為私有：請在 Dalamud 設定的「試驗性功能」分頁填入有讀取權限的 GitHub 存取權杖。";
 
     private const int FeedSizeLimitBytes = 8 * 1024 * 1024;
 
@@ -66,9 +66,9 @@ public sealed class PluginUpdateNotice : TcModule
     public override string DisplayName => "台服插件可更新提示";
 
     public override string Description =>
-        "定期比對台服插件庫與已安裝的版本，有新版時在伺服器資訊列顯示數量，滑鼠移上列出是哪幾個、" +
-        "從哪一版到哪一版（停用中的插件另列、不計入數量）。點一下開啟 Dalamud 的插件安裝器。" +
-        "純顯示：不會自動下載、不會自動安裝，也不會碰插件庫以外的任何網路位址。";
+        "定期比對台服插件倉庫與已安裝的版本，有新版時在伺服器資訊列顯示數量，滑鼠移上列出是哪幾個、" +
+        "從哪一版到哪一版（停用中的插件另列、不計入數量）。點一下開啟 Dalamud 的插件管理員。" +
+        "純顯示：不會自動下載、不會自動安裝，也不會碰插件倉庫以外的任何網路位址。";
 
     public override ModuleCategory Category => ModuleCategory.Misc;
 
@@ -612,7 +612,7 @@ public sealed class PluginUpdateNotice : TcModule
 
         if (!current.EverSucceeded)
         {
-            sb.Append("\n\n還沒成功讀到台服插件庫，目前無法判斷有沒有可更新的插件。");
+            sb.Append("\n\n還沒成功讀到台服插件倉庫，目前無法判斷有沒有可更新的插件。");
         }
         else if (current.Pending.Count == 0)
         {
@@ -636,7 +636,7 @@ public sealed class PluginUpdateNotice : TcModule
         if (current.LastError != null) sb.Append($"（取得失敗：{current.LastError}）");
         if (current.LastError == TokenHintReason) sb.Append($"\n{TokenHintDetail}");
 
-        sb.Append("\n左鍵：開啟 Dalamud 插件安裝器（可更新的插件）\n右鍵：開啟／關閉 TC Toolbox 設定");
+        sb.Append("\n左鍵：開啟 Dalamud 插件管理員（可更新的插件）\n右鍵：開啟／關閉 TC Toolbox 設定");
         return sb.ToString();
     }
 
@@ -674,8 +674,8 @@ public sealed class PluginUpdateNotice : TcModule
 
         HttpRequestException { StatusCode: { } status } => $"HTTP {(int)status}",
         HttpRequestException => "連線失敗",
-        JsonException => "插件庫格式無法解析",
-        FormatException => "插件庫格式無法解析",
+        JsonException => "插件倉庫格式無法解析",
+        FormatException => "插件倉庫格式無法解析",
         _ => ex.GetType().Name,
     };
 
@@ -706,7 +706,7 @@ public sealed class PluginUpdateNotice : TcModule
         }
 
         ImGui.SameLine();
-        if (ImGui.Button("開啟插件安裝器##pluginUpdateOpenInstaller")) OpenInstaller();
+        if (ImGui.Button("開啟插件管理員##pluginUpdateOpenInstaller")) OpenInstaller();
 
         ImGui.Separator();
 
@@ -726,20 +726,20 @@ public sealed class PluginUpdateNotice : TcModule
         if (!current.EverSucceeded)
         {
             ImGui.TextColored(new System.Numerics.Vector4(0.7f, 0.7f, 0.7f, 1f),
-                "還沒成功讀到台服插件庫，目前無法判斷有沒有可更新的插件。");
+                "還沒成功讀到台服插件倉庫，目前無法判斷有沒有可更新的插件。");
             return;
         }
 
         if (current.Pending.Count == 0)
         {
             ImGui.TextUnformatted(current.Inactive.Count == 0
-                ? $"已比對插件庫 {current.FeedCount} 筆：已安裝的台服插件都是最新版。"
-                : $"已比對插件庫 {current.FeedCount} 筆：啟用中的台服插件都是最新版。");
+                ? $"已比對插件倉庫 {current.FeedCount} 筆：已安裝的台服插件都是最新版。"
+                : $"已比對插件倉庫 {current.FeedCount} 筆：啟用中的台服插件都是最新版。");
             DrawInactive(current.Inactive);
             return;
         }
 
-        ImGui.TextUnformatted($"已比對插件庫 {current.FeedCount} 筆：可更新 {current.Pending.Count} 個。");
+        ImGui.TextUnformatted($"已比對插件倉庫 {current.FeedCount} 筆：可更新 {current.Pending.Count} 個。");
 
         if (ImGui.BeginTable("##pluginUpdateList", 3,
                 ImGuiTableFlags.RowBg | ImGuiTableFlags.Borders | ImGuiTableFlags.SizingStretchProp))

@@ -445,7 +445,7 @@ public sealed class PluginConfigBackup : TcModule
         ImGui.TextColored(WarnColor, $"{scan.Issues.Count} 個設定檔可能受損：");
         ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
         ImGui.TextDisabled("還原只在該插件停用時能按：插件關閉時會把記憶體裡的設定整份寫回檔案，" +
-                           "載入中還原會在它關閉那一刻被靜默蓋掉。請先到插件安裝器停用它，還原後再啟用。" +
+                           "載入中還原會在它關閉那一刻被靜默蓋掉。請先到插件管理員停用它，還原後再啟用。" +
                            "還原前會把現在的檔另存到備份資料夾的 restore-saved。");
         ImGui.PopTextWrapPos();
 
