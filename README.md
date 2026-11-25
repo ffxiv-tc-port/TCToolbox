@@ -1,6 +1,6 @@
 # TCToolbox
 
-台服自製的整合工具插件，收錄大量獨立小功能模組，每個模組各自開關、預設全部關閉。開啟主視窗後依分頁分類瀏覽與設定：「常用」（自己釘選的模組）、「啟動中」、「手動觸發」、四個分類分頁，以及可搜尋模組名稱與說明的「全部」。別的插件設定的熱鍵和本插件撞鍵時，主視窗頂端會列出來。
+台服自製的整合工具插件，收錄大量獨立小功能模組，每個模組各自開關；除了少數純顯示、只寫紀錄或只做備份的模組（台服插件可更新提示、天書奇談換格建議、寶藏鑑定紀錄、插件設定自動備份）預設開啟，其餘預設關閉。開啟主視窗後依分頁分類瀏覽與設定：「常用」（自己釘選的模組）、「啟動中」、「手動觸發」、四個分類分頁，以及可搜尋模組名稱與說明的「全部」。標成「手動觸發」的模組開著也不會自己動作，要按下按鈕才執行一次。別的插件設定的熱鍵和本插件撞鍵時，主視窗頂端會列出來。
 
 ## 指令
 
@@ -23,10 +23,12 @@
 - `/tcworld`：開啟「換 World 與副本區」面板
 - `/tcdaily`：開啟「DailyDuty 未完成任務清單」
 - `/tcchars`：開啟「角色總覽」
+- `/tcventure`：開啟「僱員探險收益」
+- `/tcpvprecords`：開啟「前線戰績」報表
 
 ## 背包・裝備
 
-- **自動物品頁面轉移**：按住指定鍵右鍵點物品，直接搬去對應頁面（背包⇄僱員、背包⇄公會置物櫃、背包⇄陸行鳥鞍袋、兵裝庫→背包）
+- **自動物品頁面轉移**：按住指定鍵右鍵點物品，直接搬去對應頁面（背包⇄僱員、背包⇄公會儲物櫃、背包⇄陸行鳥鞍袋、兵裝庫→背包）
 - **快速交易**：交易視窗開著時，按住指定鍵右鍵點背包道具，自動選「交易」把它放進交易視窗
 - **自動取出全部魔晶石**：手動取出裝備上一顆魔晶石後，自動接續取完同一件裝備上剩下的
 - **自動精製魔晶石**：一鍵把背包與兵裝庫裡精鍊度已滿的裝備逐件精製
@@ -45,7 +47,7 @@
 - **信箱一鍵收取**：信箱開著時一鍵依序收下所有信件的附件與 Gil
 - **兵裝庫：非套裝裝備取回背包**：把兵裝庫裡未被任何套裝使用的裝備搬回背包
 - **箱類「全部開啟」**：可整疊開啟的箱子右鍵補上「全部開啟」
-- **公會置物櫃預設頁面**：開啟公會置物櫃時自動切到指定頁面（第 1～5 頁或水晶頁）
+- **公會儲物櫃預設頁面**：開啟公會儲物櫃時自動切到指定頁面（第 1～5 頁或水晶頁）
 - **報酬界面最佳化**：報酬視窗上方新增依職業分類的一鍵領取按鈕，並省略逐件確認框
 - **道具快速拆分**：可疊道具右鍵補上「快速拆分」，輸入數字即拆
 - **一鍵全修（跨容器）**：修理視窗新增按鈕，一次修完裝備中裝備與下拉選單裡的每個容器
@@ -87,10 +89,14 @@
 - **戰鬥中排隊傳送**：戰鬥中排隊一個乙太之光，戰鬥結束後透過 Lifestream 自動傳送
 - **招募說明可選取**：另開面板顯示可反白複製的招募說明文字，並把網址轉為可點連結
 - **天書格子點擊直接開副本**：點擊天書格子直接開啟對應副本或輪盤的任務搜尋器
-- **天書奇談換格建議**：打開天書時算出下一格貼哪裡最划算，以及「再想想」「重新貼」後的連線機率（需要 WondrousTailsSolver）；另有預設關的「用 AutoDuty 跑這格」按鈕（需要 AutoDuty）
+- **天書奇談換格建議**：打開天書時算出下一格貼哪裡最划算，以及「再想想」「重新貼」後的連線機率（需要 WondrousTailsSolver）；另有預設關的「用 AutoDuty 跑這格」按鈕（需要 AutoDuty）；模組本身預設開啟
 - **狩獵列車顯示到 Mappy**：把 Hunt Helper 的狩獵列車清單同步顯示到 Mappy 地圖標記
 - **深層迷宮陷阱與寶藏顯示到 Mappy**：把 Palace Pal 標出的陷阱與埋藏寶藏同步成 Mappy 地圖標記，「已確認」與「可能有」分開畫（需要 Palace Pal 與 Mappy）
 - **單人任務戰鬥第一戰自動非常簡單**：沒有難度選擇框的單人任務戰鬥第一戰，出戰時直接改成「非常簡單」
+- **周邊敵人**：伺服器資訊列顯示附近可選取的敵人數量，點擊開啟照距離排序的清單，點清單上的一列才選取為目標（不會自動選取）
+- **前線戰績**：紛爭前線每場結算時記下全部玩家的計分與三隊分數，報表可看計分板、依地圖與職業的彙總並匯出 CSV；只記錄與顯示（`/tcpvprecords`）
+- **前線目標面板**：紛爭前線的目標清單，顯示快要可用的倒數、可契約、已占領與即將失效、石文剩餘點數與冰的 HP，附距離、方向與俯視小圖，可另外疊在遊戲的小地圖上（預設關）；只顯示，不選目標、不移動、不施放（需要 BossModReborn）
+- **寶藏鑑定紀錄（只記錄）**：深層迷宮寶藏鑑定相關的視窗出現時，把視窗內容寫進 Dalamud 記錄檔；不按任何按鈕、不送任何指令（預設開啟）
 
 ## 公會・生活
 
@@ -106,6 +112,8 @@
 - **老主顧交易總覽**：唯讀彙整各老主顧滿意度等級、進度與每週交易次數
 - **軍票商店快速交換**：「軍隊物資交換」視窗開著時新增小面板，輸入道具名與數量即可交換
 - **稀有品繳交解鎖**：軍銜不足時也能打開籌備稀有品分頁（預設關閉）
+- **僱員探險收益**：列出每個角色每位僱員目前的探險、最賺的指定探險，以及每趟／每小時能換到多少 Gil；行情按「查價」才向 Universalis 查詢。只顯示，不替你換探險（需要 AutoRetainer；`/tcventure`）
+- **國防聯軍分隊：帶我到軍曹／會議板**：在軍營裡按一下，走到分隊軍曹或會議板旁邊互動，打開分隊任務或訓練清單後就停下來，並記下各角色的分隊何時歸隊；遇到確認框或沒預期的選項都會停手。設定裡可另外啟用「替我選今天的任務並派遣」與「本角色一鍵」（用 Lifestream 傳送到軍營入口、進軍營、派遣，再做綜合訓練），兩者預設關、都要按下按鈕才開始
 
 ## 介面・雜項
 
@@ -133,7 +141,22 @@
 - **任務進度顯示到地圖與資訊列**：Questionable 跑任務時把目前這一步的目的地畫成 Mappy 標記、資訊列顯示互動類型；AutoRetainer 多角色模式同時開著時提醒會中斷任務（需要 Questionable 與 Mappy）
 - **附近的寶箱與風脈泉顯示到小地圖**：把在場的寶箱與還沒共鳴的風脈泉畫成小地圖圓點（需要 Mini-Mappingway）
 - **換 World 與副本區**：一個面板看目前 World 與副本區，一鍵跨界傳送、換副本區、回旅店／自宅，附本 DC 各世界最低價摘要；全部手動按、透過 Lifestream 執行（`/tcworld`）
-- **台服插件可更新提示**：伺服器資訊列顯示台服插件庫有新版的插件數，滑鼠移上列出版本，點一下開插件安裝器（不自動下載安裝）
+- **台服插件可更新提示**：伺服器資訊列顯示台服插件倉庫有新版的插件數，滑鼠移上列出版本，點一下開插件管理員（不自動下載安裝；預設開啟）
 - **DailyDuty 未完成任務清單**：列出 DailyDuty 追蹤中還沒做完的任務，有目的地的附「帶我去」（按下才出發；途中同一顆按鈕變「停止」，或輸入 `/tcdaily stop`，走路時手動移動也會停下）；資訊列顯示剩幾項（需要 DailyDuty；`/tcdaily`）
 - **誰在控制：跑完了叫我**：背景偵測導航或 AutoRetainer 的工作跑完時在聊天欄說一聲，有裝塔塔露誇獎的話順便念一句（唯讀）
+- **周邊可互動物件**：伺服器資訊列顯示附近可互動的 NPC／物件／寶箱／乙太之光等的數量，點擊開啟照距離排序的清單，點清單上的一列才選取為目標（不會自動選取或互動）
+- **插件設定自動備份**：每次載入與每天一次，把所有插件的設定檔壓成 zip 存到插件設定資料夾以外；發現設定檔變成空檔、內容不完整或疑似被重置時列出受影響的插件並提示，還原要你自己按，而且只在該插件停用時能按（預設開啟）
 - **全艦隊急停**：一顆熱鍵或 `/tcstopall` 把 vnavmesh／Lifestream／AutoDuty／Questionable／BOCCHI／HoardFarm／DailyDuty 帶我去／visland／Chilled Leves／Explorer's Icebox／Eureka Helper／Saucy／LatihasChocobo／BossmodReborn AI／WrathCombo／Marketbuddy／AutoRetainer／Artisan／GatherBuddy Reborn／AutoHook／ICE／SomethingNeedDoing／LazyLoot／Logogram Helper 一次叫停，逐項顯示成功／失敗／未安裝
+
+## 安裝
+
+1. 在遊戲內輸入 `/xlsettings` 開啟「Dalamud 設定」，到「試驗性功能」分頁的「第三方插件倉庫」（Custom Plugin Repositories）貼上
+   `https://raw.githubusercontent.com/ffxiv-tc-port/DalamudPluginsTC/main/repo.json`
+   勾選啟用後按「儲存變更」。
+2. 輸入 `/xlplugins` 開啟「插件管理員」（Plugin Installer），搜尋「TC Toolbox」安裝。
+
+## 需要搭配的插件
+
+- 選用（哪個模組需要哪一個，寫在上面各模組的說明裡）：[Lifestream](https://github.com/ffxiv-tc-port/Lifestream)、[vnavmesh](https://github.com/ffxiv-tc-port/vnavmesh)、[AutoRetainer](https://github.com/ffxiv-tc-port/AutoRetainer)、[Allagan Tools](https://github.com/ffxiv-tc-port/InventoryTools)、[Marketbuddy](https://github.com/ffxiv-tc-port/Marketbuddy)、[Mappy](https://github.com/ffxiv-tc-port/Mappy)、[Mini-Mappingway](https://github.com/ffxiv-tc-port/MiniMappingway)、[Questionable](https://github.com/ffxiv-tc-port/Questionable)、[DailyDuty](https://github.com/ffxiv-tc-port/DailyDuty)、[AutoDuty](https://github.com/ffxiv-tc-port/AutoDuty)、[Palace Pal](https://github.com/ffxiv-tc-port/PalacePal)、[Hunt Helper](https://github.com/ffxiv-tc-port/HuntHelper)、[WondrousTailsSolver](https://github.com/ffxiv-tc-port/EzWondrousTails)、[BossModReborn](https://github.com/ffxiv-tc-port/BossmodReborn)、[TataruPraise](https://github.com/ffxiv-tc-port/TataruPraise)
+
+授權：MIT（見 LICENSE；參考過的第三方插件授權見 THIRD-PARTY-NOTICES.md）
