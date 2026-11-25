@@ -95,6 +95,14 @@ public sealed class FrontlineObjectiveTracker
 
     public double? MeasuredOvooExpireSeconds { get; private set; }
 
+    private readonly int[] scores = [-1, -1, -1];
+
+    /// <summary>各隊目前總分（0x4＝[隊伍, 目前總分]，被擊倒扣分時會變小）；-1＝載入後還沒收到。</summary>
+    public ReadOnlySpan<int> Scores => scores;
+
+    /// <summary>勝利分數（開場 0x8）；0＝沒收到（中途載入）。</summary>
+    public int WinScore { get; private set; }
+
     public static FrontlineMap MapOf(uint territoryType) => territoryType switch
     {
         SealRockTerritory => FrontlineMap.SealRock,
@@ -144,6 +152,8 @@ public sealed class FrontlineObjectiveTracker
         LastForeignDirector = 0;
         SawMatchStart = false;
         MeasuredOvooExpireSeconds = null;
+        Array.Fill(scores, -1);
+        WinScore = 0;
 
         if (Map == FrontlineMap.FieldsOfGlory)
         {
@@ -173,6 +183,10 @@ public sealed class FrontlineObjectiveTracker
         // 開場那幀固定會有這兩種（勝利分數 0x8、開場設定 0x3）；中途載入收不到。
         if (updateId is 0x3 or 0x8)
             SawMatchStart = true;
+        if (updateId == 0x4 && p1 <= 2)
+            scores[p1] = (int)Math.Min(p2, int.MaxValue);
+        else if (updateId == 0x8)
+            WinScore = (int)Math.Min(p1, int.MaxValue);
 
         switch (Map)
         {
