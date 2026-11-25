@@ -1,7 +1,13 @@
-# 台服 (TC) 建置檢查（TCToolbox）。Dalamud 釘在 API13 (dalamud-pin-v13.0.0.16)，外掛必須是 net9.0-windows7.0。
+# 台服 (TC) 建置檢查（TCToolbox）。Dalamud 釘在 API13（版本以 $pinUrl 為準），外掛必須是 net9.0-windows7.0。
 name: Build Check
 
 on:
+  push:
+    branches: [tc-7.30]
+    paths-ignore:
+      - '**.md'
+      - '**/LICENSE*'
+      - 'LICENSE*'
   workflow_dispatch:
 permissions:
   contents: read
