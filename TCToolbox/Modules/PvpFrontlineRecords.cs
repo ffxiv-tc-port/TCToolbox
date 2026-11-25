@@ -14,6 +14,7 @@ using FFXIVClientStructs.FFXIV.Component.GUI;
 using Lumina.Excel.Sheets;
 using Lumina.Text.ReadOnly;
 using TCToolbox.Core;
+using SafeMemory = Dalamud.SafeMemory;
 using ValueType = FFXIVClientStructs.FFXIV.Component.GUI.ValueType;
 
 namespace TCToolbox.Modules;
@@ -21,6 +22,7 @@ namespace TCToolbox.Modules;
 // 本檔假設與契約：
 // - hook 的是紛爭前線結算處理函式 (director, 結算資料) → void；只讀、原函式每次都照常呼叫且只呼叫一次。
 // - 讀原生記憶體只有兩處：detour 裡依人數有界複製結算緩衝區、FrontlineRecord 的 PostSetup 讀 AtkValues。兩處都在框架執行緒、當場抄成 managed 資料，不留指標。
+// - detour 裡的原生讀取一律 SafeMemory（讀不到回 false）、不直接解參；讀不到＝這場不記，原函式照常呼叫。
 // - 解析、寫檔、載入報表都在背景；失敗各記一次。
 
 /// <summary>前線戰績：每場紛爭前線結算時記一份 JSON＋一行摘要，並提供報表視窗。只讀、零自動化。</summary>
@@ -70,6 +72,7 @@ public sealed unsafe partial class PvpFrontlineRecords : TcModule
     private int captureFailLogged;
     private int writeFailLogged;
     private int addonFailLogged;
+    private DateTime lastReadFailLogUtc = DateTime.MinValue;
 
     // 只在框架執行緒讀寫：同場紀錄與結算視窗快照互相指認。
     private string? lastRecordStem;
@@ -182,7 +185,14 @@ public sealed unsafe partial class PvpFrontlineRecords : TcModule
         var territory = (uint)Svc.ClientState.TerritoryType;
         if (!IsFrontline(territory)) return;
 
-        int count = *(byte*)(data + FrontlineResultLayout.PlayerCountOffset);
+        // 版面長度是反組譯推的、沒實機量過：讀不到的頁在 detour 裡直接解參＝AVE（try/catch 攔不到），所以一律走 ReadProcessMemory。
+        if (!SafeMemory.ReadBytes(data + FrontlineResultLayout.PlayerCountOffset, 1, out var countByte))
+        {
+            LogReadFailure("人數欄位讀不到", null, 1);
+            return;
+        }
+
+        int count = countByte[0];
         if (!FrontlineResultLayout.IsPlausibleCount(count))
         {
             if (Interlocked.Exchange(ref badCountLogged, 1) == 0)
@@ -190,8 +200,12 @@ public sealed unsafe partial class PvpFrontlineRecords : TcModule
             return;
         }
 
-        var buffer = new byte[FrontlineResultLayout.BufferLength(count)];
-        new ReadOnlySpan<byte>((void*)data, buffer.Length).CopyTo(buffer);
+        var length = FrontlineResultLayout.BufferLength(count);
+        if (!SafeMemory.ReadBytes(data, length, out var buffer))
+        {
+            LogReadFailure("結算資料比推定的長度短（有一段讀不到）", count, length);
+            return;
+        }
 
         var now = DateTimeOffset.Now;
         var stem = FrontlineRecordJson.Stem(now, territory);
@@ -210,6 +224,15 @@ public sealed unsafe partial class PvpFrontlineRecords : TcModule
         var jobs = jobAbbr;
         var dir = recordsDir;
         _ = Task.Run(() => WriteRecord(buffer, ctx, stem, addonFile, jobs, dir));
+    }
+
+    /// <summary>只在框架執行緒呼叫；隔 <see cref="PairWindow"/> 才再記一次＝每場最多一行（一場前線遠長於它）。</summary>
+    private void LogReadFailure(string reason, int? count, int length)
+    {
+        var now = DateTime.UtcNow;
+        if (now - lastReadFailLogUtc < PairWindow) return;
+        lastReadFailLogUtc = now;
+        Svc.Log.Information($"[{InternalName}] 這場不記錄：{reason}（人數 {count?.ToString() ?? "?"}、要讀 0x{length:X} 位元組）。");
     }
 
     private bool IsFrontline(uint territory)
