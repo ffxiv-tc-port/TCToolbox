@@ -71,14 +71,15 @@ public sealed unsafe class CurrencyCapAlert : TcModule
     private readonly List<uint> heldUnreadable = [];
 
     /// <summary>
-    /// 已經為了「跨過門檻」印過聊天訊息的貨幣。
+    /// 已經為了「跨過門檻」印過聊天訊息的（角色 ContentId, 貨幣）。
     /// </summary>
     /// <remarks>
-    /// 邊緣觸發的記憶體：掉回門檻以下就從這裡移除，於是下次再超過時會再提醒一次。
-    /// 沒有這個集合的話，每次輪詢都會印一則——那正是我們刻意避開的洗版。
+    /// 邊緣觸發的記憶體：只有「讀得到、沒被忽略、而且值低於門檻」才移除（重新武裝）。
+    /// 讀取畫面、登出、背包未載入、週上限讀不到、被忽略都不算掉回門檻下，否則每換一次區域就重印一次。
+    /// 以角色區分：切換角色再切回來不重印。只放記憶體，重新載入插件後第一次看到仍會提醒一次。
     /// <para>週上限用 <see cref="WeeklyPseudoItemId"/> 這個假鍵記在同一個集合裡。</para>
     /// </remarks>
-    private readonly HashSet<uint> announced = [];
+    private readonly HashSet<(ulong Cid, uint ItemId)> announced = [];
 
     /// <summary>
     /// 週上限在 <see cref="announced"/> 裡用的假鍵。
@@ -144,7 +145,6 @@ public sealed unsafe class CurrencyCapAlert : TcModule
 
     /// <summary>每次輪詢重用的集合（只在 framework 執行緒用）。</summary>
     private readonly HashSet<uint> seenScratch = [];
-    private readonly HashSet<uint> nearCapIdsScratch = [];
 
     private enum DtrContent { Stale, Unreadable, List }
 
@@ -240,7 +240,6 @@ public sealed unsafe class CurrencyCapAlert : TcModule
             nearCap.Clear();
             allCurrencies.Clear();
             heldUnreadable.Clear();
-            announced.Clear();
             dataReadable = false;
             InvalidateDtr();
             return;
@@ -742,22 +741,28 @@ public sealed unsafe class CurrencyCapAlert : TcModule
     /// 邊緣觸發的聊天提醒：只在「這一次剛跨過門檻」時印一則。
     /// </summary>
     /// <remarks>
-    /// 掉回門檻以下時會把記憶清掉，所以花掉再存滿還會再提醒一次；
-    /// 但持續超標的期間<b>一則都不會多印</b>。
+    /// 讀到值確實低於門檻才清掉記憶，所以花掉再存滿還會再提醒一次；
+    /// 持續超標的期間（含換區域、切換角色再切回來）<b>一則都不會多印</b>。
     /// </remarks>
     private void AnnounceCrossings()
     {
-        if (!Config.NotifyInChat) return;
+        if (!Config.NotifyInChat || !dataReadable) return;
 
-        var current = nearCapIdsScratch;
-        current.Clear();
-        foreach (var c in nearCap) current.Add(c.ItemId);
-        // 暫時讀不到的不算掉回門檻以下，否則讀回來時會重複提醒。
-        foreach (var id in heldUnreadable) current.Add(id);
+        // 0＝還不知道是哪個角色：當成讀不到，不提醒也不清記憶。
+        var cid = Svc.PlayerState.ContentId;
+        if (cid == 0) return;
+
+        var threshold = ThresholdRatio();
+        foreach (var c in allCurrencies)
+        {
+            if (c.Ratio >= threshold || Config.IgnoredItemIds.Contains(c.ItemId)) continue;
+            if (announced.Remove((cid, c.ItemId)))
+                Svc.Log.Information($"[{InternalName}] 掉回門檻下，下次跨過會再提醒：{c.Name}（{c.ItemId}） {c.Count}/{c.MaxCount}");
+        }
 
         foreach (var c in nearCap)
         {
-            if (!announced.Add(c.ItemId)) continue;
+            if (!announced.Add((cid, c.ItemId))) continue;
 
             var what = c.IsWeekly ? "本週取得量" : "持有量";
             var message = new SeStringBuilder()
@@ -773,9 +778,6 @@ public sealed unsafe class CurrencyCapAlert : TcModule
             Svc.Log.Information(
                 $"[{InternalName}] 跨過門檻：{c.Name}（{c.ItemId}） {c.Count}/{c.MaxCount}");
         }
-
-        // 掉回門檻以下的要忘掉，否則花掉之後再存滿就不會再提醒。
-        announced.IntersectWith(current);
     }
 
     public override void DrawConfig()
@@ -798,7 +800,7 @@ public sealed unsafe class CurrencyCapAlert : TcModule
         }
 
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("只在「剛跨過門檻」的那一次印一則，不會持續洗版。\n掉回門檻以下再超過時會再提醒一次。");
+            ImGui.SetTooltip("只在「剛跨過門檻」的那一次印一則，不會持續洗版；換區域、切換角色再切回來也不會重複提醒。\n掉回門檻以下再超過時會再提醒一次。");
 
         var weekly = Config.WatchWeeklyTomestone;
         if (ImGui.Checkbox("同時監看神典石的每週取得上限##currencyCapWeekly", ref weekly))
