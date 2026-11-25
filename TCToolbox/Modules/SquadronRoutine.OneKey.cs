@@ -526,7 +526,8 @@ public sealed unsafe partial class SquadronRoutine
     {
         if (!o.TrainConfirmPressed)
         {
-            if (type is XivChatType.SystemMessage or XivChatType.SystemError or XivChatType.ErrorMessage) o.LastSystemMessage = text;
+            if ((XivChatType)((int)type & 0x7F) is XivChatType.SystemMessage or XivChatType.SystemError or XivChatType.ErrorMessage)
+                o.LastSystemMessage = text;
             return;
         }
 

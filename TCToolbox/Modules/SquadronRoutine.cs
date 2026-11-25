@@ -1106,7 +1106,7 @@ public sealed unsafe partial class SquadronRoutine : TcModule
         try
         {
             if (run?.Auto is { DispatchSent: true, ConfirmPressed: false } auto &&
-                type is XivChatType.SystemMessage or XivChatType.SystemError or XivChatType.ErrorMessage)
+                (XivChatType)((int)type & 0x7F) is XivChatType.SystemMessage or XivChatType.SystemError or XivChatType.ErrorMessage)
                 auto.LastSystemMessage = message.TextValue;
 
             if (run?.One is { TrainSent: true, TrainOutcome: SquadronTrainingMessage.Other } one)

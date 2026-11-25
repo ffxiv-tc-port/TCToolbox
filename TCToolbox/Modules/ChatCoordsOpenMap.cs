@@ -185,8 +185,10 @@ public sealed class ChatCoordsOpenMap : TcModule
     /// 命中 0 個或 2 個以上一律退回內建字串。多命中時採第一列的話，會拿到某個子分類的名字
     /// （例如「自己的…／他人的…」），而那是一個看起來很正常的錯答案。
     /// </remarks>
-    private string ChannelName(XivChatType type)
+    private string ChannelName(XivChatType rawType)
     {
+        // 低 7 位元之上是發話者／對象旗標（系統訊息約一半帶）；頻道名只看低 7 位元的 LogKind。
+        var type = (XivChatType)((int)rawType & 0x7F);
         if (channelNames.TryGetValue(type, out var cached)) return cached;
 
         var fallback = type.ToString();
