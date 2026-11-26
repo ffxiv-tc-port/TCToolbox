@@ -4,6 +4,7 @@ using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Objects.Enums;
 using Dalamud.Game.ClientState.Objects.Types;
+using Dalamud.Plugin.Ipc;
 using Dalamud.Plugin.Services;
 using Lumina.Excel.Sheets;
 using TCToolbox.Core;
@@ -23,7 +24,8 @@ public sealed class AutoRetarget : TcModule
 
     public override string Description =>
         $"目前沒有選中目標時，自動選中範圍內最近的敵人。另可開啟「{ForlornDisplayName}優先」——" +
-        "這兩種 FATE 稀有敵出現時即使已選中其他目標也會自動切過去。";
+        "這兩種 FATE 稀有敵出現時即使已選中其他目標也會自動切過去。" +
+        "AutoDuty 跑冒險者小隊小怪路段時（AutoDuty 要先下號令讓坦克接手），沒有目標也不自動選，交給 AutoDuty。";
 
     public override ModuleCategory Category => ModuleCategory.Combat;
 
@@ -38,6 +40,32 @@ public sealed class AutoRetarget : TcModule
     private static string ForlornDisplayName => forlornDisplayName;
 
     private AutoRetargetConfig Config => Plugin.Instance.Config.Retarget;
+
+    private readonly TargetYieldGate yieldGate = new();
+
+    /// <summary>建立 subscriber 是零成本的純本地物件；端點不在時 InvokeFunc 擲 IpcError。</summary>
+    private static readonly Lazy<ICallGateSubscriber<bool>> AutoDutyOwnedGate =
+        new(() => Svc.PluginInterface.GetIpcSubscriber<bool>("AutoDuty.SquadronTargetingOwned"));
+
+    /// <summary>最近一次查詢失敗的例外型別名；成功就清掉。只給第一次失敗的 log 用。</summary>
+    private static string? lastQueryError;
+
+    /// <returns>null＝拿不到（AutoDuty 沒載入、舊版沒有這支端點、或任何其他例外）。</returns>
+    /// <remarks>刻意攔所有例外：這是每幀的 Framework.Update 處理器，穿出去會讓本插件後面的處理器整幀被跳過、而且每拍重演。</remarks>
+    private static bool? QueryAutoDutyOwned()
+    {
+        try
+        {
+            var owned = AutoDutyOwnedGate.Value.InvokeFunc();
+            lastQueryError = null;
+            return owned;
+        }
+        catch (Exception ex)
+        {
+            lastQueryError = ex.GetType().Name;
+            return null;
+        }
+    }
 
     protected override void OnEnable()
     {
@@ -70,7 +98,9 @@ public sealed class AutoRetarget : TcModule
             Svc.Condition[ConditionFlag.OccupiedInQuestEvent] ||
             Svc.Condition[ConditionFlag.Occupied33]) return;
 
-        if (Config.OnlyInCombat && !Svc.Condition[ConditionFlag.InCombat]) return;
+        var inCombat = Svc.Condition[ConditionFlag.InCombat];
+        yieldGate.NoteCombat(inCombat);
+        if (Config.OnlyInCombat && !inCombat) return;
 
         var current = Svc.Targets.Target;
 
@@ -87,6 +117,14 @@ public sealed class AutoRetarget : TcModule
         }
 
         if (current != null && current.IsTargetable) return;
+
+        // 冒險者小隊小怪路段 AutoDuty 要先下號令讓坦克接手再選目標；搶先選＝玩家先出手被圍。
+        if (yieldGate.ShouldYield(Environment.TickCount64, QueryAutoDutyOwned, out var yieldLog))
+        {
+            if (yieldLog != null) Svc.Log.Information($"[AutoRetarget] {yieldLog}");
+            return;
+        }
+        if (yieldLog != null) Svc.Log.Information($"[AutoRetarget] {yieldLog}（{lastQueryError ?? "?"}）");
 
         var next = FindNearest(localPlayer.Position, onlyForlorn: false);
         if (next != null)
