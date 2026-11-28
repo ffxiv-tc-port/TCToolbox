@@ -66,6 +66,7 @@ public sealed unsafe partial class AutoInventoryTransfer
         // ⚠️ 不去讀 AgentContext 的選單項目來點：那需要未經驗證的索引對應，
         //    而公會儲物櫃的選單裡有「丟棄」，點錯一格的代價太高。
         if (args.AddonName != "FreeCompanyChest") return;
+        if (!CommonNativeReady(userAction: true)) return;
 
         if (!TryResolveHoveredFreeCompanySlot(out var source, out var slot, out var hoverId, out var hoverHq))
         {
@@ -193,6 +194,13 @@ public sealed unsafe partial class AutoInventoryTransfer
     private void OnUpdate(IFramework _)
     {
         FlushUnmodifiedMenuSummary();
+
+        // 下面每條路徑（含觀察器與置物櫃佇列）都會呼叫共用的 CS 函式，解不出就整段不跑。
+        if (!CommonNativeReady(userAction: pendingMenu != null))
+        {
+            pendingMenu = null;
+            return;
+        }
 
         if (pendingMenu is { } menu)
         {
@@ -354,6 +362,8 @@ public sealed unsafe partial class AutoInventoryTransfer
         // 交易視窗開著時右鍵屬於「快速交易」，同一顆鍵不兩邊都接。
         if (Svc.Condition[ConditionFlag.TradeOpen]) return;
 
+        if (!CommonNativeReady(userAction: true)) return;
+
         var csFramework = CSFramework.Instance();
         if (csFramework == null || csFramework->WindowInactive) return;
 
@@ -469,6 +479,12 @@ public sealed unsafe partial class AutoInventoryTransfer
 
         if (sourceIsSaddleBag || (saddleBagWindowOpen && Array.IndexOf(PlayerBags, source) >= 0))
         {
+            if (AtkUnitBase.MemberFunctionPointers.FireCallback == null)
+            {
+                ReportMissingNative("AtkUnitBase.FireCallback", "陸行鳥鞍囊轉移");
+                return;
+            }
+
             if (TryFireContextMenuEntry(
                     agent,
                     sourceIsSaddleBag ? AddonRowRetrieveFromSaddlebag : AddonRowDepositToSaddlebag,
@@ -497,6 +513,12 @@ public sealed unsafe partial class AutoInventoryTransfer
         {
             if (reason.Length > 0 && Throttle.Pass("AutoInventoryTransfer-NoDest", 3_000))
                 Svc.Chat.Print($"[TC Toolbox] {reason}");
+            return;
+        }
+
+        if (InventoryManager.MemberFunctionPointers.MoveItemSlot == null)
+        {
+            ReportMissingNative("InventoryManager.MoveItemSlot", "直接搬移（兵裝庫→背包）");
             return;
         }
 

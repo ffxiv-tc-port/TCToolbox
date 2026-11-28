@@ -322,6 +322,50 @@ public sealed unsafe partial class AutoInventoryTransfer : TcModule
         || Array.IndexOf(FreeCompanyPages, type) >= 0
         || Array.IndexOf(SaddleBags, type) >= 0;
 
+    /// <summary>
+    /// 右鍵轉移每條路徑都會呼叫、特徵碼可能解不出的 CS 位址；回第一個解不出的名字，全部到位回 null。
+    /// 契約：呼叫任何 CS 函式之前先判。CS 包裝在位址為 0 時擲例外，不先判的話動作會做到一半才停。
+    /// 只讀 CS 的靜態位址表、不碰原生物件，所以每次呼叫當下重判、不快取結果。
+    /// </summary>
+    private static string? FindMissingCommonNative()
+    {
+        if (CSFramework.Addresses.Instance.Value == 0) return "Framework.Instance";
+        if (CSFramework.MemberFunctionPointers.GetUIModule == null) return "Framework.GetUIModule";
+        if (AgentModule.MemberFunctionPointers.GetAgentByInternalId == null) return "AgentModule.GetAgentByInternalId";
+        if (InventoryManager.Addresses.Instance.Value == 0) return "InventoryManager.Instance";
+        if (InventoryManager.MemberFunctionPointers.GetInventoryContainer == null) return "InventoryManager.GetInventoryContainer";
+        if (InventoryManager.MemberFunctionPointers.GetInventorySlot == null) return "InventoryManager.GetInventorySlot";
+        if (AtkStage.Addresses.Instance.Value == 0) return "AtkStage.Instance";
+        if (AtkUnitManager.MemberFunctionPointers.GetAddonById == null) return "AtkUnitManager.GetAddonById";
+        return null;
+    }
+
+    /// <summary>
+    /// 共用位址全到位回 true。解不出時回 false；<paramref name="userAction"/> 為真且修飾鍵按著才提示，
+    /// 否則每幀呼叫時只要使用者按著 Shift 就會一直洗聊天視窗。
+    /// </summary>
+    private bool CommonNativeReady(bool userAction)
+    {
+        if (FindMissingCommonNative() is not { } missing) return true;
+        if (userAction && Config.ModifierKeyCode != 0 && Svc.Keys[(VirtualKey)Config.ModifierKeyCode])
+            ReportMissingNative(missing, "右鍵轉移");
+        return false;
+    }
+
+    /// <summary>已寫過 log 的「位址解不出」名字，每個只寫一次。只在框架執行緒讀寫。</summary>
+    /// <remarks>刻意不在 OnDisable 清：OnDisable 不一定在框架執行緒上。</remarks>
+    private readonly HashSet<string> reportedMissingNative = [];
+
+    private void ReportMissingNative(string name, string feature)
+    {
+        if (reportedMissingNative.Add(name))
+            Svc.Log.Information(
+                $"[{InternalName}] 遊戲函式 {name} 的位址解不出來（特徵碼對不上），{feature}停用、不呼叫。");
+
+        if (Throttle.Pass("AutoInventoryTransfer-NoNative", 3_000))
+            Svc.Chat.PrintError($"[TC Toolbox] 找不到遊戲函式 {name}，{feature}暫時無法使用，請改用手動拖放。");
+    }
+
     protected override void OnEnable()
     {
         InventoryContextHook.Subscribe(OpenForItemSlotDetour);
@@ -414,5 +458,12 @@ public sealed unsafe partial class AutoInventoryTransfer : TcModule
                           "右鍵時除了觸發鍵還按著別的 Shift／Ctrl／Alt，就不會轉移。");
 
         ImGui.TextDisabled("兵裝庫只支援「兵裝庫→背包」方向；反向請照常用裝備／整理流程。");
+
+        var missingNative = FindMissingCommonNative()
+            ?? (InventoryManager.MemberFunctionPointers.MoveItemSlot == null ? "InventoryManager.MoveItemSlot" : null)
+            ?? (AtkUnitBase.MemberFunctionPointers.FireCallback == null ? "AtkUnitBase.FireCallback" : null);
+        if (missingNative != null)
+            ImGui.TextColored(new System.Numerics.Vector4(1f, 0.4f, 0.4f, 1f),
+                              $"⚠ 找不到遊戲函式 {missingNative}（遊戲改版後特徵碼對不上），用到它的轉移方向目前停用。");
     }
 }
